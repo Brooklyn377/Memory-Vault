@@ -39,14 +39,21 @@ HEAD_RE = re.compile(r"^### (Human|Assistant)(?: \(([^)]*)\))?[ \t]*$", re.M)
 SYS = (
     "You read one chat between a person and an AI assistant about the person's homelab, one chunk "
     "at a time, to keep documentation notes. Reply with ONLY JSON: "
-    '{"recap":"<updated recap of the WHOLE conversation so far, max 120 words, facts and decisions>",'
+    '{"recap":"<updated recap of the WHOLE conversation so far, facts and decisions>",'
     '"facts":[{"entity":"<specific named thing>","kind":"added|removed|changed|decided|problem|fix|info",'
     '"fact":"<one sentence on what happened or is true>",'
-    '"quote":"<exact words copied from the chunk, 15-120 characters, supporting the fact>"}],'
+    '"quote":"<exact words copied from the chunk, up to 120 characters, supporting the fact>"}],'
     '"question":"<ONE short question for the person, only if something important is unclear or contradicts '
     'the recap; otherwise an empty string>"}. '
-    "Max 6 facts. Only what the chunk states or the person actually did. Do not invent. "
+    "Keep to the LIMITS given with the chunk. Only what the chunk states or the person actually did. Do not invent. "
     "If nothing notable, facts is an empty list.")
+
+
+def limits_line():
+    """The Sweeper's limits, from the settings at call time: the settings are the only place these numbers live."""
+    t = __import__("tuning")
+    return (f"LIMITS: at most {t.get('sweep.max_facts')} facts; each quote at least {t.get('sweep.min_quote_chars')} "
+            f"characters; recap at most about {max(1, t.get('sweep.recap_chars') * 2 // 15)} words.\n\n")
 
 
 # ---------- reading and chunking ----------
@@ -299,7 +306,7 @@ def run_chunk(st, rel, d, meta, chunks, idx, merges, clarification=None):
     if clarification:
         extra = ("THE PERSON CLARIFIED THIS (trust it over the chat):\n"
                  f"Question: {clarification['q']}\nAnswer: {clarification['a']}\n\n")
-    user = f"RECAP SO FAR:\n{recap or '(start of conversation)'}\n\n{background(d, chunks, idx)}{extra}NEW CHUNK:\n{c['text']}"
+    user = f"{limits_line()}RECAP SO FAR:\n{recap or '(start of conversation)'}\n\n{background(d, chunks, idx)}{extra}NEW CHUNK:\n{c['text']}"
     try:
         import json as _j
         (agent.STATE / "sweep_now.json").write_text(_j.dumps({"rel": rel, "chunk": idx + 1, "of": len(chunks), "at": time.time()}))

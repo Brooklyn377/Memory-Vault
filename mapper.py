@@ -23,7 +23,7 @@ SYS = ("You are the curator of one person's homelab notes vault, doing a slow re
        "else needs you. You get ALL NOTES (path and title), the titles of the SOURCE CHATS, and DETAILED NOTES with "
        "a type, link count and a short gist. Smaller models wrote these notes a few messages at a time, so many "
        "related notes are not linked. Find (1) pairs of notes that are clearly about related things but are not "
-       "linked, and (2) groups of three or more notes that belong to one topic and deserve a hub note that ties them "
+       "linked, and (2) groups of notes (at least the hub size given in LIMITS) that belong to one topic and deserve a hub note that ties them "
        "together, such as one project, one machine or one problem. Use only notes listed. For every link give the "
        "exact words copied from each of the two notes: quote_a from note a and quote_b from note b, copied from the "
        "gists shown. For every hub give a title, a one-sentence summary and, for each member, its path and exact words "
@@ -226,7 +226,8 @@ def step(cfg, data, v):
     if i >= len(parts):
         return finish(m, st)
     curator.status("working", f"map pass {st['n']}: part {i + 1} of {len(parts)}, reading the whole vault")
-    user = (f"ALL NOTES (path | title):\n{titles}\n\nSOURCE CHATS (titles only, not linkable):\n{chats}\n\n"
+    user = (f"LIMITS: a hub needs at least {__import__('tuning').get('map.hub_min_members')} notes.\n\n"
+            f"ALL NOTES (path | title):\n{titles}\n\nSOURCE CHATS (titles only, not linkable):\n{chats}\n\n"
             f"DETAILED NOTES, part {i + 1} of {len(parts)} (path | type | title | links | gist):\n" + "\n".join(parts[i]))
     out = None
     for attempt in range(2):

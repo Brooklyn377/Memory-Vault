@@ -11,7 +11,8 @@ import remote
 import serverflags
 import settings
 
-MIN_CTX = 2048
+MIN_CTX = 2048        # the usual lowest context; below it is a warning
+HARD_MIN_CTX = 512    # below this nothing fits, so it is refused
 MAX_SLOTS = 8
 NAME = re.compile(r"[\w.\-]+\.gguf")
 
@@ -27,7 +28,8 @@ def _threads_max():
         return os.cpu_count() or 1
 
 
-def limits(model, file, parallel):
+def limits(model, file, parallel, strict=True):
+    """The largest context estimated to fit in memory. strict: refuse when even MIN_CTX does not fit."""
     if not NAME.fullmatch(file) or not (gguf_info.MODELS / file).is_file():
         raise ValueError("pick a model from the list")
     others = [(v["model_file"], v["context"], v["parallel"]) for k, v in settings.load().items() if k != model and "cur" not in (k, model)]
@@ -35,7 +37,7 @@ def limits(model, file, parallel):
         cap = gguf_info.max_context(file, others, parallel)
     except Exception:
         raise ValueError("cannot read that model file, so its memory use cannot be estimated")
-    if cap < MIN_CTX:
+    if strict and cap < MIN_CTX:
         raise ValueError("not enough memory for this model next to the other server")
     return cap
 
@@ -44,9 +46,13 @@ NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator"}
 
 
 def _plan(d):
-    """Validate every change on the page. Returns the server restarts needed; raises on the first bad value."""
+    """Check every change on the page. Returns (the server restarts needed, warnings); raises on the first value that
+    cannot work. A value outside its usual range, or a context larger than the memory estimate, is only a warning:
+    a server that does not come up ready is rolled back by applier.apply_now."""
+    import tuning
     import ui_settings
-    s, pend, jobs = settings.load(), applier.pending(), {}
+    s, pend, jobs, warn = settings.load(), applier.pending(), {}, []
+    prop = settings.load()   # the model settings as they would be after this change
     for m in ("qwen", "gpt", "cur"):
         cur, f = s[m], (d.get("servers") or {}).get(m)
         vals = None
@@ -57,23 +63,36 @@ def _plan(d):
         if f:
             vals = {"model_file": str(f.get("file", "")), "context": int(f.get("context")),
                     "threads": int(f.get("threads")), "parallel": int(f.get("parallel")),
-                    "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")))}
+                    "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn)}
         if vals and any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()):
-            if not 1 <= vals["threads"] <= _threads_max():
-                raise ValueError(f"{NICE[m]}: threads must be 1 to {_threads_max()}")
-            if not 1 <= vals["parallel"] <= MAX_SLOTS:
-                raise ValueError(f"{NICE[m]}: slots must be 1 to {MAX_SLOTS}")
-            cap = limits(m, vals["model_file"], vals["parallel"])
-            if not MIN_CTX <= vals["context"] <= cap:
-                raise ValueError(f"{NICE[m]}: context must be {MIN_CTX:,} to {cap:,}")
+            if vals["threads"] < 1 or vals["parallel"] < 1:
+                raise ValueError(f"{NICE[m]}: threads and slots must be at least 1")
+            if vals["threads"] > _threads_max() and vals["threads"] != cur["threads"]:
+                warn.append(f"{NICE[m]}: {vals['threads']} threads is more than the {_threads_max()} this container has, which usually makes it slower.")
+            if vals["parallel"] > MAX_SLOTS and vals["parallel"] != cur["parallel"]:
+                warn.append(f"{NICE[m]}: {vals['parallel']} slots is more than the usual {MAX_SLOTS}; each slot gets a smaller share of the context.")
+            if vals["context"] < HARD_MIN_CTX:
+                raise ValueError(f"{NICE[m]}: context must be at least {HARD_MIN_CTX:,}")
+            cap = limits(m, vals["model_file"], vals["parallel"], strict=False)
+            if vals["context"] > cap:
+                warn.append(f"{NICE[m]}: context {vals['context']:,} is more than the {max(cap, 0):,} estimated to fit in memory. "
+                            "If the server cannot start, the change is rolled back.")
+            elif vals["context"] < MIN_CTX:
+                warn.append(f"{NICE[m]}: context {vals['context']:,} is below the usual {MIN_CTX:,}; most calls will not fit.")
             jobs[m] = vals
         elif m in pend:
             jobs[m] = pend[m]["values"]
         mod = (d.get("models") or {}).get(m)
         ctx = jobs[m]["context"] if m in jobs else None
         if mod:
-            ui_settings.apply(m, mod, ctx=ctx, dry=True)
-    return jobs
+            new, w = ui_settings.apply(m, mod, ctx=ctx, dry=True)
+            prop[m], warn = new[m], warn + [f"{NICE[m]}: {x}" for x in w]
+        if m in jobs:
+            prop[m].update(jobs[m])
+    # Calls that would no longer fit: only the ones this change brings, so an old warning does not come back every time.
+    before = set(tuning.token_warnings())
+    warn += [x for x in tuning.token_warnings(s=prop) if x not in before]
+    return jobs, warn
 
 
 def register(app, authed):
@@ -152,10 +171,10 @@ def register(app, authed):
     async def check_all(request: Request):
         need(request)
         try:
-            jobs = _plan(await request.json())
+            jobs, warn = _plan(await request.json())
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"ok": True, "restart": [NICE[m] for m in jobs]}
+        return {"ok": True, "restart": [NICE[m] for m in jobs], "warn": warn}
 
     @router.post("/api/settings/apply_all")
     async def apply_all(request: Request):
@@ -163,7 +182,7 @@ def register(app, authed):
         d = await request.json()
         try:
             import ui_settings
-            jobs = _plan(d)
+            jobs, _ = _plan(d)
             when = d.get("when")
             for _m, _f in (d.get("servers") or {}).items():
                 if _f and _f.get("remote") is not None:
@@ -275,6 +294,7 @@ window.applyAll=async()=>{
  note("");
  const c=await post("/api/settings/check",body);
  if(!c.ok){note(c.detail);return}
+ if(c.data.warn&&c.data.warn.length&&!await window.warnPop("These settings may not be safe",c.data.warn,"Apply anyway"))return;
  const need=c.data.restart;let when="now";
  if(need.length){
   when=await ask3("This restarts the "+need.join(" and ")+" server. Anything running there is cut off. Every other unsaved or queued change on this page is applied too.");

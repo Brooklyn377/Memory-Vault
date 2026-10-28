@@ -19,8 +19,8 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         d = await request.json()
         try:
-            r = tuning.save(d.get("values") or {})
-            return {"ok": True, "restart": r, "warn": tuning.warnings()}
+            r, warn = tuning.save(d.get("values") or {})
+            return {"ok": True, "restart": r, "warn": warn, "notes": tuning.token_warnings()}
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -36,17 +36,18 @@ const SEC={},placed={};
 function build(m,items){
  const inp={};
  const rows=items.map(function(it){
-  const e=h("input",{type:"number",step:"1",placeholder:String(it.default)});
+  const e=h("input",{type:"number",step:"1",min:String(it.min),placeholder:String(it.default)});
   e.value=it.saved==null?"":it.saved;inp[it.key]=e;
   return h("div",{style:"padding:8px 0;border-top:1px solid var(--line)"},
    h("div",{class:"fld"},h("label",{},it.label+" (default "+it.default+")"),e),
-   h("div",{class:"mut",style:"font-size:12px"},it.help+" Range "+it.lo+" to "+it.hi+". "+(it.restart?"Takes effect after restarting "+it.restart+".":"Takes effect on the next use.")))});
+   h("div",{class:"mut",style:"font-size:12px"},it.help+" Usual range "+it.lo+" to "+it.hi+"; outside it you get a warning. "+(it.restart?"Takes effect after restarting "+it.restart+".":"Takes effect on the next use.")))});
  const msg=h("div",{class:"mut"});
  async function save(vals){
   msg.textContent="";
   const r=await fetch("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:vals})});
   const j=await r.json().catch(function(){return{}});
-  msg.textContent=r.ok?"Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.warn&&j.warn.length?" Heads up: "+j.warn.join(" "):""):(j.detail||"Could not save")}
+  msg.textContent=r.ok?"Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):""):(j.detail||"Could not save");
+  if(r.ok&&j.warn&&j.warn.length)window.warnPop("Saved, but check these",j.warn)}
  function values(){const o={};for(const k in inp)o[k]=inp[k].value;return o}
  const d=h("details",{class:"sec"},h("summary",{},"Limits and guardrails"),...rows,
   h("div",{class:"mut",style:"margin-top:6px"},"A blank box uses the default. These are separate from Apply all: they save here and never restart a model server."),

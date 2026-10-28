@@ -1,13 +1,15 @@
 """Pipeline limits: the numbers that cap what each job reads and keeps. Defaults equal the old hardcoded values.
-tuning.get('key') reads the saved value at call time and falls back to the default."""
+tuning.get('key') reads the saved value at call time and falls back to the default.
+The range of each limit is the usual one: a value outside it is saved with a warning. Only a value below the lowest
+that can work at all (floor) is refused."""
 import json
 import os
 from pathlib import Path
 
 FILE = Path("/var/lib/memory-agent/tuning.json")
-# key, model, label, what it does, default, lowest, highest, services to restart (blank = live)
+# key, model, label, what it does, default, usual lowest, usual highest, services to restart (blank = live)
 REG = [
-    ("sweep.min_quote_chars", "qwen", "Shortest quote accepted for a fact", "A fact is kept only if its quote is at least this long and appears word for word in the chat part. Lower lets weaker quotes through.", 15, 6, 200, ""),
+    ("sweep.min_quote_chars", "qwen", "Shortest quote accepted for a fact", "A fact is kept only if its quote is at least this long and appears word for word in the chat part. Lower lets weaker quotes through. The Sweeper is told this number with each chunk.", 15, 6, 200, ""),
     ("questions.max_open", "qwen", "Ask queue size", "Most open questions at once. The Sweeper stops queuing hygiene cards when it is full.", 25, 5, 200, "memory-web, memory-sweep"),
     ("review.retries", "gpt", "Retries on a chunk the Reviewer rejects", "How often the Sweeper is asked to redo a chunk the Reviewer disliked before the facts are dropped.", 1, 0, 5, "memory-sweep"),
     ("review.min_quote_chars", "gpt", "Shortest quote the Reviewer's checks accept", "Used by the task check, file tracker, curator and map pass to confirm a quote is really in the text.", 12, 6, 200, ""),
@@ -34,19 +36,19 @@ REG = [
     ("map.links_per_call", "cur", "Map pass: links per call", "Most links accepted from one map-pass call.", 25, 0, 200, ""),
     ("map.hubs_per_call", "cur", "Map pass: hubs per call", "Most hub notes accepted from one call.", 5, 0, 30, ""),
     ("map.hub_members", "cur", "Map pass: notes per hub", "Most notes listed in one hub.", 30, 3, 100, ""),
-    ("map.hub_min_members", "cur", "Map pass: smallest hub", "A group needs at least this many notes to become a hub.", 3, 2, 20, ""),
+    ("map.hub_min_members", "cur", "Map pass: smallest hub", "A group needs at least this many notes to become a hub. The map pass is told this number with each call.", 3, 2, 20, ""),
     ("map.gist_chars", "cur", "Map pass: gist length", "Characters of each note shown in the whole-vault index.", 200, 50, 1000, ""),
 ]
 REG += [
     ("sweep.chunk_chars", "qwen", "Chunk size (characters of chat per read)", "How much of a chat the Sweeper reads at once. Parts already read keep their size; unread parts, new imports and the Queue use the new size. Bigger means fewer, larger calls and more text for the model to hold. One message up to 12,000 characters is never split.", 8000, 2000, 60000, ""),
-    ("sweep.max_facts", "qwen", "Facts kept per chunk", "The most facts the code keeps from one reply. The chunk reader prompt also says 'Max 6 facts', so edit that line in the Sweeper's Prompts to match.", 6, 1, 30, ""),
+    ("sweep.max_facts", "qwen", "Facts kept per chunk", "The most facts the code keeps from one reply. The Sweeper is told this number with each chunk.", 6, 1, 30, ""),
     ("sweep.attempts", "qwen", "Attempts per chunk before it is skipped", "How many times the Sweeper retries a reply it could not use.", 3, 1, 10, ""),
     ("agent.hop_depth", "qwen", "Inbox agent: link hops", "How many links away from a note the inbox agent looks for notes that may need to change. Replaces the value in config.yaml.", 1, 1, 3, ""),
     ("agent.max_candidates", "qwen", "Inbox agent: candidate notes per claim", "Notes the inbox agent considers for each claim. Replaces the value in config.yaml.", 4, 1, 30, ""),
     ("agent.max_tool_calls", "qwen", "Inbox agent: model calls per note", "Hard cap on model calls while handling one inbox note. Replaces the value in config.yaml.", 8, 1, 60, ""),
 ]
 REG += [
-    ("sweep.recap_chars", "qwen", "Recap length kept (characters)", "The code cuts each chunk's recap to this many characters. The chunk reader prompt also says 'max 120 words', so edit that line to match (about 7 characters per word). Raise the Reviewer's 'Recap length the gate sees' to at least this.", 900, 300, 12000, ""),
+    ("sweep.recap_chars", "qwen", "Recap length kept (characters)", "The code cuts each chunk's recap to this many characters. The Sweeper is told the matching word count with each chunk (about 7.5 characters per word, so 900 is 120 words). Raise the Reviewer's 'Recap length the gate sees' to at least this.", 900, 300, 12000, ""),
     ("sweep.overlap_chars", "qwen", "End of the previous chunk shown (characters)", "Gives the model the last part of the previous chunk, word for word, as background. 0 turns it off. Quotes must still come from the new chunk.", 0, 0, 20000, ""),
     ("sweep.facts_context", "qwen", "Earlier facts shown", "Shows the most recent facts already recorded from earlier in this chat, so the model can spot contradictions and avoid repeating. 0 turns it off.", 0, 0, 200, ""),
 ]
@@ -69,65 +71,66 @@ def _saved():
     return _cache["d"]
 
 
+def floor(r):
+    """The lowest value that can work at all: 0 where the usual range starts at 0, otherwise 1."""
+    return 0 if r[5] <= 0 else 1
+
+
 def get(key):
     r = BY[key]
     try:
         x = int(_saved().get(key))
     except (TypeError, ValueError):
         return r[4]
-    return x if r[5] <= x <= r[6] else r[4]
+    return x if x >= floor(r) else r[4]
 
 
 def listing():
     s = _saved()
     return [{"key": r[0], "model": r[1], "label": r[2], "help": r[3], "default": r[4], "lo": r[5], "hi": r[6],
-             "restart": r[7], "saved": s.get(r[0])} for r in REG]
+             "min": floor(r), "restart": r[7], "saved": s.get(r[0])} for r in REG]
 
 
-def _cross(cur):
-    """Refuse values that would send more text than the Reviewer's context holds."""
+def token_warnings(cur=None, s=None):
+    """Calls that may not fit in a model's context, for these limits and model settings (default: the saved ones).
+    Only warnings: a call that does not fit fails or is cut short, and the person decides what to change."""
+    out = []
     try:
         import settings
-        s = settings.get("gpt")
+        s = s or settings.load()
     except Exception:
-        return
+        return out
+    cur = _saved() if cur is None else cur
 
     def g(k):
         return cur.get(k, BY[k][4])
 
-    ctx, est = int(s["context"]), (lambda chars: chars / 2.2)
-    need = est(g("chat.notes") * g("chat.note_chars") + g("chat.linked") * g("chat.linked_chars")) + s["max_tokens"]["chat"] + 1500
+    r, est = s["gpt"], (lambda chars: chars / 2.2)
+    ctx = int(r["context"])
+    need = est(g("chat.notes") * g("chat.note_chars") + g("chat.linked") * g("chat.linked_chars")) + r["max_tokens"]["chat"] + 1500
     if need > ctx:
-        raise ValueError(f"Chat would send about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat note sizes or raise the context.")
-    need = est(g("reviewer.note_chars")) + s["max_tokens"]["review"] + 1500
+        out.append(f"Chat could send about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat note sizes or raise the context.")
+    need = est(g("reviewer.note_chars")) + r["max_tokens"]["review"] + 1500
     if need > ctx:
-        raise ValueError(f"A task scan would need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the summary size.")
-    need = est(9000 + g("files.excerpt_chars")) + s["max_tokens"]["review"] + 1500
+        out.append(f"A task scan could need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the summary size.")
+    need = est(9000 + g("files.excerpt_chars")) + r["max_tokens"]["review"] + 1500
     if need > ctx:
-        raise ValueError(f"A file check would need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat text per call.")
-    q = settings.get("qwen")
+        out.append(f"A file check could need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat text per call.")
+    q = s["qwen"]
     one = (g("sweep.chunk_chars") + g("sweep.recap_chars") + g("sweep.overlap_chars")) / 2.2 + g("sweep.facts_context") * 70 + q["max_tokens"]["sweep"] + 1500
     if one > int(q["context"]):
-        raise ValueError(f"One Sweeper call could need about {int(one):,} tokens (chunk text, the answer limit and the prompt) against the Sweeper's {int(q['context']):,} context. Lower the chunk size or the sweep token limit, or raise the context.")
-
-
-def warnings():
-    """Non-blocking notes shown after a save."""
-    out = []
-    try:
-        import settings
-        q = settings.get("qwen")
-        per = (get("sweep.chunk_chars") + get("sweep.recap_chars") + get("sweep.overlap_chars")) / 2.2 + get("sweep.facts_context") * 70 + q["max_tokens"]["sweep"] + 1500
-        if per * int(q["parallel"]) > int(q["context"]):
-            out.append(f"The Sweeper has {q['parallel']} slots sharing {int(q['context']):,} tokens, and {q['parallel']} full-size calls at once could need about {int(per * q['parallel']):,}. That's only if both run to their limits.")
-    except Exception:
-        pass
+        out.append(f"One Sweeper call could need about {int(one):,} tokens (chunk text, the answer limit and the prompt) against the Sweeper's {int(q['context']):,} context. Lower the chunk size or the sweep token limit, or raise the context.")
+    elif one * int(q["parallel"]) > int(q["context"]):
+        out.append(f"The Sweeper has {q['parallel']} slots sharing {int(q['context']):,} tokens, and {q['parallel']} full-size calls at once could need about {int(one * q['parallel']):,}. That's only if they all run to their limits.")
     return out
 
 
 def save(values):
-    """Save the changed values. A blank or default value is removed. Returns the services that must restart."""
-    cur, changed = dict(_saved()), []
+    """Save the changed values. A blank or default value is removed. Returns (services that must restart, warnings):
+    a changed value outside its usual range, and calls that this save makes too big for a model's context (an
+    older one does not come back every time; token_warnings lists them all)."""
+    cur, changed, warn = dict(_saved()), [], []
+    before = set(token_warnings(cur))
     for k, v in (values or {}).items():
         r = BY.get(k)
         if r is None:
@@ -135,8 +138,10 @@ def save(values):
         new = None
         if v is not None and str(v).strip() != "":
             x = int(float(v))
-            if not r[5] <= x <= r[6]:
-                raise ValueError(f"{r[2]}: must be {r[5]} to {r[6]}")
+            if x < floor(r):
+                raise ValueError(f"{r[2]}: must be at least {floor(r)}")
+            if not r[5] <= x <= r[6] and x != cur.get(k):
+                warn.append(f"{r[2]}: {x:,} is outside the usual {r[5]:,} to {r[6]:,}.")
             new = None if x == r[4] else x
         old = cur.get(k)
         if new is None:
@@ -145,8 +150,8 @@ def save(values):
             cur[k] = new
         if old != new:
             changed.append(k)
-    _cross(cur)
     tmp = FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=1, sort_keys=True))
     os.replace(tmp, FILE)
-    return sorted({u.strip() for k in changed for u in BY[k][7].split(",") if u.strip()})
+    return (sorted({u.strip() for k in changed for u in BY[k][7].split(",") if u.strip()}),
+            warn + [x for x in token_warnings(cur) if x not in before])

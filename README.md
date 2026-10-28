@@ -56,7 +56,10 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 1. Open the web address and log in. Change the password on the Settings page.
 2. Upload a chat export (`.zip` or `.json`). The agent reads it in chunks; a fact is written to the vault only
    after the reviewer model has checked it against a quote from the chat.
-3. Models: Settings shows each model's server, memory use and limits, and can download other models.
+3. Models: Settings shows each model's server, memory use and limits, and can download other models. Each number
+   has a usual range: a value outside it, or one that makes calls too big for a model's context, is saved after a
+   warning instead of being refused. Only values that cannot work at all (a negative count, a probability above 1)
+   are refused.
 
 ## Update
 New versions come from this repository. On the Proxmox host:

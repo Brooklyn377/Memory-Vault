@@ -9,8 +9,8 @@ NAME = re.compile(r"[\w.\-]+\.gguf")
 KV = ["f16", "q8_0", "q5_1", "q4_0"]
 SPEC = [
     {"key": "threads_batch", "flag": "--threads-batch", "kind": "int", "lo": 1, "hi": 64, "label": "Prompt-reading threads (blank = same as threads)"},
-    {"key": "batch_size", "flag": "--batch-size", "kind": "int", "lo": 32, "hi": 8192, "label": "Batch size (default 2048)"},
-    {"key": "ubatch_size", "flag": "--ubatch-size", "kind": "int", "lo": 32, "hi": 4096, "label": "Micro-batch size (default 512)"},
+    {"key": "batch_size", "flag": "--batch-size", "kind": "int", "lo": 32, "hi": 8192, "min": 1, "label": "Batch size (default 2048)"},
+    {"key": "ubatch_size", "flag": "--ubatch-size", "kind": "int", "lo": 32, "hi": 4096, "min": 1, "label": "Micro-batch size (default 512)"},
     {"key": "flash_attn", "flag": "--flash-attn", "kind": "choice", "choices": ["on", "off", "auto"], "label": "Flash attention"},
     {"key": "cache_type_k", "flag": "--cache-type-k", "kind": "choice", "choices": KV, "label": "Key cache type"},
     {"key": "cache_type_v", "flag": "--cache-type-v", "kind": "choice", "choices": KV, "label": "Value cache type (needs flash attention)"},
@@ -21,7 +21,7 @@ SPEC = [
     {"key": "reasoning_budget", "flag": "--reasoning-budget", "kind": "int", "lo": -1, "hi": 131072, "label": "Reasoning budget in tokens (-1 unlimited, 0 off)"},
     {"key": "reasoning_format", "flag": "--reasoning-format", "kind": "choice", "choices": ["none", "deepseek", "auto"], "label": "Reasoning format (none puts thinking inside the reply)"},
     {"key": "rope_scaling", "flag": "--rope-scaling", "kind": "choice", "choices": ["none", "linear", "yarn"], "label": "Rope scaling (longer context)"},
-    {"key": "rope_freq_scale", "flag": "--rope-freq-scale", "kind": "float", "lo": 0.05, "hi": 4, "step": "0.05", "label": "Rope frequency scale (1 divided by the stretch)"},
+    {"key": "rope_freq_scale", "flag": "--rope-freq-scale", "kind": "float", "lo": 0.05, "hi": 4, "min": 0.01, "step": "0.05", "label": "Rope frequency scale (1 divided by the stretch)"},
     {"key": "yarn_orig_ctx", "flag": "--yarn-orig-ctx", "kind": "int", "lo": 0, "hi": 1048576, "label": "YaRN original context (0 = from the model)"},
     {"key": "draft_model", "flag": "--model-draft", "kind": "model", "label": "Draft model (speculative decoding)"},
     {"key": "draft_max", "flag": "--draft-max", "kind": "int", "lo": 1, "hi": 64, "label": "Draft tokens to guess at most"},
@@ -47,8 +47,11 @@ def spec():
              "step": s.get("step", "1"), "ok": (not sup) or s["flag"] in sup} for s in SPEC]
 
 
-def check(flags, model_file=""):
-    by, sup, out = {s["key"]: s for s in SPEC}, supported(), {}
+def check(flags, model_file="", old=None, warn=None):
+    """Checks the flags and returns the ones set. lo and hi are the usual range: a changed number outside it adds a
+    warning to warn. Only a number below min (default: lo) is refused."""
+    by, sup, out, old = {s["key"]: s for s in SPEC}, supported(), {}, old or {}
+    warn = [] if warn is None else warn
     for k, v in (flags or {}).items():
         s = by.get(k)
         if s is None:
@@ -73,8 +76,10 @@ def check(flags, model_file=""):
             out[k] = name
         else:
             x = float(v)
-            if not s["lo"] <= x <= s["hi"]:
-                raise ValueError(f"{s['label']}: must be {s['lo']} to {s['hi']}")
+            if x < s.get("min", s["lo"]):
+                raise ValueError(f"{s['label']}: must be at least {s.get('min', s['lo'])}")
+            if not s["lo"] <= x <= s["hi"] and x != old.get(k):
+                warn.append(f"{s['label']}: {x:g} is outside the usual {s['lo']:g} to {s['hi']:g}.")
             out[k] = int(x) if kind == "int" else x
     if out.get("cache_type_v", "f16") != "f16" and out.get("flash_attn") == "off":
         raise ValueError("a quantized value cache needs flash attention on or auto")

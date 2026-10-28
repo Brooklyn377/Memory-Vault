@@ -22,43 +22,59 @@ def caps(model_file):
     return {"thinking": "qwen3" in n, "reasoning_effort": "gpt-oss" in n, "thinking_budget": "seed-oss" in n}
 
 
-RANGES = {"top_p": (0, 1, "float"), "top_k": (0, 1000, "int"), "min_p": (0, 1, "float"), "typical_p": (0, 1, "float"),
-          "repeat_penalty": (0.5, 2, "float"), "repeat_last_n": (-1, 65536, "int"),
-          "presence_penalty": (-2, 2, "float"), "frequency_penalty": (-2, 2, "float"),
-          "mirostat": (0, 2, "int"), "mirostat_tau": (0, 20, "float"), "mirostat_eta": (0, 1, "float"),
-          "seed": (-1, 2147483647, "int"), "dry_multiplier": (0, 5, "float"), "dry_base": (1, 4, "float"),
-          "dry_allowed_length": (1, 100, "int"), "xtc_probability": (0, 1, "float"), "xtc_threshold": (0, 0.5, "float")}
+# key: (hard lowest, hard highest, kind, usual lowest, usual highest). A hard limit (None: none) is a value that
+# cannot work, such as a probability above 1; outside the usual range a value is saved with a warning.
+RANGES = {"top_p": (0, 1, "float", 0, 1), "top_k": (0, None, "int", 0, 1000), "min_p": (0, 1, "float", 0, 1),
+          "typical_p": (0, 1, "float", 0, 1), "repeat_penalty": (0, None, "float", 0.5, 2),
+          "repeat_last_n": (-1, None, "int", -1, 65536), "presence_penalty": (None, None, "float", -2, 2),
+          "frequency_penalty": (None, None, "float", -2, 2), "mirostat": (0, 2, "int", 0, 2),
+          "mirostat_tau": (0, None, "float", 0, 20), "mirostat_eta": (0, None, "float", 0, 1),
+          "seed": (-1, 2147483647, "int", -1, 2147483647), "dry_multiplier": (0, None, "float", 0, 5),
+          "dry_base": (0, None, "float", 1, 4), "dry_allowed_length": (0, None, "int", 1, 100),
+          "xtc_probability": (0, 1, "float", 0, 1), "xtc_threshold": (0, 1, "float", 0, 0.5)}
 
 
-def check_sampling(d):
-    out = {}
+def bounded(name, x, old, hard_lo, hard_hi, lo, hi, warn):
+    """Refuse x outside the hard limits; add a warning when a changed x is outside the usual range."""
+    if (hard_lo is not None and x < hard_lo) or (hard_hi is not None and x > hard_hi):
+        raise ValueError(f"{name} must be " + (f"{hard_lo:g} to {hard_hi:g}" if hard_lo is not None and hard_hi is not None
+                                               else f"at least {hard_lo:g}" if hard_lo is not None else f"at most {hard_hi:g}"))
+    if not lo <= x <= hi and x != old:
+        warn.append(f"{name}: {x:g} is outside the usual {lo:g} to {hi:g}.")
+
+
+def check_sampling(d, old=None, warn=None):
+    out, old, warn = {}, old or {}, [] if warn is None else warn
     for k, v in (d or {}).items():
         if k not in RANGES:
             raise ValueError("unknown setting " + str(k))
         if v is None or str(v).strip() == "":
             continue
-        lo, hi, kind = RANGES[k]
+        hard_lo, hard_hi, kind, lo, hi = RANGES[k]
         x = float(v)
-        if not lo <= x <= hi:
-            raise ValueError(f"{k} must be {lo} to {hi}")
+        bounded(k, x, old.get(k), hard_lo, hard_hi, lo, hi, warn)
         out[k] = int(x) if kind == "int" else x
     return out
 
 
 def apply(model, data, ctx=None, dry=False):
-    new = settings.load()
+    """Check and save one model's settings. Returns (all model settings with this change, warnings)."""
+    new, warn = settings.load(), []
     cur = new[model]
     t = float(data.get("temperature", cur["temperature"]))
-    if not 0 <= t <= 2:
-        raise ValueError("temperature must be between 0 and 2")
+    bounded("temperature", t, cur["temperature"], 0, None, 0, 2, warn)
     cur["temperature"] = t
     for k, v in (data.get("max_tokens") or {}).items():
         if k not in cur["max_tokens"]:
             raise ValueError("unknown limit " + str(k))
         v = int(v)
         lim = ctx or cur["context"]
-        if not 256 <= v <= lim:
-            raise ValueError(f"{k} limit must be 256 to {lim}")
+        if v < 1:
+            raise ValueError(f"{k} limit must be at least 1")
+        if v > lim:
+            warn.append(f"{k.capitalize()} max tokens ({v:,}) is more than the {lim:,} context; such a reply is cut off.")
+        elif v < 256 and v != cur["max_tokens"][k]:
+            warn.append(f"{k.capitalize()} max tokens ({v:,}) is below the usual 256; most replies will be cut off.")
         cur["max_tokens"][k] = v
     c = caps(capname(model, cur))
     if "thinking" in data and c["thinking"]:
@@ -73,15 +89,16 @@ def apply(model, data, ctx=None, dry=False):
             cur.pop("thinking_budget", None)
         else:
             tbn = int(float(tbv))
-            if not -1 <= tbn <= 131072:
-                raise ValueError("thinking budget must be -1 to 131072")
+            if tbn < -1:
+                raise ValueError("thinking budget must be at least -1")
             cur["thinking_budget"] = tbn
     if "sampling" in data:
-        cur["sampling"] = check_sampling(data["sampling"])
+        cur["sampling"] = check_sampling(data["sampling"], cur.get("sampling"), warn)
     if "json_mode" in data:
         cur["json_mode"] = bool(data["json_mode"])
     if not dry:
         settings.save(new)
+    return new, warn
 
 
 def register(app, authed):
@@ -104,10 +121,10 @@ def register(app, authed):
         if data.get("model") not in ("qwen", "gpt", "cur"):
             raise HTTPException(status_code=400, detail="unknown model")
         try:
-            apply(data["model"], data)
+            _, warn = apply(data["model"], data)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"ok": True}
+        return {"ok": True, "warn": warn}
 
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):
@@ -161,6 +178,14 @@ const NAMES={qwen:"Sweeper: sweep and ask",gpt:"Reviewer: review and chat",cur:"
 const LAB={sweep:"Sweep",ask:"Ask",review:"Review",chat:"Chat",curate:"Curate"};
 function num(v,step){const e=h("input",{type:"number"});e.value=v;if(step)e.step=step;return e}
 function fld(label,el,off){return h("div",{class:"fld"+(off?" off":"")},h("label",{},label),el)}
+// Warning popup listing settings that may not be safe. With a yes label it asks (true: go ahead); without, it informs.
+window.warnPop=function(title,items,yes){return new Promise(res=>{
+ const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
+ const done=v=>{ov.remove();res(v)};
+ const btns=yes?[h("button",{class:"pri",onclick:()=>done(true)},yes),h("button",{onclick:()=>done(false)},"Go back")]:[h("button",{class:"pri",onclick:()=>done(true)},"OK")];
+ ov.append(h("div",{class:"card",style:"max-width:520px;width:100%;max-height:90vh;overflow:auto"},h("h3",{},"⚠ "+title),
+  h("ul",{style:"margin:0 0 12px;padding-left:18px"},...items.map(t=>h("li",{class:"mut",style:"margin-bottom:6px"},t))),...btns));
+ document.body.append(ov)})};
 function card(m,s,cp){
  const t=num(s.temperature,"0.05"),mt={};
  const rows=Object.keys(s.max_tokens).map(k=>{mt[k]=num(s.max_tokens[k]);return fld((LAB[k]||k)+" max tokens",mt[k],false)});
