@@ -6,6 +6,10 @@ on:
   push:
     branches: [claude/public]
   workflow_dispatch:
+# Two releases pushed close together sync one after the other, never at the same time.
+concurrency:
+  group: sync-public
+  cancel-in-progress: false
 jobs:
   sync:
     runs-on: ubuntu-latest
