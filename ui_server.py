@@ -259,7 +259,11 @@ function mk(m,s,models,maxT){
  e.where=h("select",{},h("option",{value:"local"},"Local model on this server"),h("option",{value:"remote"},"External server"));e.where.value=rs.enabled?"remote":"local";
  e.ru=h("input",{type:"text",placeholder:"http://192.168.1.50:8080"});e.ru.value=rs.url||"";
  e.rt=h("select",{},h("option",{value:"llamacpp"},"llama.cpp server"),h("option",{value:"openai"},"Other OpenAI-compatible"));e.rt.value=rs.api||"llamacpp";
- e.rn=h("input",{type:"text",placeholder:"needed for non-llama.cpp servers"});e.rn.value=rs.model||"";
+ // The external server's own model list, offered as a dropdown; the name also tells this page which thinking switches apply.
+ e.rnl=h("datalist",{id:"rn-"+m});
+ e.rn=h("input",{type:"text",list:"rn-"+m,placeholder:"pick from the server's list"});e.rn.value=rs.model||"";e.rn0=e.rn.value;
+ e.names=function(names){e.rnl.replaceChildren(...(names||[]).map(function(n){return h("option",{value:n})}));
+  if(!e.rn.value&&names&&names.length===1){e.rn.value=names[0];dirty=true;e.rm.textContent+=" Model filled in from the server; press Apply all to save it."}};
  e.rk=h("input",{type:"password",placeholder:rs.key_set?"saved, type to replace":"optional",autocomplete:"off"});
  e.rc=h("input",{type:"checkbox"});
  e.ra=h("input",{type:"checkbox"});e.ra.checked=!!rs.ack;
@@ -268,8 +272,11 @@ function mk(m,s,models,maxT){
   e.rm.textContent="Testing...";
   const r=await fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model_key:m,url:e.ru.value,api:e.rt.value,key:e.rk.value})});
   const j=await r.json().catch(function(){return{}});
-  e.rm.textContent=r.ok?("Server says: "+j.state+(j.models&&j.models.length?". Models it lists: "+j.models.join(", "):"")):(j.detail||"Could not test")}},"Test connection");
- e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model name",e.rn),fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm);
+  e.rm.textContent=r.ok?("Server says: "+j.state+(j.models&&j.models.length?". Models it lists: "+j.models.join(", "):"")):(j.detail||"Could not test");
+  if(r.ok)e.names(j.models)}},"Test connection");
+ if(rs.enabled&&rs.url)fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model_key:m,url:rs.url,api:rs.api||"llamacpp",key:""})})
+  .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){});
+ e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model on that server",e.rn),e.rnl,fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm);
  // The local model's fields: hidden while it runs on an external server, which has its own model and settings.
  e.loc=h("div",{},fld("Model file",e.file),fld("Context (tokens)",e.ctx),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv);
  e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"The model, context and threads are set on the external server itself. Nothing here needs a model file: press Apply all to save.");
@@ -323,6 +330,8 @@ window.applyAll=async()=>{
  const r=await post("/api/settings/apply_all",{models:body.models,servers:body.servers,when:when});
  if(r.ok)dirty=false;
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
+ if(r.ok)for(const m of IDS){const e=E[m];if(e&&e.rn&&e.where.value==="remote"&&e.rn.value!==e.rn0){e.rn0=e.rn.value;
+  e.msg.textContent+=" Reload the page to update the thinking switches for "+(e.rn.value||"this model")+"."}}
  stat()};
 (async()=>{const d=await api("/api/server/info");
  FS=d.flagspec||[];$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
