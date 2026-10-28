@@ -237,6 +237,7 @@ function ask3(text){return new Promise(res=>{
   h("button",{class:"pri",onclick:()=>done("now")},"Apply now"),h("button",{onclick:()=>done("idle")},"Apply when idle"),h("button",{onclick:()=>done(null)},"Cancel")));
  document.body.append(ov)})}
 async function limit(m){const e=E[m];
+ if(!e.file.value){e.lim.textContent=m==="pa"?"Choose a model file to run the Assistant here, or use an external server.":"";return}
  try{const d=await api("/api/server/limits?model="+m+"&file="+encodeURIComponent(e.file.value)+"&parallel="+(e.par.value||4));
   e.lim.textContent="Max safe context for this model: "+d.max.toLocaleString()+" (min "+d.min.toLocaleString()+")"}
  catch(err){e.lim.textContent=err.message}}
@@ -269,7 +270,10 @@ function mk(m,s,models,maxT){
   const j=await r.json().catch(function(){return{}});
   e.rm.textContent=r.ok?("Server says: "+j.state+(j.models&&j.models.length?". Models it lists: "+j.models.join(", "):"")):(j.detail||"Could not test")}},"Test connection");
  e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model name",e.rn),fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm);
- function sync(){const r=e.where.value==="remote";[e.file,e.ctx,e.thr,e.par].forEach(function(x){x.disabled=r});FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=r||!f.ok});e.rbox.style.display=r?"":"none"}
+ // The local model's fields: hidden while it runs on an external server, which has its own model and settings.
+ e.loc=h("div",{},fld("Model file",e.file),fld("Context (tokens)",e.ctx),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv);
+ e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"The model, context and threads are set on the external server itself. Nothing here needs a model file: press Apply all to save.");
+ function sync(){const r=e.where.value==="remote";[e.file,e.ctx,e.thr,e.par].forEach(function(x){x.disabled=r});FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=r||!f.ok});e.rbox.style.display=r?"":"none";e.loc.style.display=r?"none":"";e.extnote.style.display=r?"":"none"}
  e.where.onchange=sync;sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
  const go=async()=>{e.msg.textContent="";
@@ -280,8 +284,20 @@ function mk(m,s,models,maxT){
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
  limit(m);
  (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value==="remote",url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
- return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,fld("Model file",e.file),fld("Context (tokens)",e.ctx),e.lim,
-  fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv,h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
+ return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,e.extnote,e.loc,
+  h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
+// The model list changed (a download finished or a file was deleted): refresh every Model file list, keeping choices.
+window.refreshModelFiles=function(models){
+ for(const m of IDS){const e=E[m];if(!e)continue;
+  const fill=function(sel,first){const v=sel.value;
+   sel.replaceChildren(...first,...models.map(function(n){return h("option",{value:n},n)}));
+   if(v&&models.indexOf(v)<0)sel.append(h("option",{value:v},v+" (missing)"));sel.value=v};
+  fill(e.file,e.file.value?[]:[h("option",{value:""},"No model chosen")]);
+  FS.forEach(function(f){if(f.kind==="model"&&e.fx[f.key])fill(e.fx[f.key],[h("option",{value:""},"default")])})}};
+// Changes typed on the page are kept only by Apply all: warn before leaving the page with some not applied.
+let dirty=false;
+["input","change"].forEach(function(t){document.addEventListener(t,function(ev){if(ev.target.closest&&ev.target.closest("#mm,#sp,#sv"))dirty=true},true)});
+addEventListener("beforeunload",function(ev){if(dirty){ev.preventDefault();ev.returnValue=""}});
 async function stat(){clearTimeout(T);const d=await api("/api/server/info");let busy=false;
  for(const m of IDS){const s=d.servers[m],e=E[m];if(!e)continue;
   e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
@@ -305,6 +321,7 @@ window.applyAll=async()=>{
   when=await ask3("This restarts the "+need.join(" and ")+" server. Anything running there is cut off. Every other unsaved or queued change on this page is applied too.");
   if(!when)return}
  const r=await post("/api/settings/apply_all",{models:body.models,servers:body.servers,when:when});
+ if(r.ok)dirty=false;
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
  stat()};
 (async()=>{const d=await api("/api/server/info");

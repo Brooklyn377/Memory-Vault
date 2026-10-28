@@ -72,7 +72,9 @@ def state(m):
     if h == "loading" or (applier._active(m) and h == "down"):
         return {"state": "loading", "detail": ""}
     if m == "pa":
-        return {"state": "unloaded", "detail": "Not loaded. Choose a model under Server, then hold to load it, or use an external server."}
+        return {"state": "unloaded", "detail": "Not loaded. To run it here: choose its model file under Server, press "
+                "Apply all, then hold to load. To run it on another machine: set Where it runs to External server, "
+                "fill in the address and press Apply all; no model file is needed."}
     if m != "cur" and off(m):
         return {"state": "unloaded", "detail": "Unloaded by you. Its calls wait until you load it."}
     if m != "cur" and swap.holding():
