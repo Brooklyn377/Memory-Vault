@@ -65,12 +65,13 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 New versions come from this repository. On the Proxmox host:
 
 ```bash
-pct exec CTID -- memory-agent-update            # install the newest version
-pct exec CTID -- memory-agent-update --check    # only say whether there is one
-pct exec CTID -- memory-agent-update --rollback # go back to the code from before the last update
+pct exec CTID -- /usr/local/bin/memory-agent-update            # install the newest version
+pct exec CTID -- /usr/local/bin/memory-agent-update --check    # only say whether there is one
+pct exec CTID -- /usr/local/bin/memory-agent-update --rollback # go back to the code from before the last update
 ```
 
-(Or run `memory-agent-update` in the container's own console.) An update backs up the current code, replaces the
+The full path is needed with `pct exec`, which does not search `/usr/local/bin`. (Or run `memory-agent-update` in the
+container's own console.) An update backs up the current code, replaces the
 code and Python packages, restarts the services and checks that the web page answers. If that check fails it
 puts the old code back by itself. Your login, settings, models and vault are never touched. llama.cpp is not
 rebuilt. The repository and branch it follows are in `/etc/memory-agent/source`.

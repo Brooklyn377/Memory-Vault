@@ -6,6 +6,8 @@
 # The repository and branch are in /etc/memory-agent/source (written by the installer).
 # Config, login, settings, models and the vault are never touched; only code and Python packages change.
 set -euo pipefail
+# pct exec starts commands with a short search path; set the usual one.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 SOURCE=/etc/memory-agent/source
 APP=/opt/memory-agent

@@ -399,3 +399,4 @@ if [[ -z "$UPDATE" ]]; then
     echo "Write the password down; you can change it on the Settings page. It is stored in the container"
     echo "in /etc/memory-agent/web.env (readable by root only)."
 fi
+echo "Update:    pct exec $CTID -- /usr/local/bin/memory-agent-update"
