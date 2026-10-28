@@ -21,7 +21,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault
 
 It asks for the container ID, storage, cores, memory, disk and network, and which models to download. Every
 question has a default; press Enter to take it. The default models are Qwen3.5-9B Q4_K_M (sweeper, 5.7 GB),
-gpt-oss-20b MXFP4 (reviewer) and LFM2.5-24B-A2B Q4_K_M (curator, 14.5 GB). Type `-` to skip one and download it
+gpt-oss-20b MXFP4 (reviewer, 12.1 GB) and LFM2.5-24B-A2B Q4_K_M (curator, 14.5 GB). Type `-` to skip one and download it
 later on the Settings page, or paste another `.gguf` link. Temperatures, token limits and chunk sizes start at the
 defaults in the code (`settings.py`, `tuning.py`) and can be changed on the Settings and Tuning pages.
 At the end it prints the web address and a generated login.
