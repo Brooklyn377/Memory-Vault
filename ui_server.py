@@ -53,8 +53,8 @@ def _plan(d):
     """Check every change on the page. Returns (the server restarts needed, warnings, values to save directly); raises
     on the first value that cannot work. A value outside its usual range, or a context larger than the memory
     estimate, is only a warning: a server that does not come up ready is rolled back by applier.apply_now.
-    For a model on an external server the server values are saved as typed, with no restart and no memory check:
-    its context is what the token checks use, and the rest is kept for when it goes back to local."""
+    For a model on an external server only its context is saved, with no restart and no memory check: the token
+    checks use it. Model file, threads, slots and flags are that machine's business and stay as they were here."""
     import tuning
     import ui_settings
     s, pend, jobs, warn, direct = settings.load(), applier.pending(), {}, [], {}
@@ -65,17 +65,16 @@ def _plan(d):
         if f and f.get("remote") is not None:
             remote.check(m, f["remote"])
             ext = bool(f["remote"].get("enabled"))
-        if f:
+        if f and ext:
+            ctx_ext = int(f.get("context"))
+            if ctx_ext < HARD_MIN_CTX:
+                raise ValueError(f"{NICE[m]}: context must be at least {HARD_MIN_CTX:,}")
+            direct[m] = {"context": ctx_ext}
+            prop[m].update(direct[m])
+        elif f:
             vals = {"model_file": str(f.get("file", "")), "context": int(f.get("context")),
                     "threads": int(f.get("threads")), "parallel": int(f.get("parallel")),
                     "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn)}
-        if ext and vals:
-            if vals["threads"] < 1 or vals["parallel"] < 1:
-                raise ValueError(f"{NICE[m]}: threads and slots must be at least 1")
-            if vals["context"] < HARD_MIN_CTX:
-                raise ValueError(f"{NICE[m]}: context must be at least {HARD_MIN_CTX:,}")
-            direct[m], vals = vals, None
-            prop[m].update(direct[m])
         if vals and any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()):
             if vals["threads"] < 1 or vals["parallel"] < 1:
                 raise ValueError(f"{NICE[m]}: threads and slots must be at least 1")
@@ -201,13 +200,11 @@ def register(app, authed):
             for _m, _f in (d.get("servers") or {}).items():
                 if _f and _f.get("remote") is not None:
                     remote.save(_m, _f["remote"])
-            if direct:   # models on an external server: their server values, saved as typed
+            if direct:   # models on an external server: only their context, for the token checks
                 s = settings.load()
                 for m, vals in direct.items():
                     s[m].update(vals)
                 settings.save(s)
-                for m in direct:
-                    applier.write_env(m, s[m])   # ready for when it goes back to local; not running now
             for m, mod in (d.get("models") or {}).items():
                 ui_settings.apply(m, mod, ctx=jobs[m]["context"] if m in jobs else direct[m]["context"] if m in direct else None)
         except (ValueError, TypeError) as e:
@@ -292,11 +289,12 @@ function mk(m,s,models,maxT){
  if(rs.enabled&&rs.url)fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model_key:m,url:rs.url,api:rs.api||"llamacpp",key:""})})
   .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){});
  e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model on that server",e.rn),e.rnl,fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm);
- // The server fields stay editable on an external server too: its context is what the token checks here use, and the
- // rest is kept for when it goes back to local. Only the local memory estimate (e.lim) does not apply there.
- e.loc=h("div",{},fld("Model file",e.file),fld("Context (tokens)",e.ctx),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv);
- e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"On an external server, set Context to the context it runs with, so the token checks here are right. The model file, threads, slots and server flags are kept for when you switch back to Local; no model file is needed. Apply all saves them all.");
- function sync(){const r=e.where.value==="remote";FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=!f.ok});e.rbox.style.display=r?"":"none";e.lim.style.display=r?"none":"";e.extnote.style.display=r?"":"none"}
+ // On an external server only Context applies here (the token checks use it). The model file, threads, slots,
+ // server flags and the memory estimate describe this container's hardware, so they are hidden and kept as they are.
+ const hw=[fld("Model file",e.file),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
+ e.loc=h("div",{},hw[0],fld("Context (tokens)",e.ctx),...hw.slice(1));
+ e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"On an external server, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine.");
+ function sync(){const r=e.where.value==="remote";FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=!f.ok});e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r?"none":""});e.extnote.style.display=r?"":"none"}
  e.where.onchange=sync;sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
  const go=async()=>{e.msg.textContent="";
