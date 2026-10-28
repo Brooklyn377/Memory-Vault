@@ -226,7 +226,8 @@ def step(cfg, data, v):
     if i >= len(parts):
         return finish(m, st)
     curator.status("working", f"map pass {st['n']}: part {i + 1} of {len(parts)}, reading the whole vault")
-    user = (f"LIMITS: a hub needs at least {__import__('tuning').get('map.hub_min_members')} notes.\n\n"
+    hub_min = __import__("tuning").get("map.hub_min_members")
+    user = (f"LIMITS: a hub needs at least {hub_min} note{'s' if hub_min != 1 else ''}.\n\n"
             f"ALL NOTES (path | title):\n{titles}\n\nSOURCE CHATS (titles only, not linkable):\n{chats}\n\n"
             f"DETAILED NOTES, part {i + 1} of {len(parts)} (path | type | title | links | gist):\n" + "\n".join(parts[i]))
     out = None

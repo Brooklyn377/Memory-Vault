@@ -1,7 +1,8 @@
 """Pipeline limits: the numbers that cap what each job reads and keeps. Defaults equal the old hardcoded values.
 tuning.get('key') reads the saved value at call time and falls back to the default.
-The range of each limit is the usual one: a value outside it is saved with a warning. Only a value below the lowest
-that can work at all (floor) is refused."""
+The range of each limit is the usual one: a value outside it is saved with a warning. -1 means no limit (OFF_AS
+says what that is where it is not "unlimited"). Any other value below the lowest that can work at all (floor) is
+refused."""
 import json
 import os
 from pathlib import Path
@@ -71,24 +72,50 @@ def _saved():
     return _cache["d"]
 
 
+OFF = -1                  # typed in a box: no limit
+NO_LIMIT = 10 ** 9        # what get() returns for a cap with no limit; slices and range() take it as "all"
+# Limits where "no limit" is not a huge number: what get() returns instead, and what -1 means on the page.
+OFF_AS = {
+    "sweep.min_quote_chars": (1, "no length minimum; a quote is still required"),
+    "review.min_quote_chars": (1, "no length minimum; a quote is still required"),
+    "map.hub_min_members": (1, "no minimum; a hub still needs one note"),
+    "curator.idle_seconds": (0, "no wait"),
+}
+# Limits that stop a retry loop: with no limit, something the model cannot handle is retried without end.
+LOOPS = ("sweep.attempts", "review.retries", "agent.max_tool_calls")
+
+
 def floor(r):
     """The lowest value that can work at all: 0 where the usual range starts at 0, otherwise 1."""
     return 0 if r[5] <= 0 else 1
 
 
-def get(key):
+def value(key, saved):
+    """The value code uses for what is saved: the default if nothing valid is saved, and for -1 no limit."""
     r = BY[key]
     try:
-        x = int(_saved().get(key))
+        x = int(saved.get(key))
     except (TypeError, ValueError):
         return r[4]
+    if x == OFF:
+        return OFF_AS.get(key, (NO_LIMIT,))[0]
     return x if x >= floor(r) else r[4]
+
+
+def get(key):
+    return value(key, _saved())
+
+
+def off(key):
+    """True when the limit is set to -1 (no limit)."""
+    return _saved().get(key) == OFF
 
 
 def listing():
     s = _saved()
     return [{"key": r[0], "model": r[1], "label": r[2], "help": r[3], "default": r[4], "lo": r[5], "hi": r[6],
-             "min": floor(r), "restart": r[7], "saved": s.get(r[0])} for r in REG]
+             "min": floor(r), "off": OFF_AS.get(r[0], (0, "no limit"))[1], "restart": r[7], "saved": s.get(r[0])}
+            for r in REG]
 
 
 def token_warnings(cur=None, s=None):
@@ -103,23 +130,26 @@ def token_warnings(cur=None, s=None):
     cur = _saved() if cur is None else cur
 
     def g(k):
-        return cur.get(k, BY[k][4])
+        return value(k, cur)
+
+    def amount(n):   # a limit set to -1 makes the estimate meaningless; say so instead of printing it
+        return "any number of tokens (a limit is set to -1)" if n >= NO_LIMIT / 100 else f"about {int(n):,} tokens"
 
     r, est = s["gpt"], (lambda chars: chars / 2.2)
     ctx = int(r["context"])
     need = est(g("chat.notes") * g("chat.note_chars") + g("chat.linked") * g("chat.linked_chars")) + r["max_tokens"]["chat"] + 1500
     if need > ctx:
-        out.append(f"Chat could send about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat note sizes or raise the context.")
+        out.append(f"Chat could send {amount(need)} against the Reviewer's {ctx:,} context. Lower the chat note sizes or raise the context.")
     need = est(g("reviewer.note_chars")) + r["max_tokens"]["review"] + 1500
     if need > ctx:
-        out.append(f"A task scan could need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the summary size.")
+        out.append(f"A task scan could need {amount(need)} against the Reviewer's {ctx:,} context. Lower the summary size.")
     need = est(9000 + g("files.excerpt_chars")) + r["max_tokens"]["review"] + 1500
     if need > ctx:
-        out.append(f"A file check could need about {int(need):,} tokens against the Reviewer's {ctx:,} context. Lower the chat text per call.")
+        out.append(f"A file check could need {amount(need)} against the Reviewer's {ctx:,} context. Lower the chat text per call.")
     q = s["qwen"]
     one = (g("sweep.chunk_chars") + g("sweep.recap_chars") + g("sweep.overlap_chars")) / 2.2 + g("sweep.facts_context") * 70 + q["max_tokens"]["sweep"] + 1500
     if one > int(q["context"]):
-        out.append(f"One Sweeper call could need about {int(one):,} tokens (chunk text, the answer limit and the prompt) against the Sweeper's {int(q['context']):,} context. Lower the chunk size or the sweep token limit, or raise the context.")
+        out.append(f"One Sweeper call could need {amount(one)} (chunk text, the answer limit and the prompt) against the Sweeper's {int(q['context']):,} context. Lower the chunk size or the sweep token limit, or raise the context.")
     elif one * int(q["parallel"]) > int(q["context"]):
         out.append(f"The Sweeper has {q['parallel']} slots sharing {int(q['context']):,} tokens, and {q['parallel']} full-size calls at once could need about {int(one * q['parallel']):,}. That's only if they all run to their limits.")
     return out
@@ -138,9 +168,12 @@ def save(values):
         new = None
         if v is not None and str(v).strip() != "":
             x = int(float(v))
-            if x < floor(r):
-                raise ValueError(f"{r[2]}: must be at least {floor(r)}")
-            if not r[5] <= x <= r[6] and x != cur.get(k):
+            if x == OFF:
+                if k in LOOPS and x != cur.get(k):
+                    warn.append(f"{r[2]}: with no limit, something the model cannot handle is retried without end.")
+            elif x < floor(r):
+                raise ValueError(f"{r[2]}: must be at least {floor(r)}, or -1 for no limit")
+            elif not r[5] <= x <= r[6] and x != cur.get(k):
                 warn.append(f"{r[2]}: {x:,} is outside the usual {r[5]:,} to {r[6]:,}.")
             new = None if x == r[4] else x
         old = cur.get(k)

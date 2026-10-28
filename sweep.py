@@ -52,8 +52,12 @@ SYS = (
 def limits_line():
     """The Sweeper's limits, from the settings at call time: the settings are the only place these numbers live."""
     t = __import__("tuning")
-    return (f"LIMITS: at most {t.get('sweep.max_facts')} facts; each quote at least {t.get('sweep.min_quote_chars')} "
-            f"characters; recap at most about {max(1, t.get('sweep.recap_chars') * 2 // 15)} words.\n\n")
+    parts = ["any number of facts" if t.off("sweep.max_facts") else f"at most {t.get('sweep.max_facts')} facts"]
+    if not t.off("sweep.min_quote_chars"):
+        parts.append(f"each quote at least {t.get('sweep.min_quote_chars')} characters")
+    if not t.off("sweep.recap_chars"):
+        parts.append(f"recap at most about {max(1, t.get('sweep.recap_chars') * 2 // 15)} words")
+    return "LIMITS: " + "; ".join(parts) + ".\n\n"
 
 
 # ---------- reading and chunking ----------

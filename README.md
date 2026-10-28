@@ -59,7 +59,7 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 3. Models: Settings shows each model's server, memory use and limits, and can download other models. Each number
    has a usual range: a value outside it, or one that makes calls too big for a model's context, is saved after a
    warning instead of being refused. Only values that cannot work at all (a negative count, a probability above 1)
-   are refused.
+   are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
 ## Update
 New versions come from this repository. On the Proxmox host:
