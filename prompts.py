@@ -46,6 +46,9 @@ REG = [
     ("curator_prune", "cur", "Note review: prune", "Added when 'Prune' is on.", None, None),
     ("curator_format", "cur", "Note review: answer format", "Closes every note-review prompt. Keep the JSON format.", None, None),
     ("map_pass", "cur", "Map pass", "Reads the whole vault and proposes links and hub notes.", "mapper", "SYS"),
+    ("job_draft", "gpt", "Job: draft a document", "Writes a new version of a file in a Git server for a job the Assistant queued.", "jobs", "DRAFT_SYS"),
+    ("job_note", "gpt", "Job: change a note", "Proposes one change to a vault note for a job the Assistant queued.", "jobs", "NOTE_SYS"),
+    ("job_sort", "qwen", "Job: sort a note", "Sorts a note or text into the vault for a job the Assistant queued.", "jobs", "SORT_SYS"),
     ("assistant_chat", "pa", "Chat answer", "Answers your plain chat messages while the Assistant's switch is on.", "ui_chat", "ASSIST_SYS"),
 ]
 BY = {r[0]: r for r in REG}

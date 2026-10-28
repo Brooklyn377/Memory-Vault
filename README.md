@@ -90,8 +90,26 @@ Everything lives in the container. Stop it and delete it in the Proxmox web inte
 | `/opt/memory-agent`, `/opt/llama.cpp` | the program and the model server |
 | `/var/backups/memory-agent` | the code from the last three updates |
 
-Nothing leaves the container unless you set up publishing (below) or point a model at an external server
-on the Settings page.
+Nothing leaves the container unless you set up publishing (below), add Git servers, or point a model at an
+external server on the Settings page.
+
+## Optional: the Assistant
+A fourth model you chat with. It is off until you turn it on: on its card on the Settings page, choose a model
+(local) or an external server, load it, and tick "Use the Assistant for chat". Plain chat messages then go to it;
+`/fix` corrections stay with the Reviewer. While it is off or not answering, the Reviewer answers as before.
+
+- **It looks things up before answering:** all vault notes and raw chats, the agent's own state and logs, and
+  the Git servers it has a token for. Files named like keys, tokens, passwords or env files, and everything in
+  `/etc/memory-agent`, are never readable, and every result is scrubbed, because its model may run on another
+  machine.
+- **It hands slow work to the Reviewer and Sweeper as jobs:** draft a new version of a file in a Git server, change
+  a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card,
+  and the Queue page shows each job, its changes, and Approve / Reject / Cancel / Queue again. Approving a note
+  change files it to the inbox (the usual proposal path); approving a draft pushes nothing, it is there for you
+  to apply.
+- **Git servers** (Settings): add each repository with a name, what it is for, its HTTPS address, read only or
+  read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
+  `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is ever pushed.
 
 ## Security notes
 - The web page is plain HTTP on port 8000. Keep it on your local network, or put a reverse proxy with HTTPS

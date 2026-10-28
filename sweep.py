@@ -469,9 +469,10 @@ def rebuild(st=None, merges=None):
 
 
 def fingerprint():
-    """Cheap snapshot of what can give the sweep new work: imported chats and your answers."""
+    """Cheap snapshot of what can give the sweep new work: imported chats, your answers and the Assistant's jobs."""
+    import jobs
     parts = []
-    for d in (CONV_DIR, questions.QDIR):
+    for d in (CONV_DIR, questions.QDIR, jobs.DIR):
         for f in sorted(d.glob("*")) if d.exists() else []:
             st = f.stat()
             parts.append(f"{f.name}:{st.st_size}:{st.st_mtime_ns}")
@@ -493,14 +494,18 @@ def wait_for_news(before, poll=20, longest=3600):
 def main():
     if "--rebuild" in sys.argv:
         return rebuild()
+    import jobs
     agent.log("sweep started")
+    jobs.interrupted("qwen")
     while True:
         before = fingerprint()
         work, complete = one_pass()
         if "--once" in sys.argv:
             break
+        if work == 0 and jobs.run_one("qwen"):   # the Assistant's jobs only when chats are read
+            continue
         if work == 0:
-            wait_for_news(before)  # idle: wakes within ~20s of an import, an answer, or the reviewer coming back
+            wait_for_news(before)  # idle: wakes within ~20s of an import, an answer, a job, or the reviewer coming back
         elif complete:
             agent.log("sweep: pass complete")
 

@@ -47,7 +47,14 @@ ASSIST_SYS = (
     'open {"path":"<path>","start":<line>} reads a file or lists a folder; '
     'links {"path":"<note path>"} lists linked notes; tasks {} lists open to-do tasks; '
     "questions {} lists open Ask cards; queue {} shows what the Sweeper, Reviewer and Curator are doing; "
-    "repos {} lists the Git servers you can read and what each is for. "
+    "repos {} lists the Git servers you can read and what each is for; jobs {} lists jobs and their status. "
+    "For slow work, queue a job: "
+    'queue_job {"kind":"doc_draft","target":"git/<Git server name>/<file path>","instructions":"<what to change>"} '
+    "has the Reviewer draft a new version of that file from the notes; "
+    'queue_job {"kind":"note_update","target":"<vault note path>","instructions":"<what to change>"} has the Reviewer '
+    'propose one change to a note; queue_job {"kind":"sort_note","target":"<path, or empty>","instructions":"<the text '
+    'or what to sort>"} has the Sweeper sort a note or text into the vault. Every job result waits for the person to '
+    "approve it. "
     "Answer only from what the notes and tools show. After each fact, name its file in square brackets, like "
     "[vault/entities/foo.md]. If nothing covers it, say so. Be short and plain. Never guess, and never say you changed "
     "anything.")
@@ -179,6 +186,7 @@ def assistant_answer(m, context):
     """The tool loop: the Assistant looks things up until it answers, at most the look-up limit, then must answer.
     Returns (reply, files it opened)."""
     import assistant_tools
+    assistant_tools.CHAT["id"] = m["id"]
     budget = __import__("tuning").get("assistant.tool_calls")
     msgs = earlier_turns(m) + [{"role": "user", "content": f"{context}\n\nQUESTION: {m['text']}"}]
     opened, used = [], 0

@@ -180,11 +180,29 @@ def repos():
     return "\n".join(out) or "No Git servers the Assistant has a token for."
 
 
+CHAT = {"id": ""}   # the chat message being answered, so a queued job records where it came from
+
+
+def queue_job(kind, target, instructions):
+    import jobs
+    j = jobs.create(kind, target, instructions, CHAT["id"])
+    return (f"Queued job {j['id']} ({kind}) for the {jobs.NICE[j['worker']]}. It runs when that model is idle, and "
+            "the result waits for the person's approval as an Ask card. Tell them it is queued.")
+
+
+def job_list():
+    import jobs
+    rows = jobs.summary()
+    return "\n".join(f"- {j['id']} {j['kind']} {j['target'] or ''}: {j['status']}{' (' + j['error'] + ')' if j['error'] else ''}"
+                     for j in rows) or "No jobs yet."
+
+
 TOOLS = {"search": lambda a: search(a.get("text", ""), a.get("where", "all")),
          "open": lambda a: open_file(a.get("path", ""), a.get("start", 1)),
          "links": lambda a: links(a.get("path", "")),
          "tasks": lambda a: tasks(), "questions": lambda a: questions(), "queue": lambda a: queue(),
-         "repos": lambda a: repos()}
+         "repos": lambda a: repos(), "jobs": lambda a: job_list(),
+         "queue_job": lambda a: queue_job(a.get("kind"), a.get("target"), a.get("instructions"))}
 
 
 def run(name, args):

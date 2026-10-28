@@ -125,6 +125,11 @@ def answer(qid, text):
         agent.decide_note(q["payload"]["name"], text)
     elif q["kind"] in ("gitpull", "assistant"):   # notices: answering only acknowledges them
         pass
+    elif q["kind"] == "job":
+        if text not in ("approve", "reject"):
+            raise ValueError("unknown answer")
+        import jobs
+        jobs.decide(q["payload"]["job"], text == "approve")
     else:
         clean, _ = scrub(text)
         inbox = VAULT / "inbox"
