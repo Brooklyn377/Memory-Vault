@@ -202,6 +202,7 @@ THINK_HTML = r"""
     <div class="mrow" id="row-qwen"><i style="background:#4c9aff"></i><b>Sweeper</b><span class="st">…</span><span class="nm"></span></div>
     <div class="mrow" id="row-gpt"><i style="background:#f5a623"></i><b>Reviewer</b><span class="st">…</span><span class="nm"></span></div>
     <div class="mrow" id="row-cur"><i style="background:#34d399"></i><b>Curator</b><span class="st">...</span><span class="nm"></span></div>
+    <div class="mrow" id="row-pa"><i style="background:#e879f9"></i><b>Assistant</b><span class="st">...</span><span class="nm"></span></div>
     <div class="tot" id="tot"></div>
   </div>
 </div>
@@ -286,6 +287,7 @@ async function boot(){
 
 function show(m,s){
   const e=E[m],q=S[m];
+  if(!e||!e.st||!s)return;   // a model without a row on this page
   if(!s.up){e.st.textContent=m==="pa"?"not loaded":m==="cur"?(s.swapped?"loading":"unloaded"):(s.swapped?"unloaded (curator is working)":"server down");e.st.className="st";e.nm.innerHTML="this call <b>0</b> · <b>–</b> tok/s · context <b>–</b>";return;}
   const d=s.busy?s.decoded:0;
   let ph="idle";
@@ -361,8 +363,10 @@ async function tick(){
     }catch(e){}
     try{
       const d=await j("/api/think/stats");
-      IDS.forEach(m=>show(m,d.slots[m]));showTot(d.totals,d.slots);try{showMem(await j("/api/think/mem"))}catch(e2){}
+      IDS.forEach(m=>{try{show(m,d.slots[m])}catch(e2){}});   // one model's row can never blank the rest
+      try{showTot(d.totals,d.slots)}catch(e2){}
     }catch(e){}
+    try{showMem(await j("/api/think/mem"))}catch(e){}
   }finally{ticking=false;}
 }
 async function getRates(){try{rates=await j("/api/think/rate?minutes=60");draw();}catch(e){}}
