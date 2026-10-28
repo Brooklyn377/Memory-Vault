@@ -123,6 +123,8 @@ def answer(qid, text):
         if text not in ("retry", "skip"):
             raise ValueError("unknown answer")
         agent.decide_note(q["payload"]["name"], text)
+    elif q["kind"] in ("gitpull", "assistant"):   # notices: answering only acknowledges them
+        pass
     else:
         clean, _ = scrub(text)
         inbox = VAULT / "inbox"

@@ -240,7 +240,7 @@ def watch():
                 questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',
                               why="Check the Assistant's server on the Settings page. On the Chat page, Send again "
                                   "queues the message again; with the Assistant's switch off, the Reviewer answers it.",
-                              kind="assistant", payload={"chat": m["id"]})
+                              kind="assistant", options=[{"label": "OK", "value": "ok"}], payload={"chat": m["id"]})
                 agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
             else:
                 m["tries"] += 1

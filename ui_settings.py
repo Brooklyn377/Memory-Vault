@@ -132,8 +132,8 @@ def register(app, authed):
     def settings_page(request: Request):
         if not authed(request):
             return RedirectResponse("/")
-        import ui_server, ui_account, ui_curator, ui_cpu, ui_prompts, power, ui_tuning
-        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_cpu.HTML + ui_account.HTML + ui_tuning.HTML + power.HTML).replace("__ACTIVE__", "settings")
+        import ui_server, ui_account, ui_curator, ui_cpu, ui_prompts, power, ui_tuning, ui_git
+        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_git.HTML + ui_cpu.HTML + ui_account.HTML + ui_tuning.HTML + power.HTML).replace("__ACTIVE__", "settings")
 
     import downloads
     downloads.register(app, authed)
@@ -151,6 +151,8 @@ def register(app, authed):
     ui_prompts.register(app, authed)
     import ui_tuning
     ui_tuning.register(app, authed)
+    import ui_git
+    ui_git.register(app, authed)
     import ui_cpu
     ui_cpu.register(app, authed)
     import remote
