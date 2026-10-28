@@ -7,6 +7,11 @@ set -euo pipefail
 REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the code is downloaded from
 REF="${MA_REF:-main}"                        # branch or tag
 SMALL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+# Default models, the ones the original install runs. A link that does not answer is skipped at install time;
+# that model can then be downloaded on the Settings page.
+DEF_SWEEPER="https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"
+DEF_REVIEWER="https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-mxfp4.gguf"
+DEF_CURATOR="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF/resolve/main/LFM2.5-24B-A2B-Q4_K_M.gguf"
 
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
 BRIDGE=""; IP=""; GW=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0
@@ -29,9 +34,9 @@ Container
   --gw ADDRESS          gateway, needed with a fixed address
 
 Models (.gguf download links, e.g. Hugging Face "resolve" links)
-  --sweeper-url URL     main model (reads chats)
-  --reviewer-url URL    reviewer model (checks facts, chat)
-  --curator-url URL     curator model (polishes notes; optional)
+  --sweeper-url URL     main model, reads chats (default: Qwen3.5-9B Q4_K_M)
+  --reviewer-url URL    reviewer model, checks facts and answers chat (default: gpt-oss-20b MXFP4)
+  --curator-url URL     curator model, polishes notes (default: LFM2.5-24B-A2B Q4_K_M)
   --small               one tiny test model for all three, small container
   --no-models           no models now; download them later on the Settings page
 
@@ -150,16 +155,22 @@ else
     say "Models"
     if (( SMALL )); then
         SWEEPER_URL="$SMALL_URL"; REVIEWER_URL="$SMALL_URL"; CURATOR_URL="$SMALL_URL"
-    elif (( ! NOMODELS )) && [[ -z "$SWEEPER_URL$REVIEWER_URL$CURATOR_URL" ]] && (( ! YES )) && [[ -r /dev/tty ]]; then
-        echo "Paste a download link to a .gguf file for each model, or leave blank to pick it later on the Settings page."
-        echo "The original install used Qwen3.5-9B (Q4_K_M), gpt-oss-20b (MXFP4) and LFM2.5-24B-A2B (Q4_K_M)."
-        read -r -p "Sweeper model link: " SWEEPER_URL </dev/tty || true
-        read -r -p "Reviewer model link: " REVIEWER_URL </dev/tty || true
-        read -r -p "Curator model link: " CURATOR_URL </dev/tty || true
+    elif (( ! NOMODELS )); then
+        (( YES )) || ! [[ -r /dev/tty ]] || echo "Enter takes the default model, - skips it (download it later on the Settings page), or paste another .gguf link."
+        ask SWEEPER_URL "Sweeper model" "$DEF_SWEEPER"
+        ask REVIEWER_URL "Reviewer model" "$DEF_REVIEWER"
+        ask CURATOR_URL "Curator model" "$DEF_CURATOR"
     fi
-    for pair in "Sweeper|$SWEEPER_URL" "Reviewer|$REVIEWER_URL" "Curator|$CURATOR_URL"; do
-        u="${pair#*|}"
-        [[ -n "$u" ]] && echo "  ${pair%%|*}: $(basename "${u%%\?*}"), $(remote_size "$u")"
+    for var in SWEEPER_URL REVIEWER_URL CURATOR_URL; do
+        [[ "${!var}" == - ]] && printf -v "$var" '%s' ""
+        u="${!var}"; role="${var%_URL}"; role="${role,,}"
+        [[ -n "$u" ]] || continue
+        if curl -fsIL --max-time 20 -o /dev/null "$u"; then
+            echo "  $role: $(basename "${u%%\?*}"), $(remote_size "$u")"
+        else
+            echo "  $role: $u does not answer; skipped, download it later on the Settings page"
+            printf -v "$var" '%s' ""
+        fi
     done
     [[ -z "$SWEEPER_URL$REVIEWER_URL$CURATOR_URL" ]] && echo "  none now"
 

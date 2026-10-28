@@ -119,7 +119,10 @@ if (( ! UPDATE )); then
         FILE[$role]="$name"
         if [[ -s "$MODELS/$name" ]]; then echo "$name already present"; continue; fi
         echo "downloading $name"
-        run curl -fL --retry 3 -o "$MODELS/$name.part" "$u"
+        if ! run curl -fL --retry 3 -o "$MODELS/$name.part" "$u"; then
+            rm -f "$MODELS/$name.part"; unset "FILE[$role]"
+            echo "download of $name failed; pick that model later on the Settings page" >&2; continue
+        fi
         if (( ! DRY )); then
             if [[ "$(head -c 4 "$MODELS/$name.part")" != "GGUF" ]]; then
                 rm -f "$MODELS/$name.part"; echo "$name is not a GGUF file, removed" >&2; unset "FILE[$role]"; continue
