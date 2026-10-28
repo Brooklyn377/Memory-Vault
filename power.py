@@ -12,7 +12,7 @@ import settings
 
 STATE = agent.STATE
 UNIT = applier.UNIT
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator"}
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 GIB = 1024 ** 3
 
 
@@ -43,8 +43,9 @@ def consume_kill(m):
 
 
 def wait_on(m):
-    """Calls to an unloaded model wait here until you load it again."""
-    if m == "cur":
+    """Calls to an unloaded model wait here until you load it again. Not the Curator (loaded on demand) or the
+    Assistant (chat answers with the Reviewer while it is not loaded)."""
+    if m in ("cur", "pa"):
         return
     while off(m):
         time.sleep(5)
@@ -70,6 +71,8 @@ def state(m):
         return {"state": "loaded", "detail": ""}
     if h == "loading" or (applier._active(m) and h == "down"):
         return {"state": "loading", "detail": ""}
+    if m == "pa":
+        return {"state": "unloaded", "detail": "Not loaded. Choose a model under Server, then hold to load it, or use an external server."}
     if m != "cur" and off(m):
         return {"state": "unloaded", "detail": "Unloaded by you. Its calls wait until you load it."}
     if m != "cur" and swap.holding():
@@ -82,7 +85,9 @@ def load(m, force=False):
     import swap
     if remote.enabled(m):
         raise ValueError(f"The {NICE[m]} uses an external server. Switch it to Local first.")
-    if m != "cur" and swap.holding():
+    if m == "pa" and not settings.get("pa")["model_file"]:
+        raise ValueError("Choose the Assistant's model file under Server and press Apply all first.")
+    if m in ("qwen", "gpt") and swap.holding():
         raise ValueError("The Curator holds the memory right now. Unload the Curator first; the Sweeper and Reviewer load back after that.")
     if applier._active(m):
         _flag(m, "off").unlink(missing_ok=True)
@@ -101,6 +106,8 @@ def load(m, force=False):
     if m == "cur":
         _flag(m, "on").write_text("1")
     applier.write_env(m, s[m])
+    if m == "pa":   # off by default: loading it also starts it at boot, until you unload it
+        subprocess.run(["systemctl", "enable", UNIT[m]], timeout=30)
     subprocess.run(["systemctl", "start", "--no-block", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} loaded by you" + (" (over the memory limit, confirmed)" if need > limit else ""))
 
@@ -127,6 +134,8 @@ def unload(m):
             except Exception:
                 pass
             note = "Curator stopped and its switch turned off. The Sweeper and Reviewer load back now."
+    elif m == "pa":
+        subprocess.run(["systemctl", "disable", UNIT[m]], timeout=30)
     else:
         _flag(m, "off").write_text("1")
     subprocess.run(["systemctl", "stop", "--no-block", UNIT[m]], timeout=30)
@@ -181,7 +190,7 @@ details.sec>summary{cursor:pointer;font-weight:600;padding:6px 0}
 <div id="mm"></div>
 <script>
 (function(){
-const M=[["qwen","Sweeper","#4c9aff"],["gpt","Reviewer","#f5a623"],["cur","Curator","#34d399"]];
+const M=[["qwen","Sweeper","#4c9aff"],["gpt","Reviewer","#f5a623"],["cur","Curator","#34d399"],["pa","Assistant","#e879f9"]];
 const UI={};
 let done=false;
 function find(sel,pre){const cs=document.querySelectorAll(sel);for(let i=0;i<cs.length;i++){const t=cs[i].querySelector("h3");if(t&&t.textContent.indexOf(pre)===0)return cs[i]}return null}

@@ -19,7 +19,7 @@ VAULT, STATE = curator.VAULT, curator.STATE
 MAP, OUT = STATE / "curator_map.json", VAULT / "curator"
 SKIP = ("raw/", "inbox/", "curator/")
 KINDS = {"entities": "entity", "summaries": "summary", "timelines": "timeline", "tasks": "task", "files": "file"}
-SYS = ("You are the curator of one person's homelab notes vault, doing a slow review of the whole vault while nothing "
+SYS = ("You are the curator of one person's notes vault, doing a slow review of the whole vault while nothing "
        "else needs you. You get ALL NOTES (path and title), the titles of the SOURCE CHATS, and DETAILED NOTES with "
        "a type, link count and a short gist. Smaller models wrote these notes a few messages at a time, so many "
        "related notes are not linked. Find (1) pairs of notes that are clearly about related things but are not "

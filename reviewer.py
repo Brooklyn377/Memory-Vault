@@ -26,7 +26,7 @@ SCANNED = STATE / "todo_scanned.json"
 NOTE_CHARS = __import__("tuning").get("reviewer.note_chars")
 
 SCAN_SYS = (
-    "You read one note from a person's homelab notes vault and list things the PERSON still has to do or "
+    "You read one note from a person's notes vault and list things the PERSON still has to do or "
     "finish: unfinished repairs, setup steps not done yet, pending decisions, plans not started. Leave out "
     "anything the note says was carried out, and generic advice. A task is only done if the note says it was actually carried out (installed, fixed, configured, tested). A plan, a design, a decision or an explanation that was 'established' or 'agreed' is not a finished task: its follow-up steps still count. If the note lists next steps, list those. Do not debate wording; decide quickly from what the note says. Reply with ONLY JSON: "
     '{"tasks":[{"title":"<short imperative>","detail":"<one sentence of context>",'

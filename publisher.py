@@ -21,7 +21,7 @@ MAX_BYTES = 200 * 1024
 TOP_LEVEL_OK = (".yaml", ".yml", ".toml", ".conf", ".ini")
 
 PUBLISH_SYS = (
-    "You decide whether one note from a person's private homelab notes vault belongs in the shared notes repository. "
+    "You decide whether one note from a person's private notes vault belongs in the shared notes repository. "
     "Publish notes that record something specific and useful: a named device, service, project, decision or task with real "
     "content. Keep local (do not publish) notes that are trivial, generic, near-empty or only a stray word. "
     'Reply with ONLY JSON: {"decision":"publish|local","reason":"<one short sentence>"}.')

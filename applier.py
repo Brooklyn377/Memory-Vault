@@ -15,9 +15,9 @@ import serverflags
 import settings
 
 ENV = {"qwen": Path("/etc/memory-agent/llama-qwen.env"), "gpt": Path("/etc/memory-agent/llama-gpt.env"),
-       "cur": Path("/etc/memory-agent/llama-cur.env")}
-UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm"}
-PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082}
+       "cur": Path("/etc/memory-agent/llama-cur.env"), "pa": Path("/etc/memory-agent/llama-pa.env")}
+UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm", "pa": "memory-assistant-llm"}
+PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082, "pa": 8083}
 STATE = Path("/var/lib/memory-agent")
 PENDING, LAST = STATE / "pending_apply.json", STATE / "last_apply.json"
 KEYS = ("model_file", "context", "threads", "parallel")

@@ -37,7 +37,7 @@ MAX_TRIES = 3
 HEAD_RE = re.compile(r"^### (Human|Assistant)(?: \(([^)]*)\))?[ \t]*$", re.M)
 
 SYS = (
-    "You read one chat between a person and an AI assistant about the person's homelab, one chunk "
+    "You read one chat between a person and an AI assistant, one chunk "
     "at a time, to keep documentation notes. Reply with ONLY JSON: "
     '{"recap":"<updated recap of the WHOLE conversation so far, facts and decisions>",'
     '"facts":[{"entity":"<specific named thing>","kind":"added|removed|changed|decided|problem|fix|info",'

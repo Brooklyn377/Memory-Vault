@@ -14,7 +14,7 @@ RETRIES = int(__import__("tuning").get("review.retries"))
 
 GATE_SYS = (
     "You are the reviewer for a notes agent. A small model read one part of a chat and wants to record FACTS "
-    "about named entities in a person's homelab notes vault. You see its recap and each fact with the exact "
+    "about named entities in a person's notes vault. You see its recap and each fact with the exact "
     "quote it claims supports it. Judge only what you can see: drop a fact if it is not what the quote says, "
     "is about nothing specific (a stray word, a file name, generic advice), or names a thing wrongly. "
     "Reject the whole update only if most of it is wrong or empty. Do not drop a fact just because it is minor. "

@@ -114,7 +114,7 @@ def group(name):
 def in_use():
     """File name -> which servers still use it: saved settings, queued changes and the env files."""
     import settings
-    nice = {"qwen": "the Sweeper", "gpt": "the Reviewer", "cur": "the Curator"}
+    nice = {"qwen": "the Sweeper", "gpt": "the Reviewer", "cur": "the Curator", "pa": "the Assistant"}
     used = {}
 
     def add(f, who):

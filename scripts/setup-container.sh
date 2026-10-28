@@ -20,6 +20,7 @@ LLAMA_REPO=https://github.com/ggml-org/llama.cpp
 SKIP_PY=(fix_collisions.py apply_edits.py patch_commit_only.py)
 # Units enabled at boot. memory-publish needs a Gitea server (see README); memory-backup needs a script
 # that is not part of this project. memory-curator-llm and memory-bootstrap are started on demand.
+# memory-assistant-llm stays off until you load the Assistant on the Settings page.
 ENABLE=(llama-server memory-reviewer memory-web memory-importer memory-journal memory-agent
         memory-review-worker memory-chat memory-filechanges memory-curator memory-sweep)
 
@@ -144,6 +145,7 @@ for k in ("qwen", "gpt", "cur"):
     out[k] = {"threads": threads}
     if files[k]:
         out[k]["model_file"] = files[k]
+out["pa"] = {"threads": threads}   # the Assistant: no model until you choose one
 if small:
     out["cur"]["context"] = 16384  # the default 131072 is for the large curator model
 print(json.dumps(out, indent=1))
@@ -151,18 +153,6 @@ PY
 )"
         write_file "$STATE/settings.json" 600 <<<"$json"
     fi
-    # The llama env files hold what settings.json says, in the format applier.write_env writes.
-    for pair in qwen:llama-qwen gpt:llama-gpt cur:llama-cur; do
-        role="${pair%%:*}"; env="$ETC/${pair#*:}.env"
-        [[ -f "$env" ]] && continue
-        if (( DRY )); then echo "+ write $env from settings.json"; continue; fi
-        (cd "$APP" && "$APP/venv/bin/python" - "$role" <<'PY'
-import sys, settings, serverflags
-s = settings.get(sys.argv[1])
-print(f"MODEL={s['model_file']}\nCTX={s['context']}\nTHREADS={s['threads']}\nPARALLEL={s['parallel']}\nEXTRA={serverflags.build(s)}")
-PY
-) | write_file "$env" 600
-    done
     if [[ ! -f "$ETC/config.yaml" ]]; then
         sed -e "s#^  vault: .*#  vault: $VAULT#" "$SRC/config.example.yaml" | write_file "$ETC/config.yaml" 600
     fi
@@ -174,6 +164,19 @@ PY
     # memory-publish reads this file; it stays empty and the unit stays off until publishing is set up.
     [[ -f "$ETC/publish.env" ]] || printf 'GITEA_WRITE_TOKEN=\n' | write_file "$ETC/publish.env" 600
 fi
+# The llama env files hold what settings.json says, in the format applier.write_env writes. Also on updates:
+# a model slot added in a newer version gets its file, and existing files are never touched.
+for pair in qwen:llama-qwen gpt:llama-gpt cur:llama-cur pa:llama-pa; do
+    role="${pair%%:*}"; env="$ETC/${pair#*:}.env"
+    [[ -f "$env" ]] && continue
+    if (( DRY )); then echo "+ write $env from settings.json"; continue; fi
+    (cd "$APP" && "$APP/venv/bin/python" - "$role" <<'PY'
+import sys, settings, serverflags
+s = settings.get(sys.argv[1])
+print(f"MODEL={s['model_file']}\nCTX={s['context']}\nTHREADS={s['threads']}\nPARALLEL={s['parallel']}\nEXTRA={serverflags.build(s)}")
+PY
+) | write_file "$env" 600
+done
 
 say "Services"
 for f in "$SRC"/systemd/*.service; do

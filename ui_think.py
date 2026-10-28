@@ -9,7 +9,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import thinklog
 import ui_extra
 
-SERVERS = {"qwen": "http://127.0.0.1:8080", "gpt": "http://127.0.0.1:8081", "cur": "http://127.0.0.1:8082"}
+SERVERS = {"qwen": "http://127.0.0.1:8080", "gpt": "http://127.0.0.1:8081", "cur": "http://127.0.0.1:8082",
+           "pa": "http://127.0.0.1:8083"}
 BUCKET = 30  # seconds per point on the speed chart
 CHAR_BUDGET = 16000  # characters of thinking text loaded per scroll
 
@@ -207,11 +208,11 @@ THINK_HTML = r"""
 <div class="bot" style="margin:0 12px 16px"><div id="mem"></div></div>
 <script>
 (function(){
-const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"}};
-const IDS=["qwen","gpt","cur"];
+const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"},pa:{name:"Assistant",color:"#e879f9"}};
+const IDS=Object.keys(M);
 const chat=document.getElementById("chat"),head=document.getElementById("head"),cv=document.getElementById("cv"),tot=document.getElementById("tot");
-const B={},S={qwen:{kind:"",prev:null},gpt:{kind:"",prev:null},cur:{kind:"",prev:null}},E={};
-let oldest="0",newest="0",more=false,loading=false,ticking=false,rates={qwen:[],gpt:[],cur:[]};
+const B={},S={qwen:{kind:"",prev:null},gpt:{kind:"",prev:null},cur:{kind:"",prev:null},pa:{kind:"",prev:null}},E={};
+let oldest="0",newest="0",more=false,loading=false,ticking=false,rates={qwen:[],gpt:[],cur:[],pa:[]};
 IDS.forEach(m=>{E[m]={st:document.querySelector("#row-"+m+" .st"),nm:document.querySelector("#row-"+m+" .nm")};});
 const j=async u=>{const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(r.status);return r.json();};
 const fmt=n=>Number(n||0).toLocaleString();
@@ -285,7 +286,7 @@ async function boot(){
 
 function show(m,s){
   const e=E[m],q=S[m];
-  if(!s.up){e.st.textContent=m==="cur"?(s.swapped?"loading":"unloaded"):(s.swapped?"unloaded (curator is working)":"server down");e.st.className="st";e.nm.innerHTML="this call <b>0</b> · <b>–</b> tok/s · context <b>–</b>";return;}
+  if(!s.up){e.st.textContent=m==="pa"?"not loaded":m==="cur"?(s.swapped?"loading":"unloaded"):(s.swapped?"unloaded (curator is working)":"server down");e.st.className="st";e.nm.innerHTML="this call <b>0</b> · <b>–</b> tok/s · context <b>–</b>";return;}
   const d=s.busy?s.decoded:0;
   let ph="idle";
   if(s.busy)ph=s.decoded>0?(q.kind==="r"?"thinking":q.kind==="o"?"answering":"generating"):"reading prompt";
@@ -308,17 +309,17 @@ function showTot(t,sl){
   tot.innerHTML="All-time tokens generated <b>"+fmt(sum)+"</b> · "+parts.join(" · ");
 }
 
-const MEMC={qwen:"#4c9aff",gpt:"#f5a623",cur:"#34d399"},MEMN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator"};
+const MEMC={qwen:"#4c9aff",gpt:"#f5a623",cur:"#34d399",pa:"#e879f9"},MEMN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
 const gbs=n=>(n/1073741824).toFixed(1);
 function showMem(d){
   const el=document.getElementById("mem");if(!el||!d||!d.total)return;
   const T=d.total,over=d.projected-d.safe;
   let bar='<div style="position:relative;display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line);margin:6px 0">';
-  ["qwen","gpt","cur"].forEach(k=>{const m=d.models[k];if(m&&m.rss)bar+='<div style="width:'+(m.rss/T*100)+'%;background:'+MEMC[k]+'"></div>'});
+  IDS.forEach(k=>{const m=d.models[k];if(m&&m.rss)bar+='<div style="width:'+(m.rss/T*100)+'%;background:'+MEMC[k]+'"></div>'});
   bar+='<div style="width:'+(d.other/T*100)+'%;background:#8b93a7"></div>';
   bar+='<div style="position:absolute;top:0;bottom:0;left:'+(d.safe/T*100)+'%;width:2px;background:#fff"></div></div>';
   let rows="";
-  ["qwen","gpt","cur"].forEach(k=>{const m=d.models[k];if(!m)return;
+  IDS.forEach(k=>{const m=d.models[k];if(!m)return;
     const grow=m.exp>m.rss*1.05?' · expected '+gbs(m.exp)+' GB when fully loaded':'';
     rows+='<div><span style="color:'+MEMC[k]+'">'+MEMN[k]+'</span> <b>'+gbs(m.rss)+' GB</b> (weights '+gbs(m.file)+' + working '+gbs(m.anon)+')'+grow+'</div>'});
   if(!rows)rows='<div>No model servers loaded.</div>';

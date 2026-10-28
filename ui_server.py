@@ -32,7 +32,10 @@ def limits(model, file, parallel, strict=True):
     """The largest context estimated to fit in memory. strict: refuse when even MIN_CTX does not fit."""
     if not NAME.fullmatch(file) or not (gguf_info.MODELS / file).is_file():
         raise ValueError("pick a model from the list")
-    others = [(v["model_file"], v["context"], v["parallel"]) for k, v in settings.load().items() if k != model and "cur" not in (k, model)]
+    # The servers that share memory with this one: not the Curator (it swaps them out), and the Assistant only
+    # while its server runs, so turning it on is what changes the others' estimates.
+    others = [(v["model_file"], v["context"], v["parallel"]) for k, v in settings.load().items()
+              if k != model and "cur" not in (k, model) and v.get("model_file") and (k != "pa" or applier._active("pa"))]
     try:
         cap = gguf_info.max_context(file, others, parallel)
     except Exception:
@@ -42,7 +45,8 @@ def limits(model, file, parallel, strict=True):
     return cap
 
 
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator"}
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
+MODELS = tuple(NICE)
 
 
 def _plan(d):
@@ -53,7 +57,7 @@ def _plan(d):
     import ui_settings
     s, pend, jobs, warn = settings.load(), applier.pending(), {}, []
     prop = settings.load()   # the model settings as they would be after this change
-    for m in ("qwen", "gpt", "cur"):
+    for m in MODELS:
         cur, f = s[m], (d.get("servers") or {}).get(m)
         vals = None
         if f and f.get("remote") is not None:
@@ -110,12 +114,12 @@ def register(app, authed):
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
                 "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
-                                "health": applier.health(m), "pending": pend.get(m)} for m in ("qwen", "gpt", "cur")}}
+                                "health": applier.health(m), "pending": pend.get(m)} for m in MODELS}}
 
     @router.get("/api/server/limits")
     def lim(request: Request, model: str, file: str, parallel: int = 4):
         need(request)
-        if model not in ("qwen", "gpt", "cur"):
+        if model not in MODELS:
             raise HTTPException(status_code=400, detail="unknown server")
         try:
             return {"max": limits(model, file, max(1, min(parallel, MAX_SLOTS))), "min": MIN_CTX}
@@ -162,7 +166,7 @@ def register(app, authed):
     async def cancel(request: Request):
         need(request)
         m = (await request.json()).get("model")
-        if m not in ("qwen", "gpt", "cur"):
+        if m not in MODELS:
             raise HTTPException(status_code=400, detail="unknown server")
         applier.cancel(m)
         return {"ok": True}
@@ -217,7 +221,8 @@ HTML = r"""
 <div id="sv"></div>
 <script>
 (function(){
-const NM={qwen:"Sweeper server (port 8080)",gpt:"Reviewer server (port 8081)",cur:"Curator server (port 8082)"};
+const NM={qwen:"Sweeper server (port 8080)",gpt:"Reviewer server (port 8081)",cur:"Curator server (port 8082)",pa:"Assistant server (port 8083)"};
+const IDS=Object.keys(NM);
 const E={};
 let T=null,FS=[];
 const lastEl=h("div",{class:"card mut"},"");
@@ -237,7 +242,7 @@ async function limit(m){const e=E[m];
  catch(err){e.lim.textContent=err.message}}
 function mk(m,s,models,maxT){
  const e=E[m]={};
- e.file=h("select",{},...models.map(n=>h("option",{value:n},n)));e.file.value=s.file;
+ e.file=h("select",{},...(s.file?[]:[h("option",{value:""},"No model chosen")]),...models.map(n=>h("option",{value:n},n)));e.file.value=s.file;
  e.ctx=num(s.context);e.thr=num(s.threads);e.par=num(s.parallel);
  e.fx={};
  const frows=(FS||[]).map(function(f){
@@ -278,19 +283,19 @@ function mk(m,s,models,maxT){
  return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,fld("Model file",e.file),fld("Context (tokens)",e.ctx),e.lim,
   fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv,h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
 async function stat(){clearTimeout(T);const d=await api("/api/server/info");let busy=false;
- for(const m of ["qwen","gpt","cur"]){const s=d.servers[m],e=E[m];if(!e)continue;
-  e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":s.health)+(s.pending?" · change queued, waiting for idle":"");
+ for(const m of IDS){const s=d.servers[m],e=E[m];if(!e)continue;
+  e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
   if(s.remote&&s.remote.back)e.st.textContent+=" · switching back to the local model; calls stay on the external server until it has loaded";
   e.cancel.style.display=s.pending?"":"none";
-  if((s.health!=="ready"&&!(m==="cur"&&s.health==="down"))||s.pending)busy=true}
+  if((s.health!=="ready"&&!((m==="cur"||m==="pa")&&s.health==="down"))||s.pending)busy=true}
  const l=d.last;
  lastEl.textContent=!l?"No server change made yet.":l.error?"Last change ("+NM[l.model]+") failed and was rolled back: "+l.error:"Last change, "+NM[l.model]+": "+fmt(l.before)+"  →  "+fmt(l.after);
  if(busy)T=setTimeout(stat,2000)}
 window.applyAll=async()=>{
  const C=window.COLS||{},body={models:{},servers:{}};
- for(const m of ["qwen","gpt","cur"]){if(C["m_"+m])body.models[m]=C["m_"+m]();if(C["s_"+m])body.servers[m]=C["s_"+m]()}
- const note=t=>{for(const m of ["qwen","gpt","cur"])if(E[m])E[m].msg.textContent=t};
+ for(const m of IDS){if(C["m_"+m])body.models[m]=C["m_"+m]();if(C["s_"+m])body.servers[m]=C["s_"+m]()}
+ const note=t=>{for(const m of IDS)if(E[m])E[m].msg.textContent=t};
  note("");
  const c=await post("/api/settings/check",body);
  if(!c.ok){note(c.detail);return}
@@ -303,7 +308,7 @@ window.applyAll=async()=>{
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
  stat()};
 (async()=>{const d=await api("/api/server/info");
- FS=d.flagspec||[];$("#sv").replaceChildren(...["qwen","gpt","cur"].map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
+ FS=d.flagspec||[];$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
 })();
 </script>
 """

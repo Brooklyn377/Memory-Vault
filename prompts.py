@@ -16,7 +16,7 @@ KEEP, MAX_CHARS = 20, 30000
 KEYS = re.compile(r'"([A-Za-z_]\w*)"\s*:')
 
 LOCAL = {
-    "curator_intro": "You are the curator of one person's homelab notes vault. Take your time and be thorough; nothing else needs you. You get ONE entity note, numbered fact lines, the notes it links to, the SOURCE CHATS and CANDIDATE notes.",
+    "curator_intro": "You are the curator of one person's notes vault. Take your time and be thorough; nothing else needs you. You get ONE entity note, numbered fact lines, the notes it links to, the SOURCE CHATS and CANDIDATE notes.",
     "curator_verify": "VERIFY: for each fact line say supported, unsupported or contradicted by the SOURCE CHATS. For contradicted, quote the chat text that shows it.",
     "curator_connect": "CONNECT: smaller models wrote these notes from a few messages at a time and missed links across chats. Read the source chats for things the notes missed, and propose a link to a CANDIDATE only if the two notes are clearly about related things; quote exact words from this note or the source chats (quote_a) and exact words from the candidate (quote_b). Also report a CONFLICT if a candidate or a linked note states something that disagrees with this note.",
     "curator_prune": "PRUNE: decide keep, prune or unsure. Prune only if the note records nothing useful: a stray word, a generic term, a file name, or something mentioned in passing with no lasting information. Set certain true only if you are sure.",

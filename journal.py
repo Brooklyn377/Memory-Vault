@@ -19,7 +19,7 @@ MAX_READ = 400000
 MASK = flags.CLOSE_WRITE | flags.MOVED_TO | flags.MOVED_FROM | flags.CREATE | flags.DELETE
 STATE_DIRS = ("prompts", "todo", "questions", "proposals", "trash", "inbox_queue", "file_queue", "curator_queue", "review_queue")
 STATE_FILES = {"settings.json", "curator_cfg.json", "tuning.json", "entity_blocklist.json", "entity_keep.json", "merges.yaml", "not_same.json"}
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator"}
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 SKIP_SUFFIX = (".tmp", ".part", ".swp", "~", ".lock")
 MISSING = object()
 

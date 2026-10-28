@@ -1,0 +1,13 @@
+[Unit]
+Description=Assistant model server (off until you load it on the Settings page)
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/memory-agent/llama-pa.env
+ExecStartPre=/usr/bin/test -s /opt/models/${MODEL}
+ExecStart=/opt/llama.cpp/build/bin/llama-server -m /opt/models/${MODEL} -t ${THREADS} -c ${CTX} -np ${PARALLEL} $EXTRA --kv-unified --jinja --host 127.0.0.1 --port 8083
+Restart=on-failure
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

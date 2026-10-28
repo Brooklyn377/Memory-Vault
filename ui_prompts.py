@@ -49,7 +49,7 @@ HTML = r"""
 <div id="pp" class="pp"></div>
 <script>
 (function(){
-const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator"};
+const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
 const NODES={},OPEN={};
 let D=[];
 function when(t){return new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}
@@ -82,10 +82,12 @@ function item(p){
  return d}
 function render(){
  const root=h("div",{});
- ["qwen","gpt","cur"].forEach(function(m){
+ Object.keys(MN).forEach(function(m){
   const card=h("div",{class:"card"},h("h3",{},MN[m]+" prompts"));
   if(m==="cur")card.append(h("div",{class:"mut"},"The five note-review parts are joined: intro, then the jobs switched on in the Curator card, then the format."));
-  D.filter(function(p){return p.model===m}).forEach(function(p){const n=item(p);NODES[p.id]=n;card.append(n)});
+  const own=D.filter(function(p){return p.model===m});
+  if(!own.length)card.append(h("div",{class:"mut"},"No prompts yet."));
+  own.forEach(function(p){const n=item(p);NODES[p.id]=n;card.append(n)});
   root.append(card)});
  $("#pp").replaceChildren(root)}
 (async function(){const d=await api("/api/prompts");D=d.prompts;render()})();

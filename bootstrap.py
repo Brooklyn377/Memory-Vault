@@ -23,7 +23,7 @@ HEAD_CHARS, TAIL_CHARS = 2400, 1200
 MAX_ENTITIES = 8
 MAX_TRIES = 3
 
-SYS = ("You summarize one document for a personal homelab documentation vault. Reply with ONLY JSON: "
+SYS = ("You summarize one document for a personal documentation vault. Reply with ONLY JSON: "
        '{"title":"<short title>","summary":"<3-5 factual sentences>",'
        '"entities":[{"name":"<specific thing: host, service, device, project, tool>",'
        '"fact":"<what this document says about it, one short sentence>"}]}. '

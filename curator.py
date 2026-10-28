@@ -358,7 +358,7 @@ def _system_default(cfg):
         jobs.append("PRUNE: decide keep, prune or unsure. Prune only if the note records nothing useful: a stray word, "
                     "a generic term, a file name, or something mentioned in passing with no lasting information. "
                     "Set certain true only if you are sure.")
-    return ("You are the curator of one person's homelab notes vault. Take your time and be thorough; nothing else "
+    return ("You are the curator of one person's notes vault. Take your time and be thorough; nothing else "
             "needs you. You get ONE entity note, numbered fact lines, the notes it links to, the SOURCE CHATS and "
             "CANDIDATE notes. " + " ".join(jobs) + " Quote exactly; never invent; when unsure say so. Reply with ONLY "
             'JSON: {"facts":[{"line":1,"verdict":"supported|unsupported|contradicted","quote":"","note":""}],'

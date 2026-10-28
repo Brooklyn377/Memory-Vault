@@ -11,6 +11,9 @@ DEFAULTS = {
             "temperature": 0.2, "max_tokens": {"review": 8000, "chat": 8000}, "reasoning_effort": "low"},
     "cur": {"model_file": "LFM2.5-24B-A2B-Q4_K_M.gguf", "context": 131072, "threads": 10, "parallel": 1,
             "temperature": 0.2, "max_tokens": {"curate": 16000}, "reasoning_effort": "low"},
+    # The Assistant: off until you turn it on, with no model chosen, so a new install behaves as before.
+    "pa": {"enabled": False, "model_file": "", "context": 16384, "threads": 10, "parallel": 1,
+           "temperature": 0.3, "max_tokens": {"chat": 8000}, "reasoning_effort": "low"},
 }
 
 

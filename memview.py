@@ -4,7 +4,7 @@ import os
 import settings
 
 GIB = 1024 ** 3
-PORTS = {"8080": "qwen", "8081": "gpt", "8082": "cur"}
+PORTS = {"8080": "qwen", "8081": "gpt", "8082": "cur", "8083": "pa"}
 
 
 def _meminfo():

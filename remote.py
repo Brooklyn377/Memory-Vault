@@ -17,9 +17,10 @@ import agent
 import settings
 
 KEYDIR = Path("/etc/memory-agent")
-PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082}
-UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm"}
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator"}
+PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082, "pa": 8083}
+UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm", "pa": "memory-assistant-llm"}
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
+ON_DEMAND = ("cur", "pa")   # no local server is kept running for these: nothing to wait for or start when going back
 NAME = re.compile(r"[\w.:/@\-]{1,200}")
 _cache = {}
 
@@ -183,8 +184,8 @@ def save(model, d):
         new.pop("back", None)
     elif was:
         new = dict(old)
-        new["enabled"] = model != "cur"   # the Curator's local model is loaded on demand, so there is nothing to wait for
-        new["back"] = model != "cur"
+        new["enabled"] = model not in ON_DEMAND   # nothing local to wait for
+        new["back"] = model not in ON_DEMAND
     else:
         new = dict(old)
         new["enabled"] = False
@@ -196,7 +197,7 @@ def save(model, d):
         subprocess.run(["systemctl", "stop", "--no-block", UNIT[model]], timeout=30)
         agent.log(f"settings: {NICE[model]} now uses the external server {cfg['url']}")
     elif not cfg["enabled"] and was:
-        if model != "cur":
+        if model not in ON_DEMAND:
             subprocess.run(["systemctl", "start", "--no-block", UNIT[model]], timeout=30)
         agent.log(f"settings: {NICE[model]} is going back to its local model")
 

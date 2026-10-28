@@ -29,11 +29,11 @@ STOP = set("the and for are was were what when where which who how why does did 
            "about into your you our not can could would should there their them they then than been being "
            "tell show give lab homelab server".split())
 
-LOOKUP_SYS = ("You answer questions about one person's homelab using ONLY the notes provided. "
+LOOKUP_SYS = ("You answer one person's questions using ONLY the notes provided. "
               "If the notes do not cover the question, say the vault has nothing on it. "
               "After each fact, name the note it came from in square brackets, like [entities/foo.md]. "
               "Be short and plain. Never guess.")
-FIX_SYS = ("The person is correcting something in their homelab notes. Using the notes provided, restate in one or "
+FIX_SYS = ("The person is correcting something in their notes. Using the notes provided, restate in one or "
            "two plain sentences what you understood the correction to be and which note it affects. Then ask "
            "whether that is right. Do not say anything has been changed.")
 
