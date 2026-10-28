@@ -1,0 +1,52 @@
+# Example for /etc/memory-agent/config.yaml. Copy it there and edit.
+# Another location can be given with the MEMORY_AGENT_CONFIG environment variable.
+# Keys marked "required" have no default; the others show their default.
+# Secrets never go in this file: see "Not in this file" at the end.
+
+paths:
+  vault: /srv/memory-vault                  # required: the markdown vault
+  state_dir: /var/lib/memory-agent          # required: queues, logs, proposals. Keep this value:
+                                            # settings.json, tuning.json and downloads are fixed there.
+
+model:                                      # required: the main model (llama-server, port 8080)
+  name: qwen                                # model name sent with each request
+  endpoint: http://127.0.0.1:8080/v1        # OpenAI-compatible base URL, ending in /v1
+
+agent:                                      # required section (may be empty)
+  dry_run: true                             # inbox agent writes proposals only
+  # hop_depth, max_candidates and max_tool_calls are no longer read here:
+  # they are set on the Tuning page (state/tuning.json).
+
+evidence:                                   # required: which inbox note "type" gets which confidence
+  high: []                                  # e.g. [config-file, command-output]
+  medium: []                                # e.g. [user-statement]
+  low: []                                   # any type not listed is low
+  # A note without a type counts as "user-statement".
+
+gitea:                                      # required for commit.py and publisher.py
+  url: https://git.example.com              # required: Gitea base URL
+  vault_repo: owner/vault                   # required: owner/name of the vault repository
+  base_branch: main
+  agent_branch: agent/proposals             # prefix for the agent's branches
+  bot_name: Memory-bot                      # name on the agent's commits
+  bot_email: memory-bot@localhost           # email on the agent's commits
+
+publish:
+  auto_merge: false                         # merge the publish PR without a person
+  min_minutes_between: 60                   # minimum gap between publish PRs
+
+reviewer:                                   # the reviewer model (llama-server, port 8081)
+  endpoint: http://127.0.0.1:8081/v1
+  name: gpt-oss-20b
+
+upload:
+  max_mb: 200                               # largest chat export the web page accepts
+
+cpu_helper:                                 # optional host-side CPU speed helper
+  url: ""                                   # e.g. http://192.168.1.10:9103; blank hides it
+  token_file: /etc/memory-agent/cpu-speed.token
+
+# Not in this file (kept in root-only env files, generated at install time):
+#   /etc/memory-agent/web.env       UI_USER, UI_PASSWORD (web login)
+#   /etc/memory-agent/publish.env   GITEA_WRITE_TOKEN (push and open pull requests)
+#   /etc/memory-agent/llama-*.env   model server settings, written by the Settings page

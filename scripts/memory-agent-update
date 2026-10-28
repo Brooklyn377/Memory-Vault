@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Updates the memory agent in this container from its GitHub repository.
+#   memory-agent-update            install the newest code if there is any
+#   memory-agent-update --check    only say whether there is newer code
+#   memory-agent-update --rollback put back the code from before the last update
+# The repository and branch are in /etc/memory-agent/source (written by the installer).
+# Config, login, settings, models and the vault are never touched; only code and Python packages change.
+set -euo pipefail
+
+SOURCE=/etc/memory-agent/source
+APP=/opt/memory-agent
+BACKUPS=/var/backups/memory-agent
+KEEP=3
+
+[[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$SOURCE"
+: "${MA_REPO:?missing in $SOURCE}" "${MA_REF:?missing in $SOURCE}"
+
+installed() { cat "$APP/VERSION" 2>/dev/null || echo unknown; }
+latest() {
+    local sha
+    sha="$(curl -fsSL -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$MA_REPO/commits/$MA_REF" || true)"
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && echo "$sha"
+    return 0
+}
+restore() {
+    local b="$1"
+    echo "restoring the code from $b"
+    find "$APP" -maxdepth 1 -type f -name '*.py' -delete
+    tar -xzf "$b" -C /
+    "$APP/venv/bin/pip" install -q --disable-pip-version-check -r "$APP/requirements.lock"
+    cp "$APP"/systemd/*.service /etc/systemd/system/ 2>/dev/null || true
+    rm -f /etc/systemd/system/memory-backup.service
+    systemctl daemon-reload
+    # Restart what is running, so nothing that is meant to be off gets started.
+    mapfile -t units < <(systemctl list-units --state=active --plain --no-legend 'memory-*' 'llama-server*' | awk '{print $1}')
+    (( ${#units[@]} )) && systemctl restart "${units[@]}"
+    echo "restored"
+}
+
+case "${1:-}" in
+    --check)
+        new="$(latest)"
+        echo "installed: $(installed)"
+        echo "available: ${new:-unknown} ($MA_REPO, $MA_REF)"
+        if [[ -n "$new" && "$new" != "$(installed)" ]]; then echo "an update is available"; else echo "up to date"; fi
+        exit 0 ;;
+    --rollback)
+        b="$(find "$BACKUPS" -maxdepth 1 -name 'code-*.tar.gz' 2>/dev/null | sort | tail -n 1)"
+        [[ -n "$b" ]] || { echo "no backup in $BACKUPS" >&2; exit 1; }
+        restore "$b"
+        exit 0 ;;
+    "") ;;
+    *) echo "usage: memory-agent-update [--check|--rollback]" >&2; exit 2 ;;
+esac
+
+new="$(latest)"
+[[ -n "$new" ]] || { echo "could not ask GitHub for the newest version of $MA_REPO ($MA_REF)" >&2; exit 1; }
+if [[ "$new" == "$(installed)" ]]; then echo "up to date ($new)"; exit 0; fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+echo "downloading $MA_REPO at $new"
+curl -fsSL -o "$work/code.tar.gz" "https://codeload.github.com/$MA_REPO/tar.gz/$new"
+mkdir "$work/src"
+tar -xzf "$work/code.tar.gz" -C "$work/src" --strip-components=1
+[[ -f "$work/src/agent.py" && -f "$work/src/scripts/setup-container.sh" ]] || { echo "the download is not this project" >&2; exit 1; }
+
+# Back up the current code (not the venv, config or data), keeping the last few.
+mkdir -p "$BACKUPS"
+backup="$BACKUPS/code-$(date +%Y%m%d-%H%M%S).tar.gz"
+tar -C / -czf "$backup" --exclude="${APP#/}/venv" --exclude='__pycache__' "${APP#/}" usr/local/bin/memory-agent-update
+find "$BACKUPS" -maxdepth 1 -name 'code-*.tar.gz' | sort | head -n -"$KEEP" | xargs -r rm -f
+echo "backup: $backup"
+
+if bash "$work/src/scripts/setup-container.sh" --src "$work/src" --update --version "$new"; then
+    echo "updated to $new"
+else
+    echo "the update failed its checks" >&2
+    restore "$backup"
+    exit 1
+fi

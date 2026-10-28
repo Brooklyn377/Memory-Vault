@@ -1,0 +1,8 @@
+# Packages the code needs directly. Versions from the running install's virtualenv.
+# The full snapshot, with the packages these pull in, is requirements.lock.
+fastapi==0.162.0          # web.py, ui_*.py, power.py, remote.py, downloads.py
+PyYAML==6.0.3             # import yaml: config, note front matter, merges.yaml
+inotify-simple==2.0.1     # journal.py
+# Not imported, but needed at run time:
+uvicorn==0.54.0           # runs the web page (systemd/memory-web.service)
+python-multipart==0.0.32  # FastAPI needs it for Form() and File() in web.py

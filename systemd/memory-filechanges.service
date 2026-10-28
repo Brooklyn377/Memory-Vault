@@ -1,0 +1,14 @@
+[Unit]
+Description=File change tracker (reviewer reads chats about saved files)
+After=memory-reviewer.service
+Wants=memory-reviewer.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python filechanges.py --watch
+Restart=on-failure
+RestartSec=30
+Nice=15
+
+[Install]
+WantedBy=multi-user.target

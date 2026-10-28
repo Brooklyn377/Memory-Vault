@@ -1,0 +1,14 @@
+[Unit]
+Description=Memory sweep (full chat reading)
+After=llama-server.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStartPre=/bin/sh -c 'while systemctl is-active memory-bootstrap | grep -q "^activ"; do sleep 30; done'
+ExecStart=/opt/memory-agent/venv/bin/python /opt/memory-agent/sweep.py
+TimeoutStartSec=infinity
+Restart=on-failure
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Curator (swaps in a third model on notes while the other two are idle)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python curator.py --watch
+ExecStopPost=/opt/memory-agent/venv/bin/python /opt/memory-agent/curator.py --release
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=1500
+Nice=19
+
+[Install]
+WantedBy=multi-user.target

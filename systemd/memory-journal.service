@@ -1,0 +1,13 @@
+[Unit]
+Description=Change journal (records what the agents change in the vault)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python journal.py --watch
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

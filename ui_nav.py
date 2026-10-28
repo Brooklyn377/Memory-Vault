@@ -1,0 +1,61 @@
+"""Shared slide-out menu used by every page. DRAWER is plain HTML+CSS+JS and has no backslashes,
+so it can be dropped into any page template."""
+
+DRAWER = r"""
+<style>
+body{padding-top:52px}
+#dbar{position:fixed;top:0;left:0;right:0;height:52px;display:flex;align-items:center;gap:6px;padding:0 12px;background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-bottom:1px solid var(--line,#2b3240);z-index:30}
+#dbar b{font-size:17px;white-space:nowrap;flex:none}
+#dbtn{position:relative;display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:8px;margin:0;line-height:0;cursor:pointer}
+#dscrim{position:fixed;top:52px;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);z-index:34;display:none}
+#dscrim.open{display:block}
+#dwr{position:fixed;top:52px;bottom:0;left:0;width:min(80vw,300px);background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-right:1px solid var(--line,#2b3240);z-index:35;transform:translateX(-102%);transition:transform .2s ease;padding:12px 8px;overflow-y:auto}
+#dwr.open{transform:none}
+#dwr a{display:flex;align-items:center;justify-content:space-between;padding:14px 12px;border-radius:24px;color:inherit;text-decoration:none;font-weight:600;font-size:17px}
+#dwr a.on{background:var(--acc,#6d9cff);color:#fff}
+#dwr hr{border:0;border-top:1px solid var(--line,#2b3240);margin:8px 4px}
+.dn{background:#fb923c;color:#fff;border-radius:10px;padding:0 8px;font-size:13px;font-weight:600}
+.dn[hidden]{display:none}
+#dwr .dn{background:none;color:inherit;font-size:15px;padding:0}
+</style>
+<div id="dbar">
+ <b>Memory vault</b>
+ <button id="dbtn" aria-label="Menu">
+  <svg width="26" height="26" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+  <span id="dh" class="dn" hidden style="position:absolute;top:0;right:-2px;font-size:11px;padding:0 5px"></span>
+ </button>
+</div>
+<div id="dscrim"></div>
+<div id="dwr">
+ <a href="/">Home</a>
+ <a href="/#up">Upload</a>
+ <a href="/queue">Queue</a>
+ <a href="/history">History</a>
+ <a href="/chat">Chat</a>
+ <a href="/map">Map</a>
+ <a href="/graph">List</a>
+ <a href="/ask">Ask<span id="qn" class="dn" hidden></span></a>
+ <a href="/todo">To-do<span id="tn" class="dn" hidden></span></a>
+ <a href="/think">Thinking</a>
+ <a href="/settings">Settings</a>
+</div>
+<script>
+(function(){
+ var dr=document.getElementById("dwr"),sc=document.getElementById("dscrim");
+ function set(o){dr.classList.toggle("open",o);sc.classList.toggle("open",o)}
+ document.getElementById("dbtn").addEventListener("click",function(){set(!dr.classList.contains("open"))});
+ sc.addEventListener("click",function(){set(false)});
+ dr.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
+ function mark(){var here=location.pathname+location.hash;
+  dr.querySelectorAll("a").forEach(function(a){a.classList.toggle("on",a.getAttribute("href")===here)})}
+ window.addEventListener("hashchange",mark);mark();
+ function show(id,n){var b=document.getElementById(id);if(b){b.hidden=!n;b.textContent=n}}
+ async function counts(){
+  var q=0,t=0;
+  try{var r=await fetch("/api/questions/count");if(r.ok)q=(await r.json()).open||0}catch(e){}
+  try{var r2=await fetch("/api/todo/count");if(r2.ok)t=(await r2.json()).open||0}catch(e){}
+  show("qn",q);show("tn",t);show("dh",q+t)}
+ counts();setInterval(counts,30000);
+})();
+</script>
+"""

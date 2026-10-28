@@ -1,0 +1,13 @@
+[Unit]
+Description=Memory Agent importer
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python /opt/memory-agent/processor.py
+Restart=on-failure
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

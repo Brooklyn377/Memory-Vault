@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.bak*
+*.save*
+*thinkbak*
+*.env
+*.key
+*.token
+*.gguf
+credentials.json
+config.yaml
+state/

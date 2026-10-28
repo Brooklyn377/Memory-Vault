@@ -1,0 +1,14 @@
+[Unit]
+Description=Reviewer worker (finds unfinished tasks, reads your updates)
+After=memory-reviewer.service
+Wants=memory-reviewer.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python reviewer.py --watch
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

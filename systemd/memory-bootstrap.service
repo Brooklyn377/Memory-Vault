@@ -1,0 +1,9 @@
+[Unit]
+Description=Memory bootstrap (summaries and entity notes)
+After=llama-server.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python /opt/memory-agent/bootstrap.py
+Nice=10

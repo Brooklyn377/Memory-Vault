@@ -1,0 +1,14 @@
+[Unit]
+Description=Memory Agent web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+EnvironmentFile=/etc/memory-agent/web.env
+ExecStart=/opt/memory-agent/venv/bin/uvicorn web:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

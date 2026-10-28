@@ -1,0 +1,14 @@
+[Unit]
+Description=Chat worker (answers chat messages with the reviewer model)
+After=memory-reviewer.service
+Wants=memory-reviewer.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python ui_chat.py --watch
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

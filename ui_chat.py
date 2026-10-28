@@ -1,0 +1,270 @@
+"""Chat window. Messages are JSON files in <state>/chat/. The web page only queues and reads them;
+`ui_chat.py --watch` (one slow worker) answers them with the reviewer model, gpt-oss.
+  plain message   -> vault-only look-up: search note names and text, add linked notes, answer from those only
+  /fix <text>     -> the model restates what it understood; only your "Yes" files it to the inbox
+"""
+import json
+import re
+import secrets
+import sys
+import time
+import urllib.request
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+import agent
+import settings
+import ui_extra
+from graph import Vault, as_list
+from scrub import scrub
+
+STATE, VAULT = agent.STATE, agent.VAULT
+CHAT = STATE / "chat"
+MAX_TEXT = 4000
+MAX_TRIES = 3
+SKIP = ("raw/", "inbox/")
+STOP = set("the and for are was were what when where which who how why does did this that with from have has "
+           "about into your you our not can could would should there their them they then than been being "
+           "tell show give lab homelab server".split())
+
+LOOKUP_SYS = ("You answer questions about one person's homelab using ONLY the notes provided. "
+              "If the notes do not cover the question, say the vault has nothing on it. "
+              "After each fact, name the note it came from in square brackets, like [entities/foo.md]. "
+              "Be short and plain. Never guess.")
+FIX_SYS = ("The person is correcting something in their homelab notes. Using the notes provided, restate in one or "
+           "two plain sentences what you understood the correction to be and which note it affects. Then ask "
+           "whether that is right. Do not say anything has been changed.")
+
+
+# ---------- storage ----------
+def _path(mid):
+    return CHAT / f"{mid}.json"
+
+
+def _save(m):
+    CHAT.mkdir(parents=True, exist_ok=True)
+    tmp = _path(m["id"]).with_suffix(".tmp")
+    tmp.write_text(json.dumps(m, indent=1, ensure_ascii=False))
+    tmp.replace(_path(m["id"]))
+
+
+def _load(mid):
+    p = _path(mid)
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def _all():
+    if not CHAT.exists():
+        return []
+    return sorted((json.loads(p.read_text()) for p in CHAT.glob("*.json")), key=lambda m: m["id"])
+
+
+def send(text):
+    text = str(text).strip()
+    kind = "correction" if re.match(r"(?i)/fix\b", text) else "lookup"
+    if kind == "correction":
+        text = re.sub(r"(?i)^/fix\s*", "", text)
+    text = scrub(text)[0][:MAX_TEXT].strip()
+    if not text:
+        raise ValueError("empty message")
+    m = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": kind, "text": text,
+         "status": "queued", "reply": "", "sources": [], "confirm": "none", "tries": 0}
+    _save(m)
+    return m
+
+
+def decide(mid, ok):
+    m = _load(mid)
+    if not m or m["kind"] != "correction" or m["confirm"] != "pending":
+        raise ValueError("nothing to confirm")
+    if ok:
+        now = datetime.now()
+        inbox = VAULT / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / f"{now:%Y-%m-%d-%H%M%S}-chat-{mid[-4:]}.md").write_text(
+            f"---\ntype: user-statement\nconfidence: high\ncreated: {now:%Y-%m-%d}\nchat_id: {mid}\n---\n"
+            f"Correction, confirmed by the person.\n\nWhat was understood: {scrub(m['reply'])[0]}\n\n"
+            f"Their words: {m['text']}\n", encoding="utf-8")
+        m["confirm"] = "filed"
+    else:
+        m["confirm"] = "discarded"
+    _save(m)
+    return m
+
+
+# ---------- worker ----------
+_vc = {"t": 0.0, "v": None}
+
+
+def _vault():
+    if _vc["v"] is None or time.time() - _vc["t"] > 120:
+        _vc["v"], _vc["t"] = Vault(VAULT), time.time()
+    return _vc["v"]
+
+
+def retrieve(question):
+    """-> (best matching notes, linked notes one hop out). Reads the vault only."""
+    v = _vault()
+    terms = [t for t in dict.fromkeys(re.findall(r"[a-z0-9][a-z0-9._-]{2,}", question.lower())) if t not in STOP][:8]
+    scored = []
+    for rel, body in v.body.items():
+        if rel.startswith(SKIP):
+            continue
+        names = " ".join([rel.lower(), v.title(rel).lower()] + [a.lower() for a in as_list(v.meta[rel].get("aliases"))])
+        low = body.lower()
+        score = sum(3 for t in terms if t in names) + sum(min(low.count(t), 3) for t in terms)
+        if score:
+            scored.append((score, rel))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    top = [r for _, r in scored[:__import__("tuning").get("chat.notes")]]
+    extra = []
+    for r in top[:__import__("tuning").get("chat.hop_notes")]:
+        for n in sorted(v.out[r] | v.back[r]):
+            if n not in top and n not in extra and not n.startswith(SKIP):
+                extra.append(n)
+    return top, extra[:__import__("tuning").get("chat.linked")]
+
+
+def _ask(system, user):
+    import reviewer
+    body = {"model": reviewer.NAME, "temperature": settings.get("gpt")["temperature"], "max_tokens": settings.get("gpt")["max_tokens"]["chat"],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "chat_template_kwargs": {"reasoning_effort": settings.get("gpt")["reasoning_effort"]}}
+    import thinklog
+    return (thinklog.chat("gpt", reviewer.ENDPOINT, body, "chat", slot=1).get("content") or "").strip()
+
+
+def handle(m):
+    v = _vault()
+    top, extra = retrieve(m["text"])
+    if not top and m["kind"] == "lookup":
+        m["reply"], m["sources"] = "The vault has no notes that match that.", []
+        return
+    parts = [f"NOTE {r}:\n{v.body[r][:__import__('tuning').get('chat.note_chars')]}" for r in top]
+    parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
+    context = "\n\n".join(parts) or "(no matching notes found)"
+    system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
+    kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
+    reply = _ask(system, f"{context}\n\n{kind}: {m['text']}")
+    if not reply:
+        raise RuntimeError("empty reply")
+    m["reply"], m["sources"] = reply, top + extra
+    if m["kind"] == "correction":
+        m["confirm"] = "pending"
+
+
+def watch():
+    import reviewer
+    agent.log("chat worker started")
+    for m in _all():
+        if m["status"] == "working":
+            m["status"] = "queued"
+            _save(m)
+    while True:
+        todo = [m for m in _all() if m["status"] == "queued"]
+        if not todo:
+            time.sleep(10)
+            continue
+        if not reviewer.ready():
+            time.sleep(30)
+            continue
+        m = todo[0]
+        m["status"] = "working"
+        _save(m)
+        try:
+            handle(m)
+            m["status"] = "replied"
+            agent.log(f"chat: replied to {m['id']}")
+        except Exception as e:
+            m["tries"] += 1
+            m["status"] = "error" if m["tries"] >= MAX_TRIES else "queued"
+            if m["status"] == "error":
+                m["reply"] = f"Could not answer: {type(e).__name__}"
+            agent.log(f"chat: {m['id']} failed ({type(e).__name__}: {str(e)[:80]}), try {m['tries']}")
+            time.sleep(60)
+        _save(m)
+
+
+# ---------- web ----------
+def register(app, authed):
+    router = APIRouter()
+
+    def need(request: Request):
+        if not authed(request):
+            raise HTTPException(status_code=401, detail="login required")
+
+    @router.get("/api/chat")
+    def chat_list(request: Request):
+        need(request)
+        return {"messages": _all()[-60:]}
+
+    @router.post("/api/chat/send")
+    async def chat_send(request: Request):
+        need(request)
+        data = await request.json()
+        try:
+            m = send(data.get("text", ""))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"id": m["id"]}
+
+    @router.post("/api/chat/confirm")
+    async def chat_confirm(request: Request):
+        need(request)
+        data = await request.json()
+        try:
+            decide(str(data.get("id", "")), bool(data.get("ok")))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
+    @router.get("/chat", response_class=HTMLResponse)
+    def chat_page(request: Request):
+        if not authed(request):
+            return RedirectResponse("/")
+        return ui_extra.PAGE.replace("__BODY__", CHAT_HTML).replace("__ACTIVE__", "chat")
+
+    app.include_router(router)
+
+
+CHAT_HTML = r"""
+<style>
+.me{margin-left:auto;width:fit-content;max-width:85%;background:var(--acc);color:#fff;border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+.st{font-size:12px;color:var(--mut);text-align:right;margin:2px 4px 10px}
+.bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+#cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+</style>
+<div id="thread"></div>
+<div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about the lab. Start with /fix to correct a note."></textarea>
+<button class="pri" id="cs">Send</button><span id="ce" class="mut"></span></div>
+<script>
+const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed"};
+let seen=-1;
+function bubble(m){
+ const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},LABEL[m.status]||m.status)];
+ if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
+  if(m.sources&&m.sources.length)box.append(h("div",{class:"mut"},"Notes used: "+m.sources.join(", ")));
+  if(m.confirm==="pending")box.append(h("button",{class:"pri",onclick:()=>decide(m.id,true)},"Yes, file it"),h("button",{onclick:()=>decide(m.id,false)},"No, that is not right"));
+  if(m.confirm==="filed")box.append(h("div",{class:"mut"},"Filed to the inbox. The agent will turn it into a proposal; the vault itself is not changed yet."));
+  if(m.confirm==="discarded")box.append(h("div",{class:"mut"},"Discarded. Nothing was filed."));
+  out.push(box)}
+ return out}
+async function load(){try{const d=await api("/api/chat");
+ $("#thread").replaceChildren(...(d.messages.length?d.messages.flatMap(bubble):[h("div",{class:"card mut"},"Ask a question about the lab, or start with /fix to correct a note.")]));
+ if(d.messages.length!==seen){seen=d.messages.length;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
+async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
+$("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
+ try{await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});$("#ct").value="";await load()}
+ catch(e){$("#ce").textContent=e.message}$("#cs").disabled=false};
+setInterval(()=>{if(!document.hidden)load()},10000);
+load();
+</script>
+"""
+
+if __name__ == "__main__":
+    if "--watch" in sys.argv:
+        watch()
+    else:
+        sys.exit("usage: ui_chat.py --watch")

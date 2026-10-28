@@ -1,0 +1,12 @@
+[Unit]
+Description=Memory agent watcher
+After=llama-server.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+ExecStart=/opt/memory-agent/venv/bin/python /opt/memory-agent/agent.py --watch
+Restart=on-failure
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Memory publish watcher
+After=network-online.target memory-reviewer.service
+
+[Service]
+WorkingDirectory=/opt/memory-agent
+EnvironmentFile=/etc/memory-agent/publish.env
+ExecStart=/opt/memory-agent/venv/bin/python publisher.py --watch
+Restart=on-failure
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
