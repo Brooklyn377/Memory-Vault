@@ -14,7 +14,7 @@ DEF_REVIEWER="https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-
 DEF_CURATOR="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF/resolve/main/LFM2.5-24B-A2B-Q4_K_M.gguf"
 
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
-BRIDGE=""; IP=""; GW=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0
+BRIDGE=""; IP=""; GW=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0; PLAIN=0
 SWEEPER_URL=""; REVIEWER_URL=""; CURATOR_URL=""
 
 usage() {
@@ -46,6 +46,7 @@ Other
   --repo OWNER/NAME     where to download the code (default: $REPO)
   --ref REF             branch or tag of the code (default: $REF)
   --yes                 take the defaults instead of asking
+  --plain               ask in plain text lines instead of dialog boxes
   --dry-run             print what would be done, change nothing
 EOF
 }
@@ -73,6 +74,7 @@ while [[ $# -gt 0 ]]; do
         --ref) REF="$2"; shift ;;
         --yes|-y) YES=1 ;;
         --dry-run) DRY=1 ;;
+        --plain) PLAIN=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
@@ -84,17 +86,113 @@ die() { echo "error: $*" >&2; exit 1; }
 run() {
     if (( DRY )); then printf '+'; printf ' %q' "$@"; printf '\n'; else "$@"; fi
 }
-# ask VAR "question" default: keeps VAR if already set; otherwise asks (or takes the default with --yes).
-ask() {
-    local var="$1" q="$2" def="$3" ans=""
-    [[ -n "${!var}" ]] && return
-    if (( YES )) || [[ ! -r /dev/tty ]]; then
-        printf -v "$var" '%s' "$def"; return
-    fi
-    read -r -p "$q [$def]: " ans </dev/tty || true
-    printf -v "$var" '%s' "${ans:-$def}"
-}
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# How questions are asked: dialog boxes (whiptail, as on every Proxmox host), plain text lines, or not at all.
+INTERACTIVE=0; (( YES )) || [[ ! -r /dev/tty ]] || INTERACTIVE=1
+UI=text; (( INTERACTIVE && ! PLAIN )) && have whiptail && UI=dialog
+ASKING=$INTERACTIVE   # 0 after "Default install": the defaults are taken, but still checked
+BACKTITLE="Memory agent installer"
+cancelled() { echo "cancelled; nothing was changed"; exit 1; }
+# wt ARGS...: runs whiptail on the terminal and prints the answer; Cancel or Esc ends the installer.
+wt() { whiptail --backtitle "$BACKTITLE" "$@" 3>&1 1>&2 2>&3 </dev/tty || cancelled; }
+
+# prompt "question" default "error": asks once and prints the answer; the error of the last answer is shown above.
+prompt() {
+    local q="$1" def="$2" err="$3" ans=""
+    if [[ $UI == dialog ]]; then
+        [[ -n "$err" ]] && q="Not accepted: $err"$'\n\n'"$q"
+        wt --title "Memory agent" --inputbox "$q" 14 76 "$def"
+    else
+        [[ -n "$err" ]] && echo "  not accepted: $err" >/dev/tty
+        read -r -p "$q [$def]: " ans </dev/tty || true
+        printf '%s' "${ans:-$def}"
+    fi
+}
+# check "validator args" value: runs the validator with the value last; it prints why a value is wrong and fails.
+check() {
+    local -a c
+    read -ra c <<<"$1"
+    (( ${#c[@]} )) || return 0
+    "${c[@]}" "$2"
+}
+# ask VAR "question" default "validator args": a value from the command line, or the default when not asking, is
+# kept if the validator accepts it. Otherwise the question is asked again until it does; without asking, it stops.
+ask() {
+    local var="$1" q="$2" def="$3" v="$4" ans="${!1}" err=""
+    if [[ -n "$ans" ]] || (( ! ASKING )); then
+        ans="${ans:-$def}"
+        if err="$(check "$v" "$ans")"; then printf -v "$var" '%s' "$ans"; return; fi
+        (( ASKING )) || die "$q: $err"
+        def="$ans"
+    fi
+    while :; do
+        ans="$(prompt "$q" "$def" "$err")"
+        if err="$(check "$v" "$ans")"; then printf -v "$var" '%s' "$ans"; return; fi
+        def="$ans"
+    done
+}
+# choose VAR "question" default name description ...: like ask, but the answer must be one of the names, picked
+# from a menu in a dialog box. Without names (a dry run off Proxmox) anything is taken.
+choose() {
+    local var="$1" q="$2" def="$3" ans="${!1}" names=() i
+    shift 3
+    for (( i = 1; i <= $#; i += 2 )); do names+=("${!i}"); done
+    if (( ASKING )) && [[ $UI == dialog && -z "$ans" ]] && (( ${#names[@]} )); then
+        ans="$(wt --title "Memory agent" --default-item "$def" --menu "$q" 18 76 8 "$@")"
+        printf -v "$var" '%s' "$ans"; return
+    fi
+    ask "$var" "$q" "$def" "${names[*]:+one_of ${names[*]}}"
+}
+
+# Validators: each takes the value last, prints what is wrong with it and fails, or prints nothing.
+one_of() {
+    local v="${!#}" o
+    for o in "${@:1:$#-1}"; do [[ "$v" == "$o" ]] && return 0; done
+    echo "'$v' is not one of: ${*:1:$#-1}"; return 1
+}
+range() {   # range MIN MAX value: a whole number from MIN to MAX
+    [[ "$3" =~ ^(0|[1-9][0-9]{0,8})$ ]] && (( 10#$3 >= $1 && 10#$3 <= $2 )) && return 0
+    echo "type a whole number from $1 to $2"; return 1
+}
+ipv4() {    # true for a dotted IPv4 address
+    local o p=()
+    local n='(0|[1-9][0-9]{0,2})'
+    [[ "$1" =~ ^$n(\.$n){3}$ ]] || return 1
+    IFS=. read -ra p <<<"$1"
+    for o in "${p[@]}"; do (( 10#$o <= 255 )) || return 1; done
+}
+ip2int() { local p=(); IFS=. read -ra p <<<"$1"; echo $(( (10#${p[0]} << 24) | (10#${p[1]} << 16) | (10#${p[2]} << 8) | 10#${p[3]} )); }
+valid_ctid() {
+    if ! [[ "$1" =~ ^[1-9][0-9]{2,8}$ ]]; then echo "the container ID is a number from 100 to 999999999"; return 1; fi
+    if have pvesh && ! pvesh get /cluster/nextid --vmid "$1" >/dev/null 2>&1; then
+        echo "ID $1 is already used by another container or VM"; return 1
+    fi
+}
+valid_hostname() {
+    local label='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
+    [[ "$1" =~ ^$label(\.$label)*$ ]] && return 0
+    echo "use letters, digits and hyphens (not at the start or end), e.g. memory-agent"; return 1
+}
+valid_ip() {
+    [[ "$1" == dhcp ]] && return 0
+    if [[ "$1" != */* ]] && ipv4 "$1"; then echo "$1 needs its prefix length, e.g. $1/24"; return 1; fi
+    ipv4 "${1%/*}" && [[ "${1#*/}" =~ ^[1-9][0-9]?$ ]] && (( 10#${1#*/} >= 1 && 10#${1#*/} <= 32 )) && return 0
+    echo "type dhcp, or an address with its prefix length, e.g. 192.168.1.60/24"; return 1
+}
+valid_gw() {   # the gateway must be in the network of the fixed address in IP
+    local a="${IP%/*}" n="${IP#*/}"
+    ipv4 "$1" || { echo "a fixed address needs a gateway, e.g. 192.168.1.1"; return 1; }
+    [[ "$1" != "$a" ]] || { echo "the gateway cannot be the container's own address"; return 1; }
+    (( ( ($(ip2int "$1") ^ $(ip2int "$a")) >> (32 - 10#$n) ) == 0 )) && return 0
+    echo "$1 is not in the network of $IP"; return 1
+}
+valid_model() {   # "-" skips the model; otherwise a link that answers (checked only while asking)
+    [[ "$1" == - ]] && return 0
+    [[ "$1" =~ ^https?://[^[:space:]]+$ ]] || { echo "paste a download link (https://...), or - to skip"; return 1; }
+    (( ! ASKING )) || curl -fsIL --max-time 20 -o /dev/null "$1" && return 0
+    echo "that link does not answer; paste another, or - to skip"; return 1
+}
 # remote_size URL: prints the download size in GB, or "?" if the server does not say.
 remote_size() {
     local n
@@ -133,33 +231,46 @@ if [[ -n "$UPDATE" ]]; then
     CTID="$UPDATE"
 else
     # --- questions -----------------------------------------------------------------------------------------
+    if [[ $UI == dialog ]]; then
+        mode="$(wt --title "Memory agent" --menu "Choose an option:" 14 60 2 \
+            "Default Install" "take the defaults (DHCP, all models)" \
+            "Advanced Install" "choose each setting")"
+        [[ "$mode" == "Default Install" ]] && ASKING=0
+    fi
     say "Container"
     next=""; (( DRY )) && ! have pvesh && next=200
     [[ -n "$next" ]] || next="$(pvesh get /cluster/nextid)"
-    ask CTID "Container ID" "$next"
-    ask HOSTNAME_ "Host name" memory-agent
-    defstore="local-lvm"
-    if have pvesm && ! pvesm status -content rootdir 2>/dev/null | awk 'NR>1{print $1}' | grep -qx local-lvm; then
-        defstore="$(pvesm status -content rootdir 2>/dev/null | awk 'NR==2{print $1}')"
+    ask CTID "Container ID" "$next" valid_ctid
+    ask HOSTNAME_ "Host name" memory-agent valid_hostname
+    stores=()   # name, type: the active storages that hold containers
+    if have pvesm; then
+        while read -r name type; do stores+=("$name" "$type"); done \
+            < <(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active"{print $1, $2}')
     fi
-    ask STORAGE "Storage for the container disk" "${defstore:-local-lvm}"
+    defstore="local-lvm"
+    (( ${#stores[@]} )) && ! one_of "${stores[@]}" local-lvm >/dev/null && defstore="${stores[0]}"
+    choose STORAGE "Storage for the container disk" "$defstore" "${stores[@]}"
     if (( SMALL )); then c=4; (( $(nproc) < c )) && c="$(nproc)"; m=6144; d=16
     else c="$(nproc)"; m=24576; d=80; fi
-    ask CORES "CPU cores" "$c"
-    ask MEMORY "Memory in MB" "$m"
-    ask DISK "Disk size in GB" "$d"
-    ask BRIDGE "Network bridge" vmbr0
-    ask IP "Address (dhcp, or CIDR like 192.168.1.60/24)" dhcp
-    if [[ "$IP" != dhcp ]]; then ask GW "Gateway" ""; [[ -n "$GW" ]] || die "a fixed address needs --gw"; fi
+    hostmem="$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)"
+    ask CORES "CPU cores (1 to $(nproc))" "$c" "range 1 $(nproc)"
+    ask MEMORY "Memory in MB (1024 to $hostmem)" "$m" "range 1024 $hostmem"
+    ask DISK "Disk size in GB (at least 8)" "$d" "range 8 100000"
+    bridges=()   # name, description: the Linux bridges on this host
+    for b in /sys/class/net/*/bridge; do [[ -d "$b" ]] && bridges+=("$(basename "$(dirname "$b")")" bridge); done
+    choose BRIDGE "Network bridge" vmbr0 "${bridges[@]}"
+    ask IP "Address: dhcp, or a fixed address with its prefix length, e.g. 192.168.1.60/24" dhcp valid_ip
+    [[ "$IP" != dhcp ]] && ask GW "Gateway for $IP" "" valid_gw
 
     say "Models"
     if (( SMALL )); then
         SWEEPER_URL="$SMALL_URL"; REVIEWER_URL="$SMALL_URL"; CURATOR_URL="$SMALL_URL"
     elif (( ! NOMODELS )); then
-        (( YES )) || ! [[ -r /dev/tty ]] || echo "Enter takes the default model, - skips it (download it later on the Settings page), or paste another .gguf link."
-        ask SWEEPER_URL "Sweeper model" "$DEF_SWEEPER"
-        ask REVIEWER_URL "Reviewer model" "$DEF_REVIEWER"
-        ask CURATOR_URL "Curator model" "$DEF_CURATOR"
+        (( ! ASKING )) || [[ $UI == dialog ]] || echo "Enter takes the default model, - skips it (download it later on the Settings page), or paste another .gguf link."
+        tail=""; [[ $UI == dialog ]] && tail=$'\n\nKeep the link for the default, type - to skip it (download it later on the Settings page), or paste another .gguf link.'
+        ask SWEEPER_URL "Sweeper model, reads chats$tail" "$DEF_SWEEPER" valid_model
+        ask REVIEWER_URL "Reviewer model, checks facts and answers chat$tail" "$DEF_REVIEWER" valid_model
+        ask CURATOR_URL "Curator model, polishes notes$tail" "$DEF_CURATOR" valid_model
     fi
     for var in SWEEPER_URL REVIEWER_URL CURATOR_URL; do
         [[ "${!var}" == - ]] && printf -v "$var" '%s' ""
@@ -173,6 +284,18 @@ else
         fi
     done
     [[ -z "$SWEEPER_URL$REVIEWER_URL$CURATOR_URL" ]] && echo "  none now"
+    if [[ $UI == dialog ]]; then
+        models=""
+        for var in SWEEPER_URL REVIEWER_URL CURATOR_URL; do
+            u="${!var}"; role="${var%_URL}"; models+=$'\n'"  ${role,,}: ${u:+$(basename "${u%%\?*}")}${u:-none, download it later}"
+        done
+        wt --title "Memory agent" --yesno "Create the container with these settings?
+
+Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
+$CORES cores, $MEMORY MB memory, $DISK GB disk
+Bridge $BRIDGE, address $IP${GW:+, gateway $GW}
+Models:$models" 18 76 >/dev/null
+    fi
 
     # --- template --------------------------------------------------------------------------------------------
     say "Debian 12 template"
