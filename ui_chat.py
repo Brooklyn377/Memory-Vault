@@ -39,10 +39,18 @@ LOOKUP_SYS = ("You answer one person's questions using ONLY the notes provided. 
 FIX_SYS = ("The person is correcting something in their notes. Using the notes provided, restate in one or "
            "two plain sentences what you understood the correction to be and which note it affects. Then ask "
            "whether that is right. Do not say anything has been changed.")
-ASSIST_SYS = ("You are the person's assistant for their notes vault. Answer their message using ONLY the notes "
-              "provided and the earlier messages. If those do not cover it, say the vault has nothing on it. "
-              "After each fact, name the note it came from in square brackets, like [entities/foo.md]. "
-              "Be short and plain. Never guess, and never say you changed anything.")
+ASSIST_SYS = (
+    "You are the person's assistant for their notes vault and the files around it. Look things up with tools before "
+    'answering. To use a tool, reply with ONLY JSON: {"tool":"<name>","args":{...}}. When you are ready, reply with '
+    'ONLY JSON: {"answer":"<your reply>"}. Tools: '
+    'search {"text":"<words>","where":"all|notes|raw|inbox|vault|state|code|logs|git|<Git server name>"} finds files; '
+    'open {"path":"<path>","start":<line>} reads a file or lists a folder; '
+    'links {"path":"<note path>"} lists linked notes; tasks {} lists open to-do tasks; '
+    "questions {} lists open Ask cards; queue {} shows what the Sweeper, Reviewer and Curator are doing; "
+    "repos {} lists the Git servers you can read and what each is for. "
+    "Answer only from what the notes and tools show. After each fact, name its file in square brackets, like "
+    "[vault/entities/foo.md]. If nothing covers it, say so. Be short and plain. Never guess, and never say you changed "
+    "anything.")
 
 
 # ---------- storage ----------
@@ -152,19 +160,46 @@ def assistant_on():
         return False
 
 
-def _ask_assistant(system, user, earlier):
+def _ask_assistant(system, messages, label="chat"):
     import applier
     import thinklog
     import ui_settings
     s = settings.get("pa")
     body = {"model": s["model_file"] or "assistant", "temperature": s["temperature"], "max_tokens": s["max_tokens"]["chat"],
-            "messages": [{"role": "system", "content": system}] + earlier + [{"role": "user", "content": user}]}
+            "messages": [{"role": "system", "content": system}] + messages}
     caps = ui_settings.caps(ui_settings.capname("pa", s))   # the model decides which thinking switch applies
     if caps["thinking"]:
         body["chat_template_kwargs"] = {"enable_thinking": bool(s.get("thinking", True))}
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
-    return (thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, "chat").get("content") or "").strip()
+    return (thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label).get("content") or "").strip()
+
+
+def assistant_answer(m, context):
+    """The tool loop: the Assistant looks things up until it answers, at most the look-up limit, then must answer.
+    Returns (reply, files it opened)."""
+    import assistant_tools
+    budget = __import__("tuning").get("assistant.tool_calls")
+    msgs = earlier_turns(m) + [{"role": "user", "content": f"{context}\n\nQUESTION: {m['text']}"}]
+    opened, used = [], 0
+    while True:
+        last = used >= budget
+        if last:
+            msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
+        text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist")
+        data = agent.parse_json(text) if text.lstrip().startswith(("{", "```")) else None
+        if not isinstance(data, dict) or "tool" not in data or last:
+            if isinstance(data, dict) and data.get("answer"):
+                return str(data["answer"]).strip(), opened
+            if isinstance(data, dict):   # JSON without an answer: nothing usable to show
+                raise RuntimeError("the Assistant gave no answer")
+            return text, opened          # plain text: the model answered without the JSON wrapper
+        used += 1
+        name, args = str(data.get("tool")), data.get("args") or {}
+        if name == "open" and isinstance(args, dict) and args.get("path"):
+            opened.append(str(args["path"]))
+        result = assistant_tools.run(name, args)
+        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": f"TOOL RESULT ({name}):\n{result}"}]
 
 
 def earlier_turns(m):
@@ -187,7 +222,8 @@ def handle(m, who="gpt"):
     parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
     context = "\n\n".join(parts) or "(no matching notes found)"
     if who == "pa":
-        reply = _ask_assistant(ASSIST_SYS, f"{context}\n\nQUESTION: {m['text']}", earlier_turns(m))
+        reply, opened = assistant_answer(m, context)
+        extra = extra + [p for p in dict.fromkeys(opened) if p not in top + extra]
     else:
         system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
         kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
