@@ -16,7 +16,7 @@ The models run locally through llama.cpp. Everything is in one Proxmox container
 In the Proxmox host shell, as root:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/memory-agent/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)"
 ```
 
 It asks for the container ID, storage, cores, memory, disk, network and a download link (`.gguf`) for each model.
@@ -26,7 +26,7 @@ the Settings page. At the end it prints the web address and a generated login.
 A quick test with a tiny model and no questions:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/memory-agent/main/install.sh)" _ --small --yes
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)" _ --small --yes
 ```
 
 Options go after the `_`. All of them are listed with `--help`; the main ones:

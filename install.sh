@@ -4,7 +4,7 @@
 # and the generated login. Run with --help for the options; anything not given on the command line is asked.
 set -euo pipefail
 
-REPO="${MA_REPO:-Brooklyn377/memory-agent}"   # GitHub owner/name the code is downloaded from
+REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the code is downloaded from
 REF="${MA_REF:-main}"                        # branch or tag
 SMALL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 
