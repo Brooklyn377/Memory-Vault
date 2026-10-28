@@ -14,7 +14,7 @@ DEF_REVIEWER="https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-
 DEF_CURATOR="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF/resolve/main/LFM2.5-24B-A2B-Q4_K_M.gguf"
 
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
-BRIDGE=""; IP=""; GW=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0; PLAIN=0
+BRIDGE=""; IP=""; GW=""; DNS=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0; PLAIN=0
 SWEEPER_URL=""; REVIEWER_URL=""; CURATOR_URL=""
 
 usage() {
@@ -32,6 +32,8 @@ Container
   --bridge NAME         network bridge (default: vmbr0)
   --ip dhcp|CIDR        address, e.g. 192.168.1.60/24 (default: dhcp)
   --gw ADDRESS          gateway, needed with a fixed address
+  --dns ADDRESS         DNS server, or "host" for the Proxmox host's (default: the gateway with a fixed
+                        address, otherwise host)
 
 Models (.gguf download links, e.g. Hugging Face "resolve" links)
   --sweeper-url URL     main model, reads chats (default: Qwen3.5-9B Q4_K_M)
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --bridge) BRIDGE="$2"; shift ;;
         --ip) IP="$2"; shift ;;
         --gw) GW="$2"; shift ;;
+        --dns) DNS="$2"; shift ;;
         --sweeper-url) SWEEPER_URL="$2"; shift ;;
         --reviewer-url) REVIEWER_URL="$2"; shift ;;
         --curator-url) CURATOR_URL="$2"; shift ;;
@@ -82,7 +85,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 say() { printf '\n== %s\n' "$*"; }
-die() { echo "error: $*" >&2; exit 1; }
+die() { restore_screen; echo "error: $*" >&2; exit 1; }
 run() {
     if (( DRY )); then printf '+'; printf ' %q' "$@"; printf '\n'; else "$@"; fi
 }
@@ -93,9 +96,30 @@ INTERACTIVE=0; (( YES )) || [[ ! -r /dev/tty ]] || INTERACTIVE=1
 UI=text; (( INTERACTIVE && ! PLAIN )) && have whiptail && UI=dialog
 ASKING=$INTERACTIVE   # 0 after "Default install": the defaults are taken, but still checked
 BACKTITLE="Memory agent installer"
-cancelled() { echo "cancelled; nothing was changed"; exit 1; }
+# cancelled: ends the installer; boxes run in a subshell, so the exit trap prints the message after the screen is reset.
+cancelled() { : >"$WORK/cancelled"; exit 1; }
+# backdrop [message]: paints the terminal itself blue with the installer's name, and the message in the middle.
+# whiptail draws each box on a screen of its own and shows the terminal again when the box closes; with this the
+# terminal between two boxes looks the same as behind them.
+BACKDROP=0
+backdrop() {
+    local rows=24 cols=80 c
+    read -r rows cols < <(stty size </dev/tty 2>/dev/null) || true
+    printf '\e[0;97;44m\e[2J\e[1;1H%s\e[?25l' "$BACKTITLE" >/dev/tty
+    if [[ -n "${1:-}" ]]; then
+        c=$(( (cols - ${#1}) / 2 + 1 )); (( c > 0 )) || c=1
+        printf '\e[%d;%dH%s' $(( rows / 2 )) "$c" "$1" >/dev/tty
+    fi
+    BACKDROP=1
+}
+# restore_screen: back to the terminal's own colors, after the boxes or when stopping during them.
+restore_screen() {
+    (( BACKDROP )) || return 0
+    printf '\e[0m\e[2J\e[H\e[?25h' >/dev/tty
+    BACKDROP=0
+}
 # wt ARGS...: runs whiptail on the terminal and prints the answer; Cancel or Esc ends the installer.
-wt() { whiptail --backtitle "$BACKTITLE" "$@" 3>&1 1>&2 2>&3 </dev/tty || cancelled; }
+wt() { whiptail --backtitle "$BACKTITLE" "$@" 3>&1 1>&2 2>&3 </dev/tty || cancelled; backdrop; }
 
 # prompt "question" default "error": asks once and prints the answer; the error of the last answer is shown above.
 prompt() {
@@ -127,7 +151,7 @@ ask() {
         def="$ans"
     fi
     while :; do
-        ans="$(prompt "$q" "$def" "$err")"
+        ans="$(prompt "$q" "$def" "$err")" || exit 1   # Cancel; set -e may be off here (ask after &&)
         if err="$(check "$v" "$ans")"; then printf -v "$var" '%s' "$ans"; return; fi
         def="$ans"
     done
@@ -139,7 +163,7 @@ choose() {
     shift 3
     for (( i = 1; i <= $#; i += 2 )); do names+=("${!i}"); done
     if (( ASKING )) && [[ $UI == dialog && -z "$ans" ]] && (( ${#names[@]} )); then
-        ans="$(wt --title "Memory agent" --default-item "$def" --menu "$q" 18 76 8 "$@")"
+        ans="$(wt --title "Memory agent" --default-item "$def" --menu "$q" 18 76 8 "$@")" || exit 1
         printf -v "$var" '%s' "$ans"; return
     fi
     ask "$var" "$q" "$def" "${names[*]:+one_of ${names[*]}}"
@@ -187,10 +211,20 @@ valid_gw() {   # the gateway must be in the network of the fixed address in IP
     (( ( ($(ip2int "$1") ^ $(ip2int "$a")) >> (32 - 10#$n) ) == 0 )) && return 0
     echo "$1 is not in the network of $IP"; return 1
 }
+valid_dns() {   # "host", or one or more addresses separated by spaces
+    local a list=()
+    [[ "$1" == host ]] && return 0
+    read -ra list <<<"$1"
+    for a in "${list[@]}"; do ipv4 "$a" || list=(); done
+    (( ${#list[@]} )) && return 0
+    echo "type a DNS server address, e.g. 192.168.1.1, or host"; return 1
+}
 valid_model() {   # "-" skips the model; otherwise a link that answers (checked only while asking)
     [[ "$1" == - ]] && return 0
     [[ "$1" =~ ^https?://[^[:space:]]+$ ]] || { echo "paste a download link (https://...), or - to skip"; return 1; }
-    (( ! ASKING )) || curl -fsIL --max-time 20 -o /dev/null "$1" && return 0
+    (( ASKING )) || return 0
+    [[ $UI == dialog ]] && backdrop "Checking the link..."
+    curl -fsIL --max-time 20 -o /dev/null "$1" && return 0
     echo "that link does not answer; paste another, or - to skip"; return 1
 }
 # remote_size URL: prints the download size in GB, or "?" if the server does not say.
@@ -208,7 +242,7 @@ have curl || die "curl is needed"
 
 # --- the code: from this checkout when run from one, otherwise downloaded --------------------------------
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'restore_screen; [[ -e "$WORK/cancelled" ]] && echo "cancelled; nothing was changed" >&2; rm -rf "$WORK"' EXIT
 TGZ="$WORK/memory-agent.tar.gz"
 HERE=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
@@ -232,10 +266,13 @@ if [[ -n "$UPDATE" ]]; then
 else
     # --- questions -----------------------------------------------------------------------------------------
     if [[ $UI == dialog ]]; then
-        mode="$(wt --title "Memory agent" --menu "Choose an option:" 14 60 2 \
-            "Default Install" "take the defaults (DHCP, all models)" \
-            "Advanced Install" "choose each setting")"
-        [[ "$mode" == "Default Install" ]] && ASKING=0
+        # While the boxes are in use, the text lines go to a file and are shown after the last box.
+        exec 4>&1 1>"$WORK/answers.txt"
+        backdrop
+        mode="$(wt --title "Memory agent" --notags --menu "Choose an option:" 14 60 2 \
+            default "Default Install" advanced "Advanced Install")" || exit 1
+        [[ "$mode" == default ]] && ASKING=0
+        backdrop "Reading the host's settings..."
     fi
     say "Container"
     next=""; (( DRY )) && ! have pvesh && next=200
@@ -261,6 +298,8 @@ else
     choose BRIDGE "Network bridge" vmbr0 "${bridges[@]}"
     ask IP "Address: dhcp, or a fixed address with its prefix length, e.g. 192.168.1.60/24" dhcp valid_ip
     [[ "$IP" != dhcp ]] && ask GW "Gateway for $IP" "" valid_gw
+    ask DNS "DNS server: an address (several separated by spaces), or host for the Proxmox host's" \
+        "${GW:-host}" valid_dns
 
     say "Models"
     if (( SMALL )); then
@@ -272,6 +311,7 @@ else
         ask REVIEWER_URL "Reviewer model, checks facts and answers chat$tail" "$DEF_REVIEWER" valid_model
         ask CURATOR_URL "Curator model, polishes notes$tail" "$DEF_CURATOR" valid_model
     fi
+    [[ $UI == dialog ]] && backdrop "Checking the model links..."
     for var in SWEEPER_URL REVIEWER_URL CURATOR_URL; do
         [[ "${!var}" == - ]] && printf -v "$var" '%s' ""
         u="${!var}"; role="${var%_URL}"; role="${role,,}"
@@ -293,8 +333,11 @@ else
 
 Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
 $CORES cores, $MEMORY MB memory, $DISK GB disk
-Bridge $BRIDGE, address $IP${GW:+, gateway $GW}
+Bridge $BRIDGE, address $IP${GW:+, gateway $GW}, DNS $DNS
 Models:$models" 18 76 >/dev/null
+        exec 1>&4 4>&-
+        restore_screen
+        cat "$WORK/answers.txt"
     fi
 
     # --- template --------------------------------------------------------------------------------------------
@@ -314,10 +357,11 @@ Models:$models" 18 76 >/dev/null
     say "Creating container $CTID"
     net="name=eth0,bridge=$BRIDGE,ip=$IP"
     [[ -n "$GW" ]] && net="$net,gw=$GW"
+    dns=(); [[ "$DNS" != host ]] && dns=(--nameserver "$DNS")
     run pct create "$CTID" "$TSTORAGE:vztmpl/$TEMPLATE" \
         --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 --features nesting=1 \
         --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
-        --net0 "$net" --onboot 1 --start 1
+        --net0 "$net" "${dns[@]}" --onboot 1 --start 1
 fi
 
 if ! (( DRY )); then
@@ -328,7 +372,7 @@ if ! (( DRY )); then
         printf '.'; sleep 2
     done
     echo
-    pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || die "the container has no network; check --bridge, --ip and --gw"
+    pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || die "the container cannot look up deb.debian.org; check --bridge, --ip, --gw and --dns"
 fi
 
 # --- install inside ----------------------------------------------------------------------------------------------

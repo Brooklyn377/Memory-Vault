@@ -20,7 +20,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault
 ```
 
 It starts with a menu: **Default Install** takes every default (DHCP and the default models), **Advanced Install**
-asks for the container ID, storage, cores, memory, disk and network, and which models to download, one dialog box
+asks for the container ID, storage, cores, memory, disk, network and DNS server, and which models to download, one dialog box
 each. Every question has a default; press Enter to take it. An answer that would not work (a fixed address without
 its prefix length such as `/24`, a gateway outside that network, a container ID already in use, more cores than the
 host has) is refused with the reason, and the box asks again. Before anything is created, a summary asks to
@@ -44,6 +44,7 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 | `--storage NAME`, `--disk GB` | where the container disk goes and its size |
 | `--cores N`, `--memory MB` | container size |
 | `--bridge NAME`, `--ip CIDR`, `--gw ADDR` | network (default: `vmbr0`, DHCP) |
+| `--dns ADDR` | DNS server, or `host` for the Proxmox host's (default: the gateway with a fixed address) |
 | `--sweeper-url`, `--reviewer-url`, `--curator-url` | model download links |
 | `--small` | one tiny test model for all three, small container |
 | `--no-models` | install without models |
