@@ -1,7 +1,10 @@
 """Chat window. Messages are JSON files in <state>/chat/. The web page only queues and reads them;
-`ui_chat.py --watch` (one slow worker) answers them with the reviewer model, gpt-oss.
-  plain message   -> vault-only look-up: search note names and text, add linked notes, answer from those only
-  /fix <text>     -> the model restates what it understood; only your "Yes" files it to the inbox
+`ui_chat.py --watch` (one slow worker) answers them.
+  plain message   -> vault-only look-up: search note names and text, add linked notes, answer from those only.
+                     The Assistant answers when its switch is on and its server answers; otherwise the Reviewer.
+  /fix <text>     -> the Reviewer restates what it understood; only your "Yes" files it to the inbox
+A failed Assistant answer is not retried by itself: the message is marked failed, an Ask card says why, and
+"Send again" on the Chat page queues it again.
 """
 import json
 import re
@@ -36,6 +39,10 @@ LOOKUP_SYS = ("You answer one person's questions using ONLY the notes provided. 
 FIX_SYS = ("The person is correcting something in their notes. Using the notes provided, restate in one or "
            "two plain sentences what you understood the correction to be and which note it affects. Then ask "
            "whether that is right. Do not say anything has been changed.")
+ASSIST_SYS = ("You are the person's assistant for their notes vault. Answer their message using ONLY the notes "
+              "provided and the earlier messages. If those do not cover it, say the vault has nothing on it. "
+              "After each fact, name the note it came from in square brackets, like [entities/foo.md]. "
+              "Be short and plain. Never guess, and never say you changed anything.")
 
 
 # ---------- storage ----------
@@ -136,23 +143,70 @@ def _ask(system, user):
     return (thinklog.chat("gpt", reviewer.ENDPOINT, body, "chat", slot=1).get("content") or "").strip()
 
 
-def handle(m):
+def assistant_on():
+    """True when the Assistant's switch is on and its server (local or external) answers."""
+    try:
+        import applier
+        return bool(settings.get("pa").get("enabled")) and applier.health("pa") == "ready"
+    except Exception:
+        return False
+
+
+def _ask_assistant(system, user, earlier):
+    import applier
+    import thinklog
+    import ui_settings
+    s = settings.get("pa")
+    body = {"model": s["model_file"] or "assistant", "temperature": s["temperature"], "max_tokens": s["max_tokens"]["chat"],
+            "messages": [{"role": "system", "content": system}] + earlier + [{"role": "user", "content": user}]}
+    caps = ui_settings.caps(ui_settings.capname("pa", s))   # the model decides which thinking switch applies
+    if caps["thinking"]:
+        body["chat_template_kwargs"] = {"enable_thinking": bool(s.get("thinking", True))}
+    elif caps["reasoning_effort"]:
+        body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
+    return (thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, "chat").get("content") or "").strip()
+
+
+def earlier_turns(m):
+    """Your earlier plain messages and their replies, oldest first, so the Assistant can follow up."""
+    n = __import__("tuning").get("assistant.history")
+    done = [x for x in _all() if x["id"] < m["id"] and x["kind"] == "lookup" and x["status"] == "replied" and x["reply"]]
+    out = []
+    for x in done[-n:] if n else []:
+        out += [{"role": "user", "content": x["text"]}, {"role": "assistant", "content": x["reply"]}]
+    return out
+
+
+def handle(m, who="gpt"):
     v = _vault()
     top, extra = retrieve(m["text"])
-    if not top and m["kind"] == "lookup":
+    if not top and m["kind"] == "lookup" and who == "gpt":
         m["reply"], m["sources"] = "The vault has no notes that match that.", []
         return
     parts = [f"NOTE {r}:\n{v.body[r][:__import__('tuning').get('chat.note_chars')]}" for r in top]
     parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
     context = "\n\n".join(parts) or "(no matching notes found)"
-    system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
-    kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
-    reply = _ask(system, f"{context}\n\n{kind}: {m['text']}")
+    if who == "pa":
+        reply = _ask_assistant(ASSIST_SYS, f"{context}\n\nQUESTION: {m['text']}", earlier_turns(m))
+    else:
+        system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
+        kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
+        reply = _ask(system, f"{context}\n\n{kind}: {m['text']}")
     if not reply:
         raise RuntimeError("empty reply")
-    m["reply"], m["sources"] = reply, top + extra
+    m["reply"], m["sources"], m["by"] = reply, top + extra, "Assistant" if who == "pa" else "Reviewer"
     if m["kind"] == "correction":
         m["confirm"] = "pending"
+
+
+def retry(mid):
+    """Send a failed message again: your choice, never a timer."""
+    m = _load(mid)
+    if not m or m["status"] != "error":
+        raise ValueError("only a failed message can be sent again")
+    m.update(status="queued", tries=0, reply="")
+    _save(m)
+    return m
 
 
 def watch():
@@ -167,23 +221,34 @@ def watch():
         if not todo:
             time.sleep(10)
             continue
-        if not reviewer.ready():
+        m = todo[0]
+        who = "pa" if m["kind"] == "lookup" and assistant_on() else "gpt"
+        if who == "gpt" and not reviewer.ready():
             time.sleep(30)
             continue
-        m = todo[0]
         m["status"] = "working"
         _save(m)
         try:
-            handle(m)
+            handle(m, who)
             m["status"] = "replied"
-            agent.log(f"chat: replied to {m['id']}")
+            agent.log(f"chat: replied to {m['id']} ({m['by']})")
         except Exception as e:
-            m["tries"] += 1
-            m["status"] = "error" if m["tries"] >= MAX_TRIES else "queued"
-            if m["status"] == "error":
-                m["reply"] = f"Could not answer: {type(e).__name__}"
-            agent.log(f"chat: {m['id']} failed ({type(e).__name__}: {str(e)[:80]}), try {m['tries']}")
-            time.sleep(60)
+            why = f"{type(e).__name__}: {str(e)[:120]}"
+            if who == "pa":   # no retry timer: mark it failed, say why, and leave "Send again" to you
+                m["status"], m["reply"] = "error", f"The Assistant could not answer ({type(e).__name__})."
+                import questions
+                questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',
+                              why="Check the Assistant's server on the Settings page. On the Chat page, Send again "
+                                  "queues the message again; with the Assistant's switch off, the Reviewer answers it.",
+                              kind="assistant", payload={"chat": m["id"]})
+                agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
+            else:
+                m["tries"] += 1
+                m["status"] = "error" if m["tries"] >= MAX_TRIES else "queued"
+                if m["status"] == "error":
+                    m["reply"] = f"Could not answer: {type(e).__name__}"
+                agent.log(f"chat: {m['id']} failed ({why}), try {m['tries']}")
+                time.sleep(60)
         _save(m)
 
 
@@ -220,6 +285,16 @@ def register(app, authed):
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
 
+    @router.post("/api/chat/retry")
+    async def chat_retry(request: Request):
+        need(request)
+        data = await request.json()
+        try:
+            retry(str(data.get("id", "")))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
     @router.get("/chat", response_class=HTMLResponse)
     def chat_page(request: Request):
         if not authed(request):
@@ -237,13 +312,14 @@ CHAT_HTML = r"""
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
 </style>
 <div id="thread"></div>
-<div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about the lab. Start with /fix to correct a note."></textarea>
+<div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
 <button class="pri" id="cs">Send</button><span id="ce" class="mut"></span></div>
 <script>
 const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed"};
 let seen=-1;
 function bubble(m){
- const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},LABEL[m.status]||m.status)];
+ const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];
+ if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(h("div",{class:"mut"},"Notes used: "+m.sources.join(", ")));
   if(m.confirm==="pending")box.append(h("button",{class:"pri",onclick:()=>decide(m.id,true)},"Yes, file it"),h("button",{onclick:()=>decide(m.id,false)},"No, that is not right"));
@@ -252,8 +328,9 @@ function bubble(m){
   out.push(box)}
  return out}
 async function load(){try{const d=await api("/api/chat");
- $("#thread").replaceChildren(...(d.messages.length?d.messages.flatMap(bubble):[h("div",{class:"card mut"},"Ask a question about the lab, or start with /fix to correct a note.")]));
+ $("#thread").replaceChildren(...(d.messages.length?d.messages.flatMap(bubble):[h("div",{class:"card mut"},"Ask a question about your notes, or start with /fix to correct a note.")]));
  if(d.messages.length!==seen){seen=d.messages.length;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
+async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
 $("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
  try{await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});$("#ct").value="";await load()}

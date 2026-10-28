@@ -31,7 +31,7 @@ HTML = r"""
 <div id="tn"></div>
 <script>
 (function(){
-const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator"};
+const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
 const SEC={},placed={};
 function build(m,items){
  const inp={};

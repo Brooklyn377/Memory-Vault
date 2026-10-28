@@ -51,6 +51,7 @@ REG += [
 REG += [
     ("sweep.recap_chars", "qwen", "Recap length kept (characters)", "The code cuts each chunk's recap to this many characters. The Sweeper is told the matching word count with each chunk (about 7.5 characters per word, so 900 is 120 words). Raise the Reviewer's 'Recap length the gate sees' to at least this.", 900, 300, 12000, ""),
     ("sweep.overlap_chars", "qwen", "End of the previous chunk shown (characters)", "Gives the model the last part of the previous chunk, word for word, as background. 0 turns it off. Quotes must still come from the new chunk.", 0, 0, 20000, ""),
+    ("assistant.history", "pa", "Earlier messages it sees", "How many of your earlier chat messages, with their replies, the Assistant sees with a new one, so you can ask follow-ups. 0 turns it off.", 6, 0, 30, ""),
     ("sweep.facts_context", "qwen", "Earlier facts shown", "Shows the most recent facts already recorded from earlier in this chat, so the model can spot contradictions and avoid repeating. 0 turns it off.", 0, 0, 200, ""),
 ]
 BY = {r[0]: r for r in REG}

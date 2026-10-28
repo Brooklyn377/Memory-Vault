@@ -46,6 +46,7 @@ REG = [
     ("curator_prune", "cur", "Note review: prune", "Added when 'Prune' is on.", None, None),
     ("curator_format", "cur", "Note review: answer format", "Closes every note-review prompt. Keep the JSON format.", None, None),
     ("map_pass", "cur", "Map pass", "Reads the whole vault and proposes links and hub notes.", "mapper", "SYS"),
+    ("assistant_chat", "pa", "Chat answer", "Answers your plain chat messages while the Assistant's switch is on.", "ui_chat", "ASSIST_SYS"),
 ]
 BY = {r[0]: r for r in REG}
 _defaults = {}
