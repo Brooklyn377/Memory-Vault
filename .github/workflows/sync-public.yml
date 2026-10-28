@@ -1,0 +1,23 @@
+# Copies the public branch to the public repository whenever it changes.
+# Runs only in the private repository: the public one has no claude/public branch.
+# Needs the secret PUBLIC_REPO_TOKEN: a fine-grained token with Contents read and write on the public repository.
+name: Sync public repository
+on:
+  push:
+    branches: [claude/public]
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/public
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Push to the public repository
+        env:
+          TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          test -n "$TOKEN" || { echo "PUBLIC_REPO_TOKEN is not set"; exit 1; }
+          git push "https://x-access-token:${TOKEN}@github.com/Brooklyn377/Memory-Vault.git" HEAD:refs/heads/main
