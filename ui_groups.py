@@ -1,5 +1,5 @@
-"""Settings page, Model groups: which local models may be loaded together. No groups (the default): one local model at a
-time and the others take turns. Models on an external server are in groups and take turns like the others."""
+"""Settings page, Model groups: lists of models that may work at the same time. A model may be in several lists. Models on
+the same hardware that no list puts together take turns (the Assistant first)."""
 from fastapi import APIRouter, HTTPException, Request
 
 import applier
@@ -78,7 +78,7 @@ async function save(){
  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
  msg.textContent="Saved."+((j.notes||[]).length?" "+j.notes.join(" "):"");load()}
 $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
- h("div",{class:"mut"},"Local models that are in one group can be loaded at the same time. Any other local model waits its turn: it is loaded when the group that is loaded has nothing to do, or has had its turn for the minutes below. With no groups, one local model is loaded at a time."),
+ h("div",{class:"mut"},"A group is a list of models that can work at the same time. A model can be in several groups. Two models on the same machine (or the same external server) that no group lists together take turns: the Assistant goes first, then the Reviewer, the Sweeper and the Curator. Models on different machines never wait for each other."),
  status,list,
  h("button",{onclick:function(){list.append(groupBox([]))}},"Add group"),
  h("div",{class:"fld",style:"margin-top:8px"},h("label",{},"Minutes a group keeps its turn while others wait (0: give way as soon as it is idle; a chat message from you never waits)"),mins),

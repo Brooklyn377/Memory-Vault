@@ -65,22 +65,21 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
    warning instead of being refused. Only values that cannot work at all (a negative count, a probability above 1)
    are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
-## Model groups: which local models are loaded together
-A machine may only have memory for one model, so by default **one local model is loaded at a time** and the others
-take turns: a call for a model that is not loaded waits, and the model is loaded when the one that has the turn is
-idle. The model servers are therefore not started at boot; the turn manager (in the web service) starts and stops them.
+## Model groups: which models work at the same time
+Models that run on the **same hardware** (this machine, or one external server) work **one at a time** by default and
+take turns: a call for a model that is not working waits, and the model gets its turn when the one that has it is
+idle. Models on different machines never wait for each other. The local model servers are therefore not started at
+boot; the turn manager (in the web service) starts and stops them.
 
-Under **Settings → Model groups**, **Add group** and tick the models that may be loaded together (for example Sweeper
-and Reviewer, if memory holds both). Models in a group are loaded together; any other local model waits its turn. You
-can make several groups; a model is in one. A model on an **external server** takes turns and
-sits in groups like a local one (the manager only starts and stops servers on this machine). Models that point at the
-**same external server** always take turns, even inside one group, because they share its one model and slots; they
-need the same settings.
+Under **Settings → Model groups**, **Add group** and tick the models that may work at the same time (for example Sweeper
+and Reviewer, if memory holds both). A group is only a list: a model can be in several groups, and two models can work
+together when some group lists both. When several models want the same hardware, the **Assistant goes first, then the
+Reviewer, the Sweeper and the Curator**.
 
-- **How a turn passes:** a group that still has work keeps its turn for at least the minutes set on that page
-  (default 10), and always until its running calls finish; then the next waiting model's group is loaded. A model
-  that has had nothing to do for half a minute gives way at once. A chat message from you, and a model you load by
-  hand with the power button, do not wait for the minutes.
+- **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page
+  (default 10), and always until its running call finishes; then the waiting model with the highest priority goes. A
+  model that has had nothing to do for half a minute gives way at once. The Assistant, a chat message from you, and a
+  model you load by hand with the power button, do not wait for the minutes.
 - **The Curator** asks for its turn when the other local models have nothing to do, and gives it back when one wants
   to run.
 - **Updating from an earlier version:** the servers that are running are kept as they are until another model needs

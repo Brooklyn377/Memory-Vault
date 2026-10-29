@@ -1,15 +1,15 @@
-"""Which local models are loaded together, and whose turn it is.
+"""Which models may work at the same time, and whose turn it is.
 
-A model group is a set of local models that may be loaded at the same time. A model in no group is alone. The models
-of one group are loaded together; any other local model waits its turn. With no groups at all, one local model is loaded
-at a time. A model on an external server takes turns and sits in groups like a local one; the manager only starts and
-stops the servers on this machine, so for an external model the turn is when its calls go out.
+Models that run on the same hardware (this machine, or one external server) work one at a time, unless a group lists
+them together: a group is a list of models that may work at the same time, and a model may be in several groups. Two
+models that no group lists together take turns. Models on different hardware never wait for each other. When several
+want the same hardware, the Assistant goes first, then the Reviewer, the Sweeper and the Curator.
 
 How it works. A call that needs a model asks for it (a "want") and holds a "lease" while it runs (thinklog.chat does
-both). The manager, a thread of the web service, looks at the wants and leases every few seconds: when a model outside
-the loaded group is wanted, it lets the loaded group finish what it is doing, stops the units of that group, and starts
-the wanted group. A group that still has work keeps its turn for at least `turn_minutes` before it must give way; a
-message you send in the chat, or a model you load by hand, does not wait for that. Callers only ever write small files
+both). The manager, a thread of the web service, looks at the wants and leases every few seconds: when a wanted model may not
+work together with one that is working, it lets that one finish its running call, stops its server if it is on this
+machine, and starts the wanted model. A model that still has work keeps its turn for at least `turn_minutes` before it
+must give way; the Assistant, a message you send in the chat and a model you load by hand do not wait for that. Callers only ever write small files
 in <state>/turns, so any service can use this; only the manager starts and stops model servers.
 
 If the manager is not running (its heartbeat is old), callers do not wait for turns: they behave as before."""
@@ -30,6 +30,7 @@ HOLDS = DIR / "holds"   # a model working through a whole task (several calls wi
 CONFIG = agent.STATE / "model_groups.json"
 ACTIVE, BEAT, LOCK = DIR / "active.json", DIR / "beat", DIR / "lock"
 MODELS = ("qwen", "gpt", "cur", "pa")
+PRIORITY = ("pa", "gpt", "qwen", "cur")   # who goes first when models that may not work together both want to
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 FRESH = 30         # seconds a want counts after it was last made (a waiting call repeats it every few seconds)
 QUIET = 30         # seconds after its last call that a model still counts as busy: its group is not given away between two calls
@@ -48,9 +49,9 @@ def config():
         d = json.loads(CONFIG.read_text())
     except (OSError, ValueError):
         d = {}
-    groups, seen = [], set()
+    groups = []
     for g in (d.get("groups") or []) if isinstance(d, dict) else []:
-        models = [m for m in (g.get("models") or []) if m in MODELS and not (m in seen or seen.add(m))]
+        models = [m for m in dict.fromkeys(g.get("models") or []) if m in MODELS]
         if models:
             groups.append({"id": str(g.get("id") or secrets.token_hex(3)), "models": models})
     try:
@@ -61,40 +62,26 @@ def config():
 
 
 def save_config(groups, turn_minutes):
-    """Store the groups. A model in two groups stays in the first. -> (config, notes about what was moved or dropped)."""
-    notes, seen, out = [], {}, []
-    for i, g in enumerate(groups or []):
-        models = []
-        for m in (g.get("models") if isinstance(g, dict) else g) or []:
-            if m not in MODELS:
-                continue
-            if m in seen:
-                notes.append(f"{NICE[m]} is in group {seen[m]} already, so it was left out of group {i + 1}: a model is in one group.")
-            elif m not in models:
-                models.append(m)
-                seen[m] = i + 1
+    """Store the groups exactly as given: a model may be in several. -> (config, notes; none now, kept for the page)."""
+    out = []
+    for g in groups or []:
+        models = [m for m in dict.fromkeys((g.get("models") if isinstance(g, dict) else g) or []) if m in MODELS]
         if models:
             out.append({"id": str((g.get("id") if isinstance(g, dict) else "") or secrets.token_hex(3)), "models": models})
     try:
         minutes = max(0, int(float(turn_minutes)))
     except (TypeError, ValueError):
         raise ValueError("minutes must be a number")
-    for i, g in enumerate(out):
-        for a in g["models"]:
-            for b in g["models"]:
-                if a < b and server_of(a) and server_of(a) == server_of(b):
-                    notes.append(f"The {NICE[a]} and the {NICE[b]} use the same external server, so they take turns even in group {i + 1}.")
     DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG.with_suffix(".tmp")
     tmp.write_text(json.dumps({"groups": out, "turn_minutes": minutes}, indent=1))
     os.replace(tmp, CONFIG)
-    agent.log("settings: model groups " + (", ".join("+".join(NICE[m] for m in g["models"]) for g in out) or "none (one local model at a time)"))
-    return config(), notes
+    agent.log("settings: model groups " + (", ".join("+".join(NICE[m] for m in g["models"]) for g in out) or "none (one model at a time on each machine)"))
+    return config(), []
 
 
 def server_of(model):
-    """The external server this model's calls go to (None for a local model). Models that share one server share its
-    single model and slots, so they can never be active at the same time."""
+    """The external server this model's calls go to (None for a local model)."""
     try:
         import remote
         return remote.base(model).rstrip("/").lower() or None if remote.enabled(model) else None
@@ -102,19 +89,20 @@ def server_of(model):
         return None
 
 
-def group_of(model):
-    """The models that may be loaded together with this one. A member that uses the same external server as this
-    model is left out: two models on one server take turns even when they are in one group."""
-    for g in config()["groups"]:
-        if model in g["models"]:
-            out, used = [model], {server_of(model)} - {None}
-            for m in g["models"]:
-                srv = server_of(m)
-                if m != model and not (srv and srv in used):
-                    out.append(m)
-                    used |= {srv} - {None}
-            return [m for m in g["models"] if m in out]
-    return [model]
+def hardware(model):
+    """Where the model runs: this machine, or one external server. Only models on the same hardware wait for each other."""
+    if not _external(model):
+        return "local"
+    return "server " + (server_of(model) or model)
+
+
+def together(a, b):
+    return any(a in g["models"] and b in g["models"] for g in config()["groups"])
+
+
+def conflict(a, b):
+    """True if the two models may not work at the same time: same hardware and no group has both."""
+    return a != b and hardware(a) == hardware(b) and not together(a, b)
 
 
 # ---------- what is local, and whether the manager is there ----------
@@ -238,11 +226,15 @@ def lease_counts(folder=None):
 
 
 def active():
+    """-> {"group": models allowed to work now, "since": {model: when its turn began}, "draining": models finishing up."""
     try:
         d = json.loads(ACTIVE.read_text())
     except (OSError, ValueError):
         d = {}
-    return {"group": [m for m in d.get("group") or [] if m in MODELS], "since": d.get("since", 0), "draining": bool(d.get("draining"))}
+    since = d.get("since") if isinstance(d.get("since"), dict) else {}
+    models = [m for m in (d.get("group") or []) if m in MODELS]
+    return {"group": models, "since": {m: float(since.get(m, 0)) for m in models},
+            "draining": [m for m in (d.get("draining") or []) if m in models]}
 
 
 def _set_active(st):
@@ -279,7 +271,7 @@ def lease(model, urgent=False, stop=None):
             stop()
         with _lock():
             st = active()
-            if model in st["group"] and not st["draining"] and applier.health(model) == "ready":
+            if model in st["group"] and model not in st["draining"] and applier.health(model) == "ready":
                 path = LEASES / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
                 path.write_text(str(time.time()))
                 clear_want(model)   # it has its turn: it is not asking any more (a call still waiting asks again)
@@ -319,17 +311,17 @@ def holds(model):
 
 
 def others_waiting(model):
-    """True if a local model outside this model's group is wanted: it should give way after its current work."""
-    mine = set(group_of(model))
-    return any(m not in mine and m != model for m in wants())
+    """True if a model that may not work together with this one is wanted: it should give way after its current work."""
+    return any(conflict(model, m) for m in wants())
 
 
 def others_idle(model):
-    """True if no other local model has a call running or wanted, and their servers have no call in flight."""
+    """True if no model that may not work together with this one has a call running or wanted, and its server has no
+    call in flight."""
     import applier
     counts, w, held = lease_counts(), wants(), lease_counts(HOLDS)
     for m in MODELS:
-        if m == model:
+        if not conflict(model, m):
             continue
         if counts.get(m) or held.get(m) or m in w or not applier.idle(m):
             return False
@@ -380,38 +372,54 @@ def step(now=None):
     with _lock():
         cfg = config()
         st = active()
-        grp = list(st["group"])
+        loaded, since, drain = list(st["group"]), dict(st["since"]), set(st["draining"])
         w = {m: d for m, d in wants(now).items() if _has_model(m)}
         counts = lease_counts()
         held = lease_counts(HOLDS)
         running = [m for m in MODELS if not _external(m) and _running(m)]
-        if not grp and running:   # servers already up (after an update or a restart): they are the loaded group
-            grp = list(running)
-            st = {"group": grp, "since": now, "draining": False}
-            did.append("adopt " + "+".join(grp))
-        order = sorted(w, key=lambda m: (not w[m]["urgent"], w[m]["at"]))
-        if not grp and order:
-            grp = group_of(order[0])
-            st = {"group": grp, "since": now, "draining": False}
-            did.append("load " + "+".join(grp))
-        outsiders = [m for m in order if m not in grp]
-        inside = [m for m in grp if m in w or counts.get(m) or held.get(m) or used_lately(m, now)]   # the loaded group still has work
-        if outsiders:
-            expired = now - st["since"] >= cfg["turn_minutes"] * 60
-            # a group answers at least one call before it gives way (or has waited a long time for a server that never came up)
-            served = any(used_after(m, st["since"]) for m in grp) or now - st["since"] > 900
-            if w[outsiders[0]]["urgent"] or not inside or (expired and served and not any(held.get(m) for m in grp)):
-                st["draining"] = True   # no new calls for the loaded group: they finish, then the next group comes
-                if not any(counts.get(m) for m in grp):
-                    target = group_of(outsiders[0])
-                    stop = [m for m in running if m not in target]
-                    grp = list(target)
-                    st = {"group": grp, "since": now, "draining": False}
-                    did.append("switch to " + "+".join(grp))
-        elif st["draining"]:
-            st["draining"] = False
-        _set_active(st)
-        start = [m for m in order if m in grp and m not in running and not _external(m)]   # wanted members of the loaded group that are not up
+        if not loaded and running:   # servers already up (after an update or a restart): they are the ones working now
+            loaded, since = list(running), {m: now for m in running}
+            did.append("adopt " + "+".join(loaded))
+        # who goes first: you (a chat message, a model loaded by hand), then the Assistant, Reviewer, Sweeper, Curator
+        order = sorted(w, key=lambda m: (not (w[m]["urgent"] or m == "pa"), PRIORITY.index(m), w[m]["at"]))
+        waiting = []   # wanted models that had to wait: a lower one may not slip in front of them
+        for m in order:
+            if m in loaded:
+                continue
+            block = [x for x in loaded if conflict(m, x)]
+            if not block:
+                if not any(conflict(m, b) for b in waiting):
+                    loaded.append(m)
+                    since[m] = now
+                    did.append("load " + m)
+                else:
+                    waiting.append(m)
+                continue
+            waiting.append(m)
+            first = w[m]["urgent"] or m == "pa"
+
+            def can_go(x):
+                inside = x in w or counts.get(x) or held.get(x) or used_lately(x, now)   # it still has work
+                expired = now - since.get(x, now) >= cfg["turn_minutes"] * 60
+                # it answered at least one call (or waited long for a server that never came up) before giving way
+                served = used_after(x, since.get(x, now)) or now - since.get(x, now) > 900
+                return first or not inside or (expired and served and not held.get(x))
+            if all(can_go(x) for x in block):
+                drain |= set(block)   # no new calls for them: their running calls finish, then this model comes
+                if not any(counts.get(x) for x in block):
+                    for x in block:
+                        loaded.remove(x)
+                        since.pop(x, None)
+                        drain.discard(x)
+                        stop.append(x)
+                    loaded.append(m)
+                    since[m] = now
+                    waiting.remove(m)
+                    did.append("switch to " + m)
+        drain = {x for x in drain if x in loaded and any(conflict(m, x) for m in waiting)}
+        _set_active({"group": loaded, "since": since, "draining": sorted(drain)})
+        stop = [m for m in stop if m in running]   # only a server on this machine is stopped
+        start = [m for m in order if m in loaded and m not in running and not _external(m)]   # wanted ones that are not up
     for m in stop:   # outside the lock: stopping a server takes a while, and callers only wait meanwhile
         _stop_unit(m)
         did.append("stop " + m)
