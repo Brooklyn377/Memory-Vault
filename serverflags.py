@@ -48,8 +48,8 @@ def spec():
 
 
 def check(flags, model_file="", old=None, warn=None):
-    """Checks the flags and returns the ones set. lo and hi are the usual range: a changed number outside it adds a
-    warning to warn. Only a number below min (default: lo) is refused."""
+    """Checks the flags and returns the ones set. lo and hi are the usual range, min (default lo) the lowest that can
+    work: a changed number outside either only adds a warning to warn. Nothing numeric is refused."""
     by, sup, out, old = {s["key"]: s for s in SPEC}, supported(), {}, old or {}
     warn = [] if warn is None else warn
     for k, v in (flags or {}).items():
@@ -76,15 +76,17 @@ def check(flags, model_file="", old=None, warn=None):
             out[k] = name
         else:
             x = float(v)
-            if x < s.get("min", s["lo"]):
-                raise ValueError(f"{s['label']}: must be at least {s.get('min', s['lo'])}")
-            if not s["lo"] <= x <= s["hi"] and x != old.get(k):
+            if x < s.get("min", s["lo"]) and x != old.get(k):
+                warn.append(f"{s['label']}: {x:g} is below {s.get('min', s['lo'])}, the lowest it can be; the server may not start "
+                            "(a server that does not come up is rolled back).")
+            elif not s["lo"] <= x <= s["hi"] and x != old.get(k):
                 warn.append(f"{s['label']}: {x:g} is outside the usual {s['lo']:g} to {s['hi']:g}.")
             out[k] = int(x) if kind == "int" else x
     if out.get("cache_type_v", "f16") != "f16" and out.get("flash_attn") == "off":
-        raise ValueError("a quantized value cache needs flash attention on or auto")
+        warn.append("A quantized value cache needs flash attention on or auto; with it off the server may not start "
+                    "(a server that does not come up is rolled back).")
     if ("draft_max" in out or "draft_min" in out) and "draft_model" not in out:
-        raise ValueError("pick a draft model before setting its token counts")
+        warn.append("Draft token counts do nothing without a draft model.")
     return out
 
 

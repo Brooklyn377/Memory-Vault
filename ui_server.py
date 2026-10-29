@@ -49,10 +49,20 @@ NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant
 MODELS = tuple(NICE)
 
 
+def _num(f, key, label, m):
+    """A number typed on the page; text that is not a number is the one thing refused, with a plain reason."""
+    try:
+        return int(float(f.get(key)))
+    except (TypeError, ValueError):
+        raise ValueError(f"{NICE[m]}: {label} must be a number, not \"{f.get(key)}\"")
+
+
 def _plan(d):
-    """Check every change on the page. Returns (the server restarts needed, warnings, values to save directly); raises
-    on the first value that cannot work. A value outside its usual range, or a context larger than the memory
-    estimate, is only a warning: a server that does not come up ready is rolled back by applier.apply_now.
+    """Check every change on the page. Returns (the server restarts needed, warnings, values to save directly). Nothing
+    is refused for being unsafe: a value outside its usual range or below what can work, a context larger than the
+    memory estimate, or a model file that is not there is a warning, applied if you say so. A server that does not
+    come up ready is rolled back by applier.apply_now; without a model file the values are saved with no restart.
+    Only text that cannot be read as the setting (not a number, an odd address) raises.
     For a model on an external server only its context is saved, with no restart and no memory check: the token
     checks use it. Model file, threads, slots and flags are that machine's business and stay as they were here."""
     import tuning
@@ -63,32 +73,39 @@ def _plan(d):
         cur, f = s[m], (d.get("servers") or {}).get(m)
         vals, ext = None, False
         if f and f.get("remote") is not None:
-            remote.check(m, f["remote"])
+            remote.check(m, f["remote"], warn)
             ext = bool(f["remote"].get("enabled"))
         if f and ext:
-            ctx_ext = int(f.get("context"))
-            if ctx_ext < HARD_MIN_CTX:
-                raise ValueError(f"{NICE[m]}: context must be at least {HARD_MIN_CTX:,}")
+            ctx_ext = _num(f, "context", "Context", m)
+            if ctx_ext < HARD_MIN_CTX and ctx_ext != cur["context"]:
+                warn.append(f"{NICE[m]}: context {ctx_ext:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
             direct[m] = {"context": ctx_ext}
             prop[m].update(direct[m])
         elif f:
-            vals = {"model_file": str(f.get("file", "")), "context": int(f.get("context")),
-                    "threads": int(f.get("threads")), "parallel": int(f.get("parallel")),
+            vals = {"model_file": str(f.get("file", "")), "context": _num(f, "context", "Context", m),
+                    "threads": _num(f, "threads", "Threads", m), "parallel": _num(f, "parallel", "Parallel slots", m),
                     "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn)}
         if vals and any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()):
-            if vals["threads"] < 1 or vals["parallel"] < 1:
-                raise ValueError(f"{NICE[m]}: threads and slots must be at least 1")
+            if (vals["threads"] < 1 and vals["threads"] != cur["threads"]) or (vals["parallel"] < 1 and vals["parallel"] != cur["parallel"]):
+                warn.append(f"{NICE[m]}: threads and slots below 1 cannot work; the server will not start (it is rolled back).")
             if vals["threads"] > _threads_max() and vals["threads"] != cur["threads"]:
                 warn.append(f"{NICE[m]}: {vals['threads']} threads is more than the {_threads_max()} this container has, which usually makes it slower.")
             if vals["parallel"] > MAX_SLOTS and vals["parallel"] != cur["parallel"]:
                 warn.append(f"{NICE[m]}: {vals['parallel']} slots is more than the usual {MAX_SLOTS}; each slot gets a smaller share of the context.")
-            if vals["context"] < HARD_MIN_CTX:
-                raise ValueError(f"{NICE[m]}: context must be at least {HARD_MIN_CTX:,}")
-            cap = limits(m, vals["model_file"], vals["parallel"], strict=False)
+            if vals["context"] < HARD_MIN_CTX and vals["context"] != cur["context"]:
+                warn.append(f"{NICE[m]}: context {vals['context']:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
+            try:
+                cap = limits(m, vals["model_file"], max(1, vals["parallel"]), strict=False)
+            except ValueError as e:   # no such model file: save the values, but there is nothing to restart with
+                warn.append(f"{NICE[m]}: {e}. The values are saved, but its server is not restarted until a model file is chosen.")
+                direct[m], vals = vals, None
+                prop[m].update(direct[m])
+                cap = None
+        if vals and any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()):
             if vals["context"] > cap:
                 warn.append(f"{NICE[m]}: context {vals['context']:,} is more than the {max(cap, 0):,} estimated to fit in memory. "
                             "If the server cannot start, the change is rolled back.")
-            elif vals["context"] < MIN_CTX:
+            elif HARD_MIN_CTX <= vals["context"] < MIN_CTX:
                 warn.append(f"{NICE[m]}: context {vals['context']:,} is below the usual {MIN_CTX:,}; most calls will not fit.")
             jobs[m] = vals
         elif m in pend:
@@ -132,42 +149,6 @@ def register(app, authed):
             return {"max": limits(model, file, max(1, min(parallel, MAX_SLOTS))), "min": MIN_CTX}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-
-    @router.post("/api/server/apply")
-    async def apply(request: Request):
-        need(request)
-        d = await request.json()
-        try:
-            model = d.get("model")
-            if model not in ("qwen", "gpt"):
-                raise ValueError("unknown server")
-            file = str(d.get("file", ""))
-            ctx, thr, par = int(d.get("context")), int(d.get("threads")), int(d.get("parallel"))
-            if not 1 <= thr <= _threads_max():
-                raise ValueError(f"threads must be 1 to {_threads_max()}")
-            if not 1 <= par <= MAX_SLOTS:
-                raise ValueError(f"slots must be 1 to {MAX_SLOTS}")
-            cap = limits(model, file, par)
-            if not MIN_CTX <= ctx <= cap:
-                raise ValueError(f"context must be {MIN_CTX:,} to {cap:,} for this model")
-            cur = settings.load()[model]
-            for k, v in cur["max_tokens"].items():
-                if v > ctx:
-                    raise ValueError(f"the {k} token limit ({v}) is larger than that context; lower it first")
-            vals = {"model_file": file, "context": ctx, "threads": thr, "parallel": par}
-            if all(cur[k] == v for k, v in vals.items()):
-                raise ValueError("nothing changed")
-            if d.get("when") == "idle":
-                applier.queue(model, vals)
-            elif d.get("when") == "now":
-                applier.apply_now(model, vals)
-            else:
-                raise ValueError("choose now or idle")
-        except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"restart failed and was rolled back: {type(e).__name__}")
-        return {"ok": True}
 
     @router.post("/api/server/cancel")
     async def cancel(request: Request):
@@ -297,11 +278,6 @@ function mk(m,s,models,maxT){
  function sync(){const r=e.where.value==="remote";FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=!f.ok});e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r?"none":""});e.extnote.style.display=r?"":"none"}
  e.where.onchange=sync;sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
- const go=async()=>{e.msg.textContent="";
-  const when=await ask3("Applying this restarts the "+NM[m]+". A call it is running right now would be cut off.");
-  if(!when)return;
-  const r=await post("/api/server/apply",{model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,when:when});
-  e.msg.textContent=r.ok?(when==="idle"?"Queued. It applies when no call is running.":"Restarting..."):r.detail;stat()};
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
  limit(m);
  (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value==="remote",url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
@@ -334,7 +310,7 @@ window.applyAll=async()=>{
  const note=t=>{for(const m of IDS)if(E[m])E[m].msg.textContent=t};
  note("");
  const c=await post("/api/settings/check",body);
- if(!c.ok){note(c.detail);return}
+ if(!c.ok){note(c.detail);window.warnPop("Could not apply",[c.detail||"Could not apply"]);return}
  if(c.data.warn&&c.data.warn.length&&!await window.warnPop("These settings may not be safe",c.data.warn,"Apply anyway"))return;
  const need=c.data.restart;let when="now";
  if(need.length){
@@ -342,6 +318,7 @@ window.applyAll=async()=>{
   if(!when)return}
  const r=await post("/api/settings/apply_all",{models:body.models,servers:body.servers,when:when});
  if(r.ok)dirty=false;
+ else window.warnPop("Could not apply",[r.detail||"Could not apply"]);
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
  if(r.ok)for(const m of IDS){const e=E[m];if(e&&e.rn&&e.where.value==="remote"&&e.rn.value!==e.rn0){e.rn0=e.rn.value;
   e.msg.textContent+=" Reload the page to update the thinking switches for "+(e.rn.value||"this model")+"."}}

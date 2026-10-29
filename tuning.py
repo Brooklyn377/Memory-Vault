@@ -1,8 +1,8 @@
 """Pipeline limits: the numbers that cap what each job reads and keeps. Defaults equal the old hardcoded values.
 tuning.get('key') reads the saved value at call time and falls back to the default.
 The range of each limit is the usual one: a value outside it is saved with a warning. -1 means no limit (OFF_AS
-says what that is where it is not "unlimited"). Any other value below the lowest that can work at all (floor) is
-refused."""
+says what that is where it is not "unlimited"). Nothing is ever refused: a value below the lowest that works as
+intended (floor) is saved with a warning too."""
 import json
 import os
 from pathlib import Path
@@ -103,7 +103,7 @@ def value(key, saved):
         return r[4]
     if x == OFF:
         return OFF_AS.get(key, (NO_LIMIT,))[0]
-    return x if x >= floor(r) else r[4]
+    return max(x, 0)   # what you saved, even below the floor (you were warned); other negatives count as 0
 
 
 def get(key):
@@ -159,10 +159,10 @@ def token_warnings(cur=None, s=None):
     return out
 
 
-def save(values):
-    """Save the changed values. A blank or default value is removed. Returns (services that must restart, warnings):
-    a changed value outside its usual range, and calls that this save makes too big for a model's context (an
-    older one does not come back every time; token_warnings lists them all)."""
+def save(values, dry=False):
+    """Save the changed values (dry: only check). A blank or default value is removed. Returns (services that must
+    restart, warnings): a changed value outside its usual range or below the floor, and calls that this save makes too
+    big for a model's context (an older one does not come back every time; token_warnings lists them all)."""
     cur, changed, warn = dict(_saved()), [], []
     before = set(token_warnings(cur))
     for k, v in (values or {}).items():
@@ -175,8 +175,11 @@ def save(values):
             if x == OFF:
                 if k in LOOPS and x != cur.get(k):
                     warn.append(f"{r[2]}: with no limit, something the model cannot handle is retried without end.")
-            elif x < floor(r):
-                raise ValueError(f"{r[2]}: must be at least {floor(r)}, or -1 for no limit")
+            elif x < floor(r):   # saved anyway: never refused, only warned
+                if x != cur.get(k):
+                    warn.append(f"{r[2]}: {x:,} is below {floor(r)}, the lowest that works as intended"
+                                + (" (negative values other than -1 count as 0)" if x < 0 else "")
+                                + (". With 0, nothing gets done for this step." if floor(r) == 1 and x <= 0 else "."))
             elif not r[5] <= x <= r[6] and x != cur.get(k):
                 warn.append(f"{r[2]}: {x:,} is outside the usual {r[5]:,} to {r[6]:,}.")
             new = None if x == r[4] else x
@@ -187,6 +190,8 @@ def save(values):
             cur[k] = new
         if old != new:
             changed.append(k)
+    if dry:
+        return [], warn + [x for x in token_warnings(cur) if x not in before]
     tmp = FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=1, sort_keys=True))
     os.replace(tmp, FILE)

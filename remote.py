@@ -135,8 +135,11 @@ def norm_url(u):
     return urllib.parse.urlunparse((p.scheme, p.netloc, path, "", "", "")).rstrip("/")
 
 
-def check(model, d):
-    """Validate the settings from the page and test the server. Saves nothing."""
+def check(model, d, warn=None):
+    """Validate the settings from the page and test the server. Saves nothing. A server outside your network, a
+    rejected key or a server that does not answer are warnings (added to warn): you can apply anyway, for example to
+    set up a server that is not running yet. Only text that cannot be used (address, model name) is refused."""
+    warn = [] if warn is None else warn
     if model not in PORT:
         raise ValueError("unknown server")
     d = d or {}
@@ -152,20 +155,19 @@ def check(model, d):
     host = urllib.parse.urlparse(url).hostname
     ack = bool(d.get("ack"))
     if not is_private(host) and not ack:
-        raise ValueError(f"{NICE[model]}: {host} looks like a server outside your network. Your notes and chats would be sent to it. "
-                         "Tick the box to allow that.")
+        warn.append(f"{NICE[model]}: {host} looks like a server outside your network. Your notes and chats would be sent to it.")
     typed = str(d.get("key") or "").strip()
     keyv = typed or ("" if d.get("clear_key") else saved_key(model))
     state, _ = probe(url, api, keyv)
     if state == "key":
-        raise ValueError(f"{NICE[model]}: the server rejected the API key")
-    if state == "down":
-        raise ValueError(f"{NICE[model]}: cannot reach {url}")
+        warn.append(f"{NICE[model]}: the server rejected the API key; calls to it will fail until the key is right.")
+    elif state == "down":
+        warn.append(f"{NICE[model]}: cannot reach {url} right now; calls to it will fail until it answers.")
     return {"enabled": True, "url": url, "api": api, "model": name, "ack": ack}
 
 
 def save(model, d):
-    cfg = check(model, d)
+    cfg = check(model, d, [])   # warnings were shown and accepted on the page before saving
     was = enabled(model)
     d = d or {}
     typed = str(d.get("key") or "").strip()

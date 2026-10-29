@@ -80,8 +80,8 @@ def norm(s):
 
 
 def grounded(quote, text):
-    q = norm(quote)
-    return len(q) >= __import__("tuning").get("review.min_quote_chars") and q in norm(text)
+    q = norm(quote)   # an empty quote is never evidence, whatever the minimum length is set to
+    return bool(q) and len(q) >= __import__("tuning").get("review.min_quote_chars") and q in norm(text)
 
 
 def body_of(path):

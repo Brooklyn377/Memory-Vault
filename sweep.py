@@ -143,8 +143,8 @@ def norm(s):
 
 
 def grounded(quote, chunk_text):
-    q = norm(str(quote or ""))
-    return len(q) >= __import__("tuning").get("sweep.min_quote_chars") and q in norm(chunk_text)
+    q = norm(str(quote or ""))   # an empty quote is never evidence, whatever the minimum length is set to
+    return bool(q) and len(q) >= __import__("tuning").get("sweep.min_quote_chars") and q in norm(chunk_text)
 
 
 # ---------- state ----------

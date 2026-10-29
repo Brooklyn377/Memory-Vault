@@ -19,6 +19,10 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         d = await request.json()
         try:
+            if not d.get("confirmed"):   # ask first: anything unsafe comes back for a "Save anyway"
+                _, warn = tuning.save(d.get("values") or {}, dry=True)
+                if warn:
+                    return {"ok": False, "confirm": warn}
             r, warn = tuning.save(d.get("values") or {})
             return {"ok": True, "restart": r, "warn": warn, "notes": tuning.token_warnings()}
         except (ValueError, TypeError) as e:
@@ -42,12 +46,15 @@ function build(m,items){
    h("div",{class:"fld"},h("label",{},it.label+" (default "+it.default+")"),e),
    h("div",{class:"mut",style:"font-size:12px"},it.help+" Usual range "+it.lo+" to "+it.hi+"; outside it you get a warning. -1: "+it.off+". "+(it.restart?"Takes effect after restarting "+it.restart+".":"Takes effect on the next use.")))});
  const msg=h("div",{class:"mut"});
- async function save(vals){
+ async function save(vals,confirmed){
   msg.textContent="";
-  const r=await fetch("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:vals})});
+  const r=await fetch("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:vals,confirmed:!!confirmed})});
   const j=await r.json().catch(function(){return{}});
-  msg.textContent=r.ok?"Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):""):(j.detail||"Could not save");
-  if(r.ok&&j.warn&&j.warn.length)window.warnPop("Saved, but check these",j.warn)}
+  if(r.ok&&j.confirm){   // something unsafe: ask, and save anyway if you say so
+   if(await window.warnPop("These limits may not be safe",j.confirm,"Save anyway"))return save(vals,true);
+   msg.textContent="Not saved.";return}
+  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
+  msg.textContent="Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):"")}
  function values(){const o={};for(const k in inp)o[k]=inp[k].value;return o}
  const d=h("details",{class:"sec"},h("summary",{},"Limits and guardrails"),...rows,
   h("div",{class:"mut",style:"margin-top:6px"},"A blank box uses the default; -1 turns a limit off. These are separate from Apply all: they save here and never restart a model server."),

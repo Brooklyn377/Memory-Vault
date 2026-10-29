@@ -35,11 +35,13 @@ RANGES = {"top_p": (0, 1, "float", 0, 1), "top_k": (0, None, "int", 0, 1000), "m
 
 
 def bounded(name, x, old, hard_lo, hard_hi, lo, hi, warn):
-    """Refuse x outside the hard limits; add a warning when a changed x is outside the usual range."""
+    """Never refuses: a changed x outside what can work (the hard limits) or outside the usual range adds a warning."""
+    if x == old:
+        return
     if (hard_lo is not None and x < hard_lo) or (hard_hi is not None and x > hard_hi):
-        raise ValueError(f"{name} must be " + (f"{hard_lo:g} to {hard_hi:g}" if hard_lo is not None and hard_hi is not None
-                                               else f"at least {hard_lo:g}" if hard_lo is not None else f"at most {hard_hi:g}"))
-    if not lo <= x <= hi and x != old:
+        warn.append(f"{name}: {x:g} is outside what it can be (" + (f"{hard_lo:g} to {hard_hi:g}" if hard_lo is not None and hard_hi is not None
+                    else f"at least {hard_lo:g}" if hard_lo is not None else f"at most {hard_hi:g}") + "); the model server may refuse or clamp it.")
+    elif not lo <= x <= hi:
         warn.append(f"{name}: {x:g} is outside the usual {lo:g} to {hi:g}.")
 
 
@@ -70,8 +72,8 @@ def apply(model, data, ctx=None, dry=False):
         v = int(v)
         lim = ctx or cur["context"]
         if v < 1:
-            raise ValueError(f"{k} limit must be at least 1")
-        if v > lim:
+            warn.append(f"{k.capitalize()} max tokens ({v:,}) is below 1; replies will be empty or refused.")
+        elif v > lim:
             warn.append(f"{k.capitalize()} max tokens ({v:,}) is more than the {lim:,} context; such a reply is cut off.")
         elif v < 256 and v != cur["max_tokens"][k]:
             warn.append(f"{k.capitalize()} max tokens ({v:,}) is below the usual 256; most replies will be cut off.")
@@ -89,8 +91,8 @@ def apply(model, data, ctx=None, dry=False):
             cur.pop("thinking_budget", None)
         else:
             tbn = int(float(tbv))
-            if tbn < -1:
-                raise ValueError("thinking budget must be at least -1")
+            if tbn < -1 and tbn != cur.get("thinking_budget"):
+                warn.append(f"Thinking budget {tbn}: below -1 (unlimited); the model server may refuse it.")
             cur["thinking_budget"] = tbn
     if "sampling" in data:
         cur["sampling"] = check_sampling(data["sampling"], cur.get("sampling"), warn)
