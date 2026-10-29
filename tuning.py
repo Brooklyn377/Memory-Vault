@@ -54,6 +54,7 @@ REG += [
     ("assistant.tool_calls", "pa", "Look-ups per message", "Most tool calls (search, open a file, list tasks and so on) the Assistant makes before it must answer.", 8, 1, 30, ""),
     ("assistant.tool_chars", "pa", "Characters per look-up result", "Each tool result is cut to this many characters before the Assistant reads it.", 6000, 1000, 40000, ""),
     ("assistant.search_results", "pa", "Search results per search", "Files listed for one search, best first.", 10, 1, 50, ""),
+    ("assistant.web_calls", "pa", "Web look-ups per message", "Most web searches and pages the Assistant opens for one message, when web access is on (Settings, Web access). 0 turns the web off for it.", 4, 0, 20, ""),
     ("assistant.history", "pa", "Earlier messages it sees", "How many of your earlier chat messages, with their replies, the Assistant sees with a new one, so you can ask follow-ups. 0 turns it off.", 6, 0, 30, ""),
     ("sweep.facts_context", "qwen", "Earlier facts shown", "Shows the most recent facts already recorded from earlier in this chat, so the model can spot contradictions and avoid repeating. 0 turns it off.", 0, 0, 200, ""),
 ]

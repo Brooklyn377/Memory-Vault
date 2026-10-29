@@ -126,6 +126,13 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   nothing is committed and you are asked to request a new draft. On a **read only** server, approving only marks the
   draft approved, for you to apply. Every commit is an ordinary commit in the repository's history, so it can be
   reverted.
+- **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
+  own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
+  only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,
+  N pages" with **See more** for every query and page; the reply itself names its sources. This container makes the
+  requests: pages on your own network, this machine and link-local addresses are refused (also after a redirect),
+  no cookies or keys are sent, and page text is treated as untrusted. The Sweeper, Reviewer and Curator have no tools
+  that could use the web.
 - **Git servers** (Settings): add each repository with a name, what it is for, its HTTPS address, read only or
   read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
   `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is pushed except a change you
