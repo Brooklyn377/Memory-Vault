@@ -142,16 +142,20 @@ def _plan(d):
         st = _runner_status(m, f["remote"]) if f and ext else None
         if f and ext and st:   # an external server with a runner: its settings are applied on that machine
             names = [x["name"] for x in st.get("models") or []]
-            vals = {"model_file": str(f.get("file", "")), "context": _num(f, "context", "Context", m),
+            # The model is "Model on that server" (the one model setting for an external server): the runner takes
+            # the file name, without a folder such as /models/. Blank keeps what that machine runs now.
+            mfile = str(f["remote"].get("model") or "").replace("\\", "/").rsplit("/", 1)[-1] or (st.get("settings") or {}).get("model_file", "")
+            vals = {"model_file": mfile, "context": _num(f, "context", "Context", m),
                     "threads": _num(f, "threads", "Threads", m), "parallel": _num(f, "parallel", "Parallel slots", m),
-                    "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn,
+                    "flags": serverflags.check(f.get("flags") or {}, mfile, cur.get("flags"), warn,
                                                sup=st.get("flags") or [], models=names)}
             if (vals["threads"] < 1 and vals["threads"] != cur["threads"]) or (vals["parallel"] < 1 and vals["parallel"] != cur["parallel"]):
                 warn.append(f"{NICE[m]}: threads and slots below 1 cannot work; that server will not start (it is rolled back).")
             if vals["context"] < HARD_MIN_CTX and vals["context"] != cur["context"]:
                 warn.append(f"{NICE[m]}: context {vals['context']:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
             if vals["model_file"] not in names:
-                warn.append(f"{NICE[m]}: choose a model file from that machine's list; until then its settings are saved here "
+                warn.append(f"{NICE[m]}: \"{mfile or '(none)'}\" is not a model file on that machine; choose one under Model on "
+                            "that server. Until then its settings are saved here "
                             "but not applied there.")
                 direct[m] = vals
             elif any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()) or not st.get("settings"):
@@ -371,12 +375,15 @@ function mk(m,s,models,maxT){
  e.loc=h("div",{},hw[0],fld("Context (tokens)",e.ctx),...hw.slice(1));
  e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"");
  e.rst=null;   // the runner's last status: its model files and llama-server options
- e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;const names=(st.models||[]).map(function(x){return x.name}),v=e.file.value;
-  e.file.replaceChildren(...(v&&names.indexOf(v)>=0?[]:[h("option",{value:""},"No model chosen")]),...names.map(function(n){return h("option",{value:n},n)}));
-  e.file.value=names.indexOf(v)>=0?v:"";sync()};
+ // With a runner, "Model on that server" also offers the model files in that machine's models folder: it is the one
+ // model setting for an external server, and Apply all has the runner load the one chosen there.
+ e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;
+  const names=(st.models||[]).map(function(x){return x.name});if(e.rn.value&&names.indexOf(e.rn.value)<0)names.unshift(e.rn.value);
+  e.rnl.replaceChildren(...names.map(function(n){return h("option",{value:n})}));sync()};
  function sync(){const r=e.where.value==="remote",mg=r&&!!e.rr.value.trim();
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});e.lim.style.display=r?"none":"";
+  hw[0].style.display=r?"none":"";   // Model file lists this container's models: only for a local model
   e.extnote.style.display=r?"":"none";
   e.extnote.textContent=mg?"Managed through the runner on that machine: Apply all restarts its llama-server with the model, context, slots and flags below, and puts the old ones back if it does not come up.":"On an external server without a runner, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine; add a runner below to set them from here."}
  e.rr.oninput=sync;
