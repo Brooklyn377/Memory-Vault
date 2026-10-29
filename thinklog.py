@@ -254,7 +254,7 @@ def _chat_local(model, endpoint, body, label, slot=None):
     if _aborted_since(model, started):
         raise Aborted(f"{model} was switched or stopped")
     _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "w": describe(label, body) + pnote})
-    done, cut = threading.Event(), threading.Event()
+    done, cut, failed = threading.Event(), threading.Event(), {}
     try:
         with urllib.request.urlopen(req, timeout=None) as r:
             threading.Thread(target=_watch, args=(model, started, r, done, cut), daemon=True).start()
@@ -279,6 +279,14 @@ def _chat_local(model, endpoint, body, label, slot=None):
                     total += 1
                     if "\n" in piece or len(st["buf"]) >= FLUSH_CHARS or time.time() - st["last"] >= FLUSH_SECS:
                         flush()
+    except urllib.error.HTTPError as e:   # the server refused the call: keep its own reason, it says what to change
+        try:
+            body = e.read().decode("utf-8", "replace")
+            msg = (json.loads(body).get("error") or {}).get("message") or body
+        except Exception:
+            msg = e.reason
+        failed["why"] = f"{e.code} {' '.join(str(msg).split())[:300]}"
+        raise RuntimeError(f"the model server refused the call ({failed['why']})") from None
     except Exception:
         if not cut.is_set():
             raise
@@ -286,7 +294,8 @@ def _chat_local(model, endpoint, body, label, slot=None):
         done.set()
         flush()
         add_total(model, total)
-        rec("end", f"{label} {time.time() - started:.0f}s" + (" (cut off: server switched or stopped)" if cut.is_set() else ""), total)
+        rec("end", f"{label} {time.time() - started:.0f}s" + (" (cut off: server switched or stopped)" if cut.is_set() else "")
+            + (f" (failed: {failed['why']})" if failed else ""), total)
         prune()
     if cut.is_set():
         raise Aborted(f"{model} was switched or stopped")

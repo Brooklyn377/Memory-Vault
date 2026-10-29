@@ -245,7 +245,7 @@ const fmt=n=>Number(n||0).toLocaleString();
 function headText(){head.textContent=more?"↑ scroll up for older":(oldest==="0"?"waiting for the first model call…":"— start of log —");}
 
 function hdr(o){
-  o.h.textContent=M[o.m].name+(o.lab?" · "+o.lab:"")+" · "+new Date(o.t).toLocaleTimeString()+(o.tok!=null?" · "+fmt(o.tok)+" tokens":"");
+  o.h.textContent=M[o.m].name+(o.lab?" · "+o.lab:"")+" · "+new Date(o.t).toLocaleTimeString()+(o.tok!=null?" · "+fmt(o.tok)+" tokens":"")+(o.why?" · "+o.why:"");
 }
 function mk(r){
   const el=document.createElement("div");el.className="blk";el.style.setProperty("--c",M[r.m].color);
@@ -257,7 +257,7 @@ function mk(r){
 }
 function line(o,r){
   if(r.k==="start"){o.lab=r.s;hdr(o);return null;}
-  if(r.k==="end"){o.tok=r.n;hdr(o);return null;}
+  if(r.k==="end"){o.tok=r.n;const s=r.s||"",i=s.search(/\((failed|cut off)/);o.why=i<0?"":s.slice(i+1,-1);hdr(o);return null;}
   const s=document.createElement("span");s.textContent=r.s;if(r.k==="r")s.className="r";return s;
 }
 
