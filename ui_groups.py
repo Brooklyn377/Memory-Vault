@@ -62,8 +62,8 @@ function groupBox(models){
  const cb={};
  const row=h("div",{style:"border-top:1px solid var(--line);padding:8px 0"},h("b",{},"Group"));
  MODELS.forEach(function(m){
-  const c=h("input",{type:"checkbox"});c.checked=models.indexOf(m.key)>=0;c.disabled=m.external;cb[m.key]=c;
-  row.append(h("div",{class:"fld"+(m.external?" off":"")},h("label",{},m.name+(m.external?" (external server: needs no turn)":"")),c))});
+  const c=h("input",{type:"checkbox"});c.checked=models.indexOf(m.key)>=0;cb[m.key]=c;
+  row.append(h("div",{class:"fld"},h("label",{},m.name),c))});
  const del=h("button",{onclick:function(){boxes=boxes.filter(function(b){return b.row!==row});row.remove()}},"Remove group");
  row.append(del);const b={row:row,cb:cb};boxes.push(b);return row}
 function collect(){return boxes.map(function(b){return{models:Object.keys(b.cb).filter(function(k){return b.cb[k].checked})}}).filter(function(g){return g.models.length})}
