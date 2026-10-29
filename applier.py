@@ -78,6 +78,18 @@ def health(model):
         return "down"
 
 
+def usable(model):
+    """True if calls to this model can go ahead: it answers now, or it is local and takes turns (a call then waits for
+    its turn and the model is loaded for it)."""
+    if health(model) == "ready":
+        return True
+    try:
+        import turns
+        return turns.managed(model)
+    except Exception:
+        return False
+
+
 def idle(model):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT[model]}/slots", timeout=3) as r:

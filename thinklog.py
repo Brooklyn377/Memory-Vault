@@ -225,7 +225,14 @@ def chat(model, endpoint, body, label, slot=None):
         pass
     if external:
         return _chat_remote(model, body, label)
-    return _chat_local(model, endpoint, body, label, slot)
+    import turns
+    began = time.time()
+
+    def give_up():   # while waiting for its turn: the server was switched or stopped
+        if _aborted_since(model, began):
+            raise Aborted(f"{model} was switched or stopped")
+    with turns.lease(model, urgent=(label == "chat"), stop=give_up):   # waits for the model's turn (model groups)
+        return _chat_local(model, endpoint, body, label, slot)
 
 
 def _chat_local(model, endpoint, body, label, slot=None):
@@ -249,8 +256,6 @@ def _chat_local(model, endpoint, body, label, slot=None):
                                  headers={"Content-Type": "application/json"})
     out = {"content": [], "reasoning_content": []}
     total, started = 0, time.time()
-    import swap
-    swap.wait_for(endpoint)
     if _aborted_since(model, started):
         raise Aborted(f"{model} was switched or stopped")
     _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "w": describe(label, body) + pnote})

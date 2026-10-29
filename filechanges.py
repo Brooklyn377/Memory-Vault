@@ -157,8 +157,11 @@ def main(args):
 def _idle():
     import urllib.request
     import swap
+    import turns
+    if turns.managed("gpt"):   # taking turns: the call itself waits for the Reviewer's turn
+        return True
     if swap.holding():
-        swap.want()
+        turns.want("gpt")
         return False
     try:
         with urllib.request.urlopen("http://127.0.0.1:8081/slots", timeout=3) as r:

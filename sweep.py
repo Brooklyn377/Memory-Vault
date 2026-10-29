@@ -463,7 +463,7 @@ def wait_server(longest=1800):
     Waiting is not a failed attempt; after `longest` seconds the attempt goes ahead and reports what went wrong."""
     import applier
     end, said = time.time() + longest, False
-    while applier.health("qwen") != "ready" and time.time() < end:
+    while not applier.usable("qwen") and time.time() < end:
         if not said:
             agent.log("sweep: waiting for the Sweeper's server to answer")
             said = True

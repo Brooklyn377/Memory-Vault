@@ -123,9 +123,7 @@ def acquire():
                   f"{limit / gguf_info.GIB:.0f} GB safe limit")
     if not swap.take():
         return False
-    applier.write_env("cur", s)
-    subprocess.run(["systemctl", "start", "--no-block", UNIT], timeout=30)
-    status("loading", "the Sweeper and Reviewer are unloaded; loading the curator model"
+    status("loading", "the other local models give way; loading the curator model"
            + (f" (warning: about {need / gguf_info.GIB:.0f} GB estimated, over the {limit / gguf_info.GIB:.0f} GB safe limit)" if over else ""))
     end = time.time() + 900
     while time.time() < end:
@@ -137,10 +135,10 @@ def acquire():
 
 
 def release():
-    subprocess.run(["systemctl", "stop", UNIT], timeout=300)
     if swap.holding():
-        status("loading", "unloading the curator; loading the Sweeper and Reviewer")
-        swap.restore()
+        status("loading", "unloading the curator; the next local model is loaded when it is wanted")
+    swap.restore()   # first: the turn is given back, so the manager does not start the curator's server again
+    subprocess.run(["systemctl", "stop", UNIT], timeout=300)
 
 
 # ---------- notes and how unsure the Sweeper was ----------

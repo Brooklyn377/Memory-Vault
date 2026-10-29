@@ -187,6 +187,12 @@ def model_ready():
     if swap.holding():
         return True
     try:
+        import turns
+        if turns.managed("qwen"):   # local and taking turns: a call waits for its turn
+            return True
+    except Exception:
+        pass
+    try:
         import power
         if power.off("qwen"):
             return True

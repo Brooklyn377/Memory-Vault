@@ -17,10 +17,13 @@ MODELS=/opt/models
 LLAMA=/opt/llama.cpp
 LLAMA_REPO=https://github.com/ggml-org/llama.cpp
 # Units enabled at boot. memory-publish needs a Gitea server (see README); memory-backup needs a script
-# that is not part of this project. memory-curator-llm and memory-bootstrap are started on demand.
-# memory-assistant-llm stays off until you load the Assistant on the Settings page.
-ENABLE=(llama-server memory-reviewer memory-web memory-importer memory-journal memory-agent
+# that is not part of this project. memory-bootstrap is started on demand.
+# The model servers (llama-server, memory-reviewer, memory-curator-llm, memory-assistant-llm) are not enabled: the
+# turn manager in memory-web starts them when something needs them and stops them when another model group has its
+# turn (Settings > Model groups), so they never all start at boot on a machine that holds one model at a time.
+ENABLE=(memory-web memory-importer memory-journal memory-agent
         memory-review-worker memory-chat memory-filechanges memory-curator memory-sweep)
+MODEL_UNITS=(llama-server memory-reviewer memory-curator-llm memory-assistant-llm)
 
 usage() {
     cat <<EOF
@@ -197,16 +200,9 @@ for f in "$SRC"/systemd/*.service; do
 done
 run systemctl daemon-reload
 run systemctl enable "${ENABLE[@]/%/.service}"
-# Model servers start only when their model file is there; the rest always restart (new code on update).
-declare -A SERVER=([llama-server]=llama-qwen [memory-reviewer]=llama-gpt)
+# Installs from before model groups started the model servers at boot: they are started by the turn manager now.
+run systemctl disable "${MODEL_UNITS[@]/%/.service}" || true
 for unit in "${ENABLE[@]}"; do
-    if [[ -n "${SERVER[$unit]:-}" ]] && (( ! DRY )); then
-        model="$(sed -n 's/^MODEL=//p' "$ETC/${SERVER[$unit]}.env")"
-        if [[ ! -s "$MODELS/$model" ]]; then
-            echo "$unit not started: $MODELS/$model is missing (download a model on the Settings page)"
-            continue
-        fi
-    fi
     run systemctl restart "$unit.service"
 done
 

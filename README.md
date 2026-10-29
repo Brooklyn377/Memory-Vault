@@ -65,6 +65,27 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
    warning instead of being refused. Only values that cannot work at all (a negative count, a probability above 1)
    are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
+## Model groups: which local models are loaded together
+A machine may only have memory for one model, so by default **one local model is loaded at a time** and the others
+take turns: a call for a model that is not loaded waits, and the model is loaded when the one that has the turn is
+idle. The model servers are therefore not started at boot; the turn manager (in the web service) starts and stops them.
+
+Under **Settings → Model groups**, **Add group** and tick the models that may be loaded together (for example Sweeper
+and Reviewer, if memory holds both). Models in a group are loaded together; any other local model waits its turn. You
+can make several groups; a model is in one. A model on an **external server** needs no turn: it never waits and never
+makes another model wait, so it is not part of any group. The page warns, without refusing, when a group's models
+are estimated not to fit in memory together.
+
+- **How a turn passes:** a group that still has work keeps its turn for at least the minutes set on that page
+  (default 10), and always until its running calls finish; then the next waiting model's group is loaded. A model
+  that has had nothing to do for half a minute gives way at once. A chat message from you, and a model you load by
+  hand with the power button, do not wait for the minutes.
+- **The Curator** asks for its turn when the other local models have nothing to do, and gives it back when one wants
+  to run.
+- **Updating from an earlier version:** the servers that are running are kept as they are until another model needs
+  its turn. After that, unless you made a group, the Sweeper and Reviewer no longer run together on one machine: add a
+  group with both if your memory allows it.
+
 ## Update
 New versions come from this repository. The easiest way: **Settings → Updates** (at the bottom) shows the installed
 and newest version, with **Check now** and **Update now**. The agent also checks by itself every 6 hours, and a **1**

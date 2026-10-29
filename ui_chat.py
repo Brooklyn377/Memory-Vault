@@ -173,7 +173,7 @@ def assistant_on():
     try:
         import applier
         import power
-        return bool(settings.get("pa").get("enabled")) and not power.off("pa") and applier.health("pa") == "ready"
+        return bool(settings.get("pa").get("enabled")) and not power.off("pa") and applier.usable("pa")
     except Exception:
         return False
 

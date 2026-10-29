@@ -244,6 +244,8 @@ def _plan(d):
 def register(app, authed):
     router = APIRouter()
     applier.start()
+    import turns
+    turns.start()   # the turn manager: model groups
 
     def need(request: Request):
         if not authed(request):

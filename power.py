@@ -78,6 +78,12 @@ def state(m):
         return {"state": "loaded", "detail": ""}
     if h == "loading" or (applier._active(m) and h == "down"):
         return {"state": "loading", "detail": ""}
+    import turns
+    if turns.managed(m) and h != "ready" and not (h == "loading" or applier._active(m)) and not off(m):
+        if m in turns.wants():
+            held = [turns.NICE[x] for x in turns.active()["group"] if x != m]
+            return {"state": "waiting", "detail": "Waiting for its turn" + (f": {', '.join(held)} {'has' if len(held) == 1 else 'have'} it now." if held else ".")}
+        return {"state": "unloaded", "detail": "Not loaded. It is loaded when something needs it, and the others wait their turn (Settings, Model groups)."}
     if m == "pa":
         return {"state": "unloaded", "detail": "Not loaded. To run it here: choose its model file under Server, press "
                 "Apply all, then hold to load. To run it on another machine: set Where it runs to External server, "
@@ -100,6 +106,13 @@ def load(m, force=False):
         return
     if m == "pa" and not settings.get("pa")["model_file"]:
         raise ValueError("Choose the Assistant's model file under Server and press Apply all first.")
+    import turns
+    if turns.managed(m):   # it takes turns: the manager loads it, together with its group, as soon as it can
+        _flag(m, "off").unlink(missing_ok=True)
+        _flag(m, "on").write_text("1")   # kept loaded until you unload it
+        turns.want(m, urgent=True)
+        agent.log(f"settings: {NICE[m]} loading requested by you; it is loaded when the models that have the turn are idle")
+        return
     if m in ("qwen", "gpt") and swap.holding():
         raise ValueError("The Curator holds the memory right now. Unload the Curator first; the Sweeper and Reviewer load back after that.")
     if applier._active(m):
@@ -119,7 +132,8 @@ def load(m, force=False):
     if m == "cur":
         _flag(m, "on").write_text("1")
     applier.write_env(m, s[m])
-    if m == "pa":   # off by default: loading it also starts it at boot, until you unload it
+    if m == "pa":   # off by default
+        _flag(m, "off").unlink(missing_ok=True)
         subprocess.run(["systemctl", "enable", UNIT[m]], timeout=30)
     subprocess.run(["systemctl", "start", "--no-block", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} loaded by you" + (" (over the memory limit, confirmed)" if need > limit else ""))
@@ -144,6 +158,7 @@ def unload(m):
         return "Stopped. Its running calls were cut off; new calls wait until you start it." + note
     thinklog.abort(m)   # local: the server is stopped below; this also ends the waiting callers' connections at once
     note = ""
+    _flag(m, "on").unlink(missing_ok=True)
     if m == "cur":
         was = manual(m)
         _flag(m, "on").unlink(missing_ok=True)
@@ -160,6 +175,7 @@ def unload(m):
                 pass
             note = "Curator stopped and its switch turned off. The Sweeper and Reviewer load back now."
     elif m == "pa":
+        _flag(m, "off").write_text("1")   # chat answers with the Reviewer; no turn is taken for it
         subprocess.run(["systemctl", "disable", UNIT[m]], timeout=30)
     else:
         _flag(m, "off").write_text("1")
@@ -257,14 +273,14 @@ function powerButton(key,u){
  u.btn=btn;u.txt=txt;return btn}
 async function refresh(){try{
  const d=await api("/api/model/power");
- const L={loaded:"Loaded",loading:"Loading",unloaded:"Unloaded",external:"External server",stopped:"Stopped"};
+ const L={loaded:"Loaded",loading:"Loading",unloaded:"Unloaded",waiting:"Waiting",external:"External server",stopped:"Stopped"};
  M.forEach(function(a){const u=UI[a[0]],s=d[a[0]];if(!u||!s)return;
   u.chip.textContent=L[s.state]||s.state;u.chip.className="mc"+(s.state==="loaded"?" on":"");
   u.sub.textContent=s.detail||"";
   if(s.state==="external"){u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to stop"}
   else if(s.state==="stopped"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to start"}
   else if(s.swapped){u.act="";u.btn.disabled=true;u.txt.textContent="Curator working"}
-  else if(s.state==="unloaded"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
+  else if(s.state==="unloaded"||s.state==="waiting"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
   else{u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to unload"}})
 }catch(e){}}
 function ready(){
