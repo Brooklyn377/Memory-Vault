@@ -1,6 +1,7 @@
 """Streamed model call that also logs the model's thinking, for the Thinking tab."""
 import fcntl
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -258,7 +259,7 @@ def _chat_local(model, endpoint, body, label, slot=None):
     total, started = 0, time.time()
     if _aborted_since(model, started):
         raise Aborted(f"{model} was switched or stopped")
-    _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "w": describe(label, body) + pnote})
+    _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "p": os.getpid(), "w": describe(label, body) + pnote})
     done, cut, failed = threading.Event(), threading.Event(), {}
     try:
         with urllib.request.urlopen(req, timeout=None) as r:

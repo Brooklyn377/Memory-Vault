@@ -1,5 +1,6 @@
 """Thinking tab: one live chat of both models' thinking, plus token stats. Registered from ui_extra.register()."""
 import json
+import os
 import time
 import urllib.request
 
@@ -103,17 +104,29 @@ def _base(model):
 def live(model):
     """The call running now, from the agent's own log: for an external server whose /slots cannot be read.
     -> (call id, tokens generated so far), or None."""
-    call, n = None, 0
+    call, n, pid = None, 0, None
     for p in _files()[-2:]:
         for r in _records(p, model):
             if r.get("k") == "start":
-                call, n = r.get("c"), 0
+                call, n, pid = r.get("c"), 0, r.get("p")
             elif r.get("c") == call:
                 if r.get("k") == "end":
                     call = None
                 elif r.get("k") in ("r", "o"):
                     n += int(r.get("n", 0))
+    if call and not _alive(pid):   # the service that made the call is gone (an update or a restart): it never wrote its end
+        return None
     return (call, n) if call else None
+
+
+def _alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        return True
+    except (TypeError, ValueError, ProcessLookupError, OSError):
+        return False
 
 
 def _from_log(model):
@@ -135,7 +148,22 @@ def _shared(model):
         return False
 
 
+def _waiting(model):
+    """True while this model has asked for its turn and another group has it."""
+    try:
+        import turns
+        return turns.managed(model) and model in turns.wants() and model not in turns.active()["group"]
+    except Exception:
+        return False
+
+
 def slots(model, whole_server=False):
+    d = _state(model, whole_server)
+    d["wait"] = _waiting(model)
+    return d
+
+
+def _state(model, whole_server=False):
     """Live state of a model. whole_server: read the server's own /slots even when other models share it."""
     try:
         if not whole_server and _shared(model):
@@ -334,6 +362,7 @@ function show(m,s){
   const d=s.busy?s.decoded:0;
   let ph="idle";
   if(s.busy)ph=s.decoded>0?(q.kind==="r"?"thinking":q.kind==="o"?"answering":"generating"):"reading prompt";
+  else if(s.wait)ph="waiting for its turn";
   e.st.textContent=ph;e.st.className="st"+(s.busy?" on":"");
   const now=Date.now();let tps=null;
   if(!q.w||q.task!==s.task){q.w=[];q.task=s.task;}
