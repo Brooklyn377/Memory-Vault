@@ -126,7 +126,11 @@ checks. To set them from the card, run the model runner next to llama-server on 
      python3 model_runner.py --setup --adopt llama            # add --engine docker for Docker
      ```
      The runner reads the container's image, models folder, port, GPU devices, security options, restart policy
-     and command. The container keeps running untouched. Later, Apply all recreates it with the same image,
+     and command. The container keeps running untouched. Check the "Devices it will get" line it prints: Podman
+     does not report a device added by a Quadlet's `AddDevice`, so for a GPU add it yourself, for example
+     `--device /dev/dri` (Vulkan) or `--device /dev/kfd --device /dev/dri` (ROCm). If a systemd service or a Quadlet
+     (`~/.config/containers/systemd/*.container`) runs the container, turn it off and let the runner run it: such a
+     service replaces the container whenever the runner changes it. Later, Apply all recreates it with the same image,
      folders, port and GPU access, replacing only the model, context, threads, slots and the flags set on the card;
      everything else in its command (such as `--jinja` and `--api-key`) is kept. To see your containers:
      `podman ps` (or `docker ps`).

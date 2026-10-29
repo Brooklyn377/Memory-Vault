@@ -371,6 +371,10 @@ def main():
     ap.add_argument("--setup", action="store_true", help="write the settings file and print a new token")
     ap.add_argument("--adopt", metavar="CONTAINER", help="manage this existing llama-server container")
     ap.add_argument("--engine", default="podman", choices=["podman", "docker"], help="container engine (default podman)")
+    ap.add_argument("--device", action="append", default=[], metavar="HOST[:CONTAINER]",
+                    help="a device the container needs, e.g. --device /dev/dri for a GPU (Vulkan) or /dev/kfd for ROCm; "
+                         "repeat for more. Needed when the engine does not report the device, as Podman does not for "
+                         "Quadlet's AddDevice")
     ap.add_argument("--llama", help="path to llama-server (without a container)")
     ap.add_argument("--models", help="folder with the .gguf model files (without a container)")
     ap.add_argument("--listen", default="0.0.0.0", help="address the runner listens on (default 0.0.0.0)")
@@ -381,6 +385,10 @@ def main():
         old = load() if CONFIG.exists() else {}
         if a.adopt:
             k, folder, lport, settings = adopt(a.engine, a.adopt)
+            for dev in a.device:   # devices the engine did not report
+                dev = dev if ":" in dev else f"{dev}:{dev}"
+                if dev not in k["devices"]:
+                    k["devices"].append(dev)
             c = dict(old, container=k, models=folder, llama_port=lport, settings=settings, stopped=False)
             c.pop("llama", None)
         elif a.llama and Path(a.llama).exists() and a.models and Path(a.models).is_dir():
@@ -395,6 +403,12 @@ def main():
               f"Server address for the Settings page: http://<this machine's address>:{c['llama_port']}")
         if a.adopt:
             print(f"Managing the {a.engine} container {a.adopt} (models in {c['models']}); it keeps running as it is.")
+            devs = c["container"]["devices"]
+            print("Devices it will get:", ", ".join(devs) if devs else
+                  "none. If it uses a GPU, run setup again with --device /dev/dri (Vulkan) or --device /dev/kfd "
+                  "--device /dev/dri (ROCm), or it will run on the CPU.")
+            print("If a systemd service or Quadlet (~/.config/containers/systemd/) runs this container, turn it off: "
+                  "it would replace the runner's container whenever the runner changes it.")
         else:
             print(f"Stop any llama-server you started yourself on port {a.llama_port}; the runner starts its own.")
         return
