@@ -254,7 +254,9 @@ def handle(m, who="gpt"):
     parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
     context = "\n\n".join(parts) or "(no matching notes found)"
     if who == "pa":
-        reply, opened = assistant_answer(m, context)
+        import turns
+        with turns.hold("pa"):   # the whole task keeps the Assistant's turn, also while a tool runs between its calls
+            reply, opened = assistant_answer(m, context)
         extra = extra + [p for p in dict.fromkeys(opened) if p not in top + extra]
         import assistant_tools
         m["web"] = assistant_tools.web_note()

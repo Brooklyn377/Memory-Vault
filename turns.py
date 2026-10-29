@@ -26,6 +26,7 @@ import agent
 
 DIR = agent.STATE / "turns"
 LEASES = DIR / "leases"
+HOLDS = DIR / "holds"   # a model working through a whole task (several calls with other work between them)
 CONFIG = agent.STATE / "model_groups.json"
 ACTIVE, BEAT, LOCK = DIR / "active.json", DIR / "beat", DIR / "lock"
 MODELS = ("qwen", "gpt", "cur", "pa")
@@ -219,10 +220,11 @@ def used_lately(model, now=None):
         return False
 
 
-def lease_counts():
+def lease_counts(folder=None):
     """-> {model: running calls}. A lease whose process is gone is removed."""
     out = {}
-    for p in LEASES.glob("*") if LEASES.exists() else []:
+    folder = folder or LEASES
+    for p in folder.glob("*") if folder.exists() else []:
         try:
             model, pid, _ = p.name.split(".", 2)
             os.kill(int(pid), 0)
@@ -294,6 +296,24 @@ def lease(model, urgent=False, stop=None):
         _used(model)
 
 
+@contextmanager
+def hold(model):
+    """Keep this model's turn for a whole task: between its calls (a tool running, a page loading) nothing takes the turn
+    away, and the minutes of the group do not end it. Only a message you send in the chat or a model you load by hand
+    still goes first. Does nothing without the manager."""
+    if not managed(model):
+        yield
+        return
+    HOLDS.mkdir(parents=True, exist_ok=True)
+    path = HOLDS / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
+    path.write_text(str(time.time()))
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+        _used(model)
+
+
 def holds(model):
     return model in active()["group"]
 
@@ -307,11 +327,11 @@ def others_waiting(model):
 def others_idle(model):
     """True if no other local model has a call running or wanted, and their servers have no call in flight."""
     import applier
-    counts, w = lease_counts(), wants()
+    counts, w, held = lease_counts(), wants(), lease_counts(HOLDS)
     for m in MODELS:
         if m == model:
             continue
-        if counts.get(m) or m in w or not applier.idle(m):
+        if counts.get(m) or held.get(m) or m in w or not applier.idle(m):
             return False
     return True
 
@@ -363,6 +383,7 @@ def step(now=None):
         grp = list(st["group"])
         w = {m: d for m, d in wants(now).items() if _has_model(m)}
         counts = lease_counts()
+        held = lease_counts(HOLDS)
         running = [m for m in MODELS if not _external(m) and _running(m)]
         if not grp and running:   # servers already up (after an update or a restart): they are the loaded group
             grp = list(running)
@@ -374,12 +395,12 @@ def step(now=None):
             st = {"group": grp, "since": now, "draining": False}
             did.append("load " + "+".join(grp))
         outsiders = [m for m in order if m not in grp]
-        inside = [m for m in grp if m in w or counts.get(m) or used_lately(m, now)]   # the loaded group still has work
+        inside = [m for m in grp if m in w or counts.get(m) or held.get(m) or used_lately(m, now)]   # the loaded group still has work
         if outsiders:
             expired = now - st["since"] >= cfg["turn_minutes"] * 60
             # a group answers at least one call before it gives way (or has waited a long time for a server that never came up)
             served = any(used_after(m, st["since"]) for m in grp) or now - st["since"] > 900
-            if w[outsiders[0]]["urgent"] or not inside or (expired and served):
+            if w[outsiders[0]]["urgent"] or not inside or (expired and served and not any(held.get(m) for m in grp)):
                 st["draining"] = True   # no new calls for the loaded group: they finish, then the next group comes
                 if not any(counts.get(m) for m in grp):
                     target = group_of(outsiders[0])
