@@ -31,23 +31,6 @@ def _threads_max():
         return os.cpu_count() or 1
 
 
-def limits(model, file, parallel, strict=True):
-    """The largest context estimated to fit in memory. strict: refuse when even MIN_CTX does not fit."""
-    if not NAME.fullmatch(file) or not (gguf_info.MODELS / file).is_file():
-        raise ValueError("pick a model from the list")
-    # The servers that share memory with this one: not the Curator (it swaps them out), and the Assistant only
-    # while its server runs, so turning it on is what changes the others' estimates.
-    others = [(v["model_file"], v["context"], v["parallel"]) for k, v in settings.load().items()
-              if k != model and "cur" not in (k, model) and v.get("model_file") and (k != "pa" or applier._active("pa"))]
-    try:
-        cap = gguf_info.max_context(file, others, parallel)
-    except Exception:
-        raise ValueError("cannot read that model file, so its memory use cannot be estimated")
-    if strict and cap < MIN_CTX:
-        raise ValueError("not enough memory for this model next to the other server")
-    return cap
-
-
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 MODELS = tuple(NICE)
 
@@ -200,18 +183,13 @@ def _plan(d):
                 warn.append(f"{NICE[m]}: {vals['parallel']} slots is more than the usual {MAX_SLOTS}; each slot gets a smaller share of the context.")
             if vals["context"] < HARD_MIN_CTX and vals["context"] != cur["context"]:
                 warn.append(f"{NICE[m]}: context {vals['context']:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
-            try:
-                cap = limits(m, vals["model_file"], max(1, vals["parallel"]), strict=False)
-            except ValueError as e:   # no such model file: save the values, but there is nothing to restart with
-                warn.append(f"{NICE[m]}: {e}. The values are saved, but its server is not restarted until a model file is chosen.")
+            if not NAME.fullmatch(vals["model_file"]) or not (gguf_info.MODELS / vals["model_file"]).is_file():
+                # no such model file: save the values, but there is nothing to restart with
+                warn.append(f"{NICE[m]}: pick a model from the list. The values are saved, but its server is not restarted until a model file is chosen.")
                 direct[m], vals = vals, None
                 prop[m].update(direct[m])
-                cap = None
         if vals and any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()):
-            if vals["context"] > cap:
-                warn.append(f"{NICE[m]}: context {vals['context']:,} is more than the {max(cap, 0):,} estimated to fit in memory. "
-                            "If the server cannot start, the change is rolled back.")
-            elif HARD_MIN_CTX <= vals["context"] < MIN_CTX:
+            if HARD_MIN_CTX <= vals["context"] < MIN_CTX:
                 warn.append(f"{NICE[m]}: context {vals['context']:,} is below the usual {MIN_CTX:,}; most calls will not fit.")
             jobs[m] = vals
         elif m in pend:
@@ -261,16 +239,6 @@ def register(app, authed):
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
                                 "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m),
                                 "runner": _runner_info(m)} for m in MODELS}}
-
-    @router.get("/api/server/limits")
-    def lim(request: Request, model: str, file: str, parallel: int = 4):
-        need(request)
-        if model not in MODELS:
-            raise HTTPException(status_code=400, detail="unknown server")
-        try:
-            return {"max": limits(model, file, max(1, min(parallel, MAX_SLOTS))), "min": MIN_CTX}
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
     @router.post("/api/server/cancel")
     async def cancel(request: Request):
@@ -359,11 +327,6 @@ function ask3(text){return new Promise(res=>{
  ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},"Restart needed"),h("div",{class:"mut",style:"margin-bottom:12px"},text),
   h("button",{class:"pri",onclick:()=>done("now")},"Apply now"),h("button",{onclick:()=>done("idle")},"Apply when idle"),h("button",{onclick:()=>done(null)},"Cancel")));
  document.body.append(ov)})}
-async function limit(m){const e=E[m];
- if(!e.file.value){e.lim.textContent=m==="pa"?"Choose a model file to run the Assistant here, or use an external server.":"";return}
- try{const d=await api("/api/server/limits?model="+m+"&file="+encodeURIComponent(e.file.value)+"&parallel="+(e.par.value||4));
-  e.lim.textContent="Max safe context for this model: "+d.max.toLocaleString()+" (min "+d.min.toLocaleString()+")"}
- catch(err){e.lim.textContent=err.message}}
 function mk(m,s,models,maxT){
  const e=E[m]={};
  e.file=h("select",{},...(s.file?[]:[h("option",{value:""},"No model chosen")]),...models.map(n=>h("option",{value:n},n)));e.file.value=s.file;
@@ -377,7 +340,6 @@ function mk(m,s,models,maxT){
   inp.disabled=!f.ok;e.fx[f.key]=inp;
   return fld(f.label+(f.ok?"":" (not in this llama.cpp build)"),inp)});
  e.adv=h("details",{},h("summary",{class:"mut"},"Advanced server flags (blank uses the default)"),...frows);
- e.lim=h("div",{class:"mut"});
  const rs=s.remote||{};
  // Where it runs: here, an external server typed on this card, or a saved preset (the same server for any model).
  e.where=h("select",{});
@@ -435,7 +397,7 @@ function mk(m,s,models,maxT){
   if(p.runner)e.askRunner&&e.askRunner()};
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
- const hw=[fld("Model file",e.file),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
+ const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
  e.loc=h("div",{},hw[0],fld("Context (tokens)",e.ctx),...hw.slice(1));
  e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"");
  e.rst=null;   // the runner's last status: its model files and llama-server options
@@ -446,16 +408,14 @@ function mk(m,s,models,maxT){
   e.rnl.replaceChildren(...names.map(function(n){return h("option",{value:n})}));sync()};
  function sync(){const r=e.where.value!=="local",mg=r&&!!e.rr.value.trim();
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
-  e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});e.lim.style.display=r?"none":"";
+  e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});
   hw[0].style.display=r?"none":"";   // Model file lists this container's models: only for a local model
-  hw[2].style.display=r?"none":"";   // CPU threads: this container's; an external server (often a GPU) picks its own
+  hw[1].style.display=r?"none":"";   // CPU threads: this container's; an external server (often a GPU) picks its own
   e.extnote.style.display=r?"":"none";
   e.extnote.textContent=mg?"Managed through the runner on that machine: Apply all restarts its llama-server with the model, context, slots and flags below, and puts the old ones back if it does not come up.":"On an external server without a runner, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine; add a runner below to set them from here."}
  e.rr.oninput=sync;
  e.where.onchange=function(){e.usePreset();sync()};e.useRunner(s.runner);e.usePreset();sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
- e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
- limit(m);
  (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value!=="local",preset:e.pid(),url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked,runner:e.rr.value,runner_key:e.rrk.value,runner_clear:e.rrc.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
  return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,e.extnote,e.loc,
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}

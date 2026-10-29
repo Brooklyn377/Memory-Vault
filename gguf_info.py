@@ -1,11 +1,10 @@
-"""Read a GGUF header and estimate memory use. The Settings page uses it to work out a safe context size."""
+"""Read a GGUF header and estimate how much memory a model server uses (shown as "expected" on the Thinking tab)."""
 import re
 import struct
 from pathlib import Path
 
 MODELS = Path("/opt/models")
 GIB = 1024 ** 3
-HEADROOM = 4 * GIB      # kept free for the OS and everything else in the container
 OVERHEAD = 1 * GIB      # working buffers for one server (estimate)
 KV_MARGIN = 1.25        # safety factor on the context cache estimate
 _FMT = {0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i", 6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}
@@ -104,14 +103,6 @@ def model_size(name):
     return (MODELS / name).stat().st_size
 
 
-def total_memory():
-    with open("/proc/meminfo") as f:
-        for line in f:
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) * 1024
-    raise OSError("MemTotal not found")
-
-
 def footprint(name, ctx, parallel):
     h = header(MODELS / name)
     return model_size(name) + OVERHEAD + fixed_bytes(h, parallel) + int(KV_MARGIN * kv_bytes_per_token(h) * ctx)
@@ -123,23 +114,3 @@ def _fp_safe(name, ctx, parallel):
         return footprint(name, ctx, parallel)
     except Exception:
         return model_size(name) + OVERHEAD + 2 * GIB
-
-
-def max_context(name, others, parallel):
-    """others = list of (file, context, parallel) for the other servers."""
-    h = header(MODELS / name)
-    per = kv_bytes_per_token(h) * KV_MARGIN
-    free = total_memory() - HEADROOM - sum(_fp_safe(*o) for o in others) - footprint(name, 0, parallel)
-    cap = int(free // per) if free > 0 else 0
-    top = int(_g(h, "context_length", cap))
-    if "magistral" in name.lower():
-        top = max(top, 131072)  # Mistral documents 128K for Magistral; the file only declares 40,960
-    return max(0, min(cap, top) // 1024 * 1024)
-
-# Memory margin override: /var/lib/memory-agent/headroom.json, {"gib": 0}. Restart memory-web after changing it.
-try:
-    import json as _hj
-    from pathlib import Path as _HP
-    HEADROOM = int(float(_hj.loads(_HP("/var/lib/memory-agent/headroom.json").read_text())["gib"]) * GIB)
-except Exception:
-    pass

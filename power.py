@@ -7,17 +7,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 import agent
 import applier
-import gguf_info
 import settings
 
 STATE = agent.STATE
 UNIT = applier.UNIT
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 GIB = 1024 ** 3
-
-
-class Unsafe(ValueError):
-    """Loading would pass the memory safety limit. The page asks you to confirm."""
 
 
 def _flag(m, kind):
@@ -55,16 +50,6 @@ def wait_on(m):
         time.sleep(5)
 
 
-def mem_used():
-    d = {}
-    with open("/proc/meminfo") as f:
-        for line in f:
-            k, _, v = line.partition(":")
-            if v.strip():
-                d[k] = int(v.split()[0]) * 1024
-    return d.get("MemTotal", 0) - d.get("MemAvailable", 0)
-
-
 def state(m):
     import remote
     import swap
@@ -95,7 +80,7 @@ def state(m):
     return {"state": "unloaded", "detail": "Loads when the Curator runs." if m == "cur" else "Not answering."}
 
 
-def load(m, force=False):
+def load(m):
     import remote
     import swap
     if remote.enabled(m):   # start an external model you stopped: its calls go out again
@@ -119,15 +104,6 @@ def load(m, force=False):
         _flag(m, "off").unlink(missing_ok=True)
         return
     s = settings.load()
-    others = [k for k in UNIT if k != m and applier._active(k)]
-    need = sum(gguf_info._fp_safe(s[k]["model_file"], s[k]["context"], s[k]["parallel"]) for k in others + [m])
-    total = gguf_info.total_memory()
-    limit = total - gguf_info.HEADROOM
-    if need > limit and not force:
-        with_ = (" next to the " + " and ".join(NICE[k] for k in others)) if others else ""
-        raise Unsafe(f"Loading the {NICE[m]}{with_} is estimated at about {need / GIB:.0f} GB, above the {limit / GIB:.0f} GB safety limit "
-                     f"(this container has {total / GIB:.0f} GB and 4 GB is kept free). In use right now: {mem_used() / GIB:.0f} GB. "
-                     "If memory runs out, the system may kill processes.")
     _flag(m, "off").unlink(missing_ok=True)
     if m == "cur":
         _flag(m, "on").write_text("1")
@@ -136,7 +112,7 @@ def load(m, force=False):
         _flag(m, "off").unlink(missing_ok=True)
         subprocess.run(["systemctl", "enable", UNIT[m]], timeout=30)
     subprocess.run(["systemctl", "start", "--no-block", UNIT[m]], timeout=30)
-    agent.log(f"settings: {NICE[m]} loaded by you" + (" (over the memory limit, confirmed)" if need > limit else ""))
+    agent.log(f"settings: {NICE[m]} loaded by you")
 
 
 def unload(m):
@@ -204,11 +180,9 @@ def register(app, authed):
             raise HTTPException(status_code=400, detail="unknown model or action")
         try:
             if a == "load":
-                load(m, bool(d.get("force")))
+                load(m)
                 return {"ok": True}
             return {"ok": True, "note": unload(m)}
-        except Unsafe as e:
-            raise HTTPException(status_code=409, detail="unsafe:" + str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -242,12 +216,6 @@ function parts(card){const out=[];Array.from(card.children).forEach(function(ch,
  out.push(ch)});return out}
 function sec(title,nodes,open){const d=h("details",{class:"sec"},h("summary",{},title));nodes.forEach(function(n){d.append(n)});d.open=!!open;return d}
 async function post(body){const r=await fetch("/api/model/power",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(function(){return{}});return{ok:r.ok,status:r.status,detail:j.detail||"",note:j.note||""}}
-function unsafe(text){return new Promise(function(res){
- const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
- const done=function(v){ov.remove();res(v)};
- ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},"Not enough memory to be safe"),h("div",{class:"mut",style:"margin-bottom:12px"},text),
-  h("button",{style:"background:#b91c1c;color:#fff;margin-right:8px",onclick:function(){done(true)}},"Load anyway"),h("button",{class:"pri",onclick:function(){done(false)}},"Cancel")));
- document.body.append(ov)})}
 function powerButton(key,u){
  const fill=h("div",{style:"position:absolute;left:0;top:0;bottom:0;width:0"});
  const ico=h("span",{style:"position:relative;display:inline-block;vertical-align:middle;margin-right:6px;line-height:0"});
@@ -263,10 +231,7 @@ function powerButton(key,u){
   fill.style.transition="width 1.5s linear";fill.style.width="100%";
   t=setTimeout(async function(){
    stop();
-   let r=await post({model:key,action:u.act});
-   if(!r.ok&&r.status===409&&String(r.detail).indexOf("unsafe:")===0){
-    const go=await unsafe(r.detail.slice(7));
-    r=go?await post({model:key,action:u.act,force:true}):{ok:true,note:""}}
+   const r=await post({model:key,action:u.act});
    u.msg.textContent=r.ok?(r.note||""):(r.detail||"Could not do that");
    refresh()},1500)};
  btn.onpointerup=stop;btn.onpointerleave=stop;btn.onpointercancel=stop;btn.oncontextmenu=function(e){e.preventDefault()};

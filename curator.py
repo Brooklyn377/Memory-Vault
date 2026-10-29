@@ -18,7 +18,6 @@ import yaml
 
 import agent
 import applier
-import gguf_info
 import hygiene
 import questions
 import reviewer
@@ -114,17 +113,9 @@ def give_up(why):
 
 
 def acquire():
-    s = settings.get("cur")
-    need = gguf_info._fp_safe(s["model_file"], s["context"], s["parallel"])
-    limit = gguf_info.total_memory() - gguf_info.HEADROOM
-    over = need > limit   # a recommendation only: it loads anyway, with a warning
-    if over:
-        agent.log(f"curator: loading although about {need / gguf_info.GIB:.0f} GB is estimated, over the "
-                  f"{limit / gguf_info.GIB:.0f} GB safe limit")
     if not swap.take():
         return False
-    status("loading", "the other local models give way; loading the curator model"
-           + (f" (warning: about {need / gguf_info.GIB:.0f} GB estimated, over the {limit / gguf_info.GIB:.0f} GB safe limit)" if over else ""))
+    status("loading", "the other local models give way; loading the curator model")
     end = time.time() + 900
     while time.time() < end:
         if applier.health("cur") == "ready":

@@ -24,15 +24,6 @@ def others_idle():
     return turns.others_idle("cur")
 
 
-def healthy(port):
-    import urllib.request
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
 def take(wait=600):
     """Ask for the Curator's turn and wait until its group is the loaded one. False if the others got busy meanwhile or
     the turn did not come within `wait` seconds."""
