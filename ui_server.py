@@ -74,6 +74,22 @@ def _runner_status(m, r):
         return None
 
 
+def _differs(running, vals, sup):
+    """True if the runner's llama-server does not run with these values (model, context, slots, flags). Compared with
+    what the runner reports, so a value saved here earlier, before the runner was added, still gets applied there."""
+    if not running:
+        return True
+
+    def n(x):
+        try:
+            return int(float(x))
+        except (TypeError, ValueError):
+            return None
+    return (str(running.get("model_file")) != vals["model_file"] or n(running.get("context")) != n(vals["context"])
+            or n(running.get("parallel")) != n(vals["parallel"])
+            or (running.get("flags") or {}) != serverflags.runner_flags(vals, sup))
+
+
 def _runner_info(m):
     """For the page: the saved runner's model files, options, settings and health, or its error, or None."""
     if not remote.runner_url(m):
@@ -160,7 +176,7 @@ def _plan(d):
                             "that server. Until then its settings are saved here "
                             "but not applied there.")
                 direct[m] = vals
-            elif any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()) or not st.get("settings"):
+            elif _differs(st.get("settings"), vals, st.get("flags") or []):   # against what that machine runs, not our copy
                 ext_jobs[m] = vals
             prop[m].update(vals)
             vals = None
