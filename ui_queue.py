@@ -197,7 +197,7 @@ load();setInterval(function(){if(!document.hidden)load()},10000);
 <div id="jq"></div>
 <script>
 (function(){
-const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",approved:"Approved",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled"};
+const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",approved:"Approved",committed:"Committed",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled",skipped:"Skipped"};
 const KIND={doc_draft:"Draft a document",note_update:"Change a note",sort_note:"Sort a note"};
 const OPEN={};
 async function act(id,action){const r=await fetch("/api/jobs/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,action:action})});
@@ -210,6 +210,7 @@ function detail(j){const r=j.result||{},out=[];
  if(r.diff){out.push(h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:50vh;overflow:auto"},r.diff));
   out.push(h("a",{href:"/api/jobs/draft?id="+encodeURIComponent(j.id)},"Download the draft"));
   if(j.status==="approved")out.push(h("div",{class:"mut"},"Approved. Nothing was pushed"+(r.access==="write"?"":" ("+r.server+" is read only)")+": apply the draft to "+r.server+"/"+r.path+" yourself."))}
+ if(r.commit)out.push(h("div",{class:"mut"},"Committed to "+r.server+" ("+r.branch+") as "+String(r.commit).slice(0,10)+". To undo it, revert that commit in the repository."));
  if(r.filed)out.push(h("div",{class:"mut"},"Filed to "+r.filed+". The inbox agent turns it into a proposal; the vault itself is not changed yet."));
  if(j.error)out.push(h("div",{style:"color:#f5a524"},j.error));
  return out}

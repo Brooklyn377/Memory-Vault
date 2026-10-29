@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 import agent
+import gitrepos
 import settings
 from scrub import scrub
 
@@ -127,7 +128,20 @@ def decide(jid, ok):
         raise ValueError("that job is not waiting for you")
     if ok and j["kind"] in ("note_update", "sort_note"):
         j["result"]["filed"] = _file_to_inbox(j)
-    j["status"] = "approved" if ok else "rejected"
+    if ok and j["kind"] == "doc_draft" and j["result"].get("access") == "write":
+        try:
+            j["result"]["commit"] = _commit(j)
+        except (ValueError, OSError) as e:   # nothing was committed: say why, keep the draft
+            j.update(status="failed", error=str(e)[:400], decided=datetime.now().isoformat(timespec="seconds"))
+            _save(j)
+            import questions
+            questions.ask(f"The approved change to {j['result']['path']} in {j['result']['server']} was not committed: "
+                          f"{str(e)[:250]}", why="Nothing changed in the repository. Queue it again from the Queue page "
+                          "for a new draft, or ask the Assistant again.", kind="assistant",
+                          options=[{"label": "OK", "value": "ok"}], payload={"job": j["id"]})
+            agent.log(f"jobs: commit of {j['id']} failed: {e}")
+            return j
+    j["status"] = ("committed" if j["result"].get("commit") else "approved") if ok else "rejected"
     j["decided"] = datetime.now().isoformat(timespec="seconds")
     _save(j)
     agent.log(f"jobs: {j['kind']} {j['id']} {j['status']} by you")
@@ -221,13 +235,29 @@ def _doc_draft(j):
     ok = [s for s in sources if s.get("note") in by and _grounded(s.get("quote"), by[s["note"]])]
     if text.strip() != current.strip() and not ok:
         raise RuntimeError("no quote from the notes supports the draft")
-    diff = "".join(difflib.unified_diff(current.splitlines(True), text.splitlines(True), "current", "draft"))
+    diff = "".join(difflib.unified_diff(current.splitlines(True), text.splitlines(True), f"a/{inner}", f"b/{inner}"))
+    if not diff:
+        raise RuntimeError("the draft is the same as the file: nothing to change")
     (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
-    j["result"] = {"summary": str(out.get("summary") or "")[:500], "diff": diff[:20000], "sources": ok,
-                   "dropped": len(sources) - len(ok), "server": e["name"], "path": inner, "access": e["access"]}
-    return (f"Draft of {j['target']} is ready: {j['result']['summary'] or 'see the Queue page'}",
-            f"{len(ok)} quote(s) checked against the notes. Approving does not push anything: the draft and its "
-            "changes are on the Queue page for you to apply.")
+    j["result"] = {"summary": str(out.get("summary") or "")[:500], "diff": diff[:60000], "sources": ok,
+                   "dropped": len(sources) - len(ok), "server": e["name"], "server_id": e["id"], "url": e["url"],
+                   "branch": e["branch"], "path": inner, "access": e["access"], "base": gitrepos.content_sha(f),
+                   "new_file": not f.is_file()}
+    commit = e["access"] == "write"
+    return (f"{'Commit' if commit else 'Draft'} a change to {inner} in {e['name']}? {j['result']['summary']}",
+            f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
+            + (" (a new file)" if j["result"]["new_file"] else "") + f". {len(ok)} quote(s) checked against the notes. "
+            + ("Approve commits exactly this diff and pushes it; nothing else changes." if commit else
+               f"{e['name']} is read only, so Approve only marks the draft approved; it is on the Queue page to apply."))
+
+
+def _commit(j):
+    """An approved draft to a read-and-write Git server: commit and push exactly that file. -> the commit id."""
+    r = j["result"]
+    text = (DIR / f"{j['id']}.draft").read_text(encoding="utf-8")
+    msg = (f"{r.get('summary') or 'Update ' + r['path']}\n\nRequested through the memory agent's Assistant and "
+           f"approved by you on its Ask page (job {j['id']}).")
+    return gitrepos.commit_file(r["server_id"], r["path"], text, r["base"], msg)
 
 
 def _note_update(j):
@@ -309,8 +339,13 @@ def run_one(model):
         question, why = RUN[j["kind"]](j)
         j["status"] = "waiting"
         _save(j)
-        questions.ask(question, why=why, kind="job", payload={"job": j["id"]},
-                      options=[{"label": "Approve", "value": "approve"}, {"label": "Reject", "value": "reject"}])
+        r, payload = j["result"], {"job": j["id"]}
+        if j["kind"] == "doc_draft":   # the card shows exactly what would change, where
+            payload.update(repo=r["server"], url=r["url"], branch=r["branch"], file=r["path"], summary=r["summary"],
+                           diff=r["diff"], commit=r["access"] == "write")
+        yes = "Approve and commit" if payload.get("commit") else "Approve"
+        questions.ask(question, why=why, kind="job", payload=payload,
+                      options=[{"label": yes, "value": "approve"}, {"label": "Reject", "value": "reject"}])
         agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, waiting for you")
     except Exception as e:
         import thinklog

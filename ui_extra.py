@@ -308,7 +308,17 @@ ASK_HTML = r"""
 </style>
 <details class="card" open><summary class="mut">History (kept 30 days)</summary><div id="done"></div></details>
 <script>
-function card(q){const c=h("div",{class:"card"},h("h3",{},q.question),q.why?h("div",{class:"mut"},q.why):null);
+// A change to a file in a Git repository: exactly which repository, branch and file, a summary, and the diff line by line.
+function diffBox(p){const lines=String(p.diff||"").split("\n").map(function(l){
+  const c=l.startsWith("+++")||l.startsWith("---")?"var(--mut)":l.startsWith("+")?"#34d399":l.startsWith("-")?"#f87171":l.startsWith("@@")?"#60a5fa":"inherit";
+  return h("div",{style:"color:"+c+";white-space:pre-wrap;word-break:break-word"},l||" ")});
+ return h("div",{style:"margin:8px 0"},
+  h("div",{},h("b",{},"Repository: "),p.repo+" ("+p.url+"), branch "+p.branch),
+  h("div",{},h("b",{},"File: "),p.file),
+  p.summary?h("div",{},h("b",{},"Summary: "),p.summary):null,
+  h("div",{class:"mut",style:"margin-top:4px"},p.commit?"Approve and commit commits exactly this diff to that file and pushes it. Nothing else changes.":"This server is read only: approving only marks the draft approved."),
+  h("div",{style:"font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:6px"},...lines))}
+function card(q){const c=h("div",{class:"card"},h("h3",{},q.question),q.why?h("div",{class:"mut"},q.why):null,q.payload&&q.payload.diff?diffBox(q.payload):null);
  const finish=async(path,body)=>{try{await api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});c.remove();badge();load()}catch(e){alert(e.message)}};
  for(const o of q.options)c.append(h("button",{class:"pri",onclick:()=>finish("/api/questions/answer",{id:q.id,answer:o.value})},o.label));
  if(q.kind==="free"){const t=h("textarea",{rows:"3",placeholder:"Your answer..."});c.append(t,h("button",{class:"pri",onclick:()=>t.value.trim()&&finish("/api/questions/answer",{id:q.id,answer:t.value})},"Send"))}

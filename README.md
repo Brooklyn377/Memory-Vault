@@ -62,7 +62,12 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
    are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
 ## Update
-New versions come from this repository. On the Proxmox host:
+New versions come from this repository. The easiest way: **Settings → Updates** (at the bottom) shows the installed
+and newest version, with **Check now** and **Update now**. The agent also checks by itself every 6 hours, and a **1**
+appears next to Settings in the menu when an update is ready. Update now runs the same updater as below and shows
+its progress; the page reloads when it is done.
+
+Or on the Proxmox host:
 
 ```bash
 pct exec CTID -- /usr/local/bin/memory-agent-update            # install the newest version
@@ -105,11 +110,19 @@ A fourth model you chat with. It is off until you turn it on: on its card on the
 - **It hands slow work to the Reviewer and Sweeper as jobs:** draft a new version of a file in a Git server, change
   a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card,
   and the Queue page shows each job, its changes, and Approve / Reject / Cancel / Queue again. Approving a note
-  change files it to the inbox (the usual proposal path); approving a draft pushes nothing, it is there for you
-  to apply.
+  change files it to the inbox (the usual proposal path).
+- **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file, and the
+  Reviewer drafts it. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
+  the diff line by line. On a Git server marked **read and write**, **Approve and commit** commits exactly that
+  change to that one file and pushes it (as the bot named in `config.yaml`), using the Assistant's token for that
+  server (or another model's, if it has none). If the file changed in the repository after the draft was written,
+  nothing is committed and you are asked to request a new draft. On a **read only** server, approving only marks the
+  draft approved, for you to apply. Every commit is an ordinary commit in the repository's history, so it can be
+  reverted.
 - **Git servers** (Settings): add each repository with a name, what it is for, its HTTPS address, read only or
   read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
-  `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is ever pushed.
+  `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is pushed except a change you
+  approved on an Ask card, and only to a server marked read and write.
 
 ## Optional: a model on another machine (model runner)
 Any of the four models can run on another machine, for example a PC with a GPU. Set **Where it runs** to

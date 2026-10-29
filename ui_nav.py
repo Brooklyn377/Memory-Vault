@@ -37,7 +37,7 @@ body{padding-top:52px}
  <a href="/ask">Ask<span id="qn" class="dn" hidden></span></a>
  <a href="/todo">To-do<span id="tn" class="dn" hidden></span></a>
  <a href="/think">Thinking</a>
- <a href="/settings">Settings</a>
+ <a href="/settings">Settings<span id="sn" class="dn" hidden></span></a>
 </div>
 <script>
 (function(){
@@ -51,11 +51,12 @@ body{padding-top:52px}
  window.addEventListener("hashchange",mark);mark();
  function show(id,n){var b=document.getElementById(id);if(b){b.hidden=!n;b.textContent=n}}
  async function counts(){
-  var q=0,t=0;
+  var q=0,t=0,u=0;
   try{var r=await fetch("/api/questions/count");if(r.ok)q=(await r.json()).open||0}catch(e){}
   try{var r2=await fetch("/api/todo/count");if(r2.ok)t=(await r2.json()).open||0}catch(e){}
-  show("qn",q);show("tn",t);show("dh",q+t)}
- counts();setInterval(counts,30000);
+  try{var r3=await fetch("/api/update/status");if(r3.ok)u=(await r3.json()).available?1:0}catch(e){}   // 1: an update is ready
+  show("qn",q);show("tn",t);show("sn",u);show("dh",q+t+u)}
+ window.updBadge=counts;counts();setInterval(counts,30000);
 })();
 </script>
 """

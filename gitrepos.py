@@ -9,6 +9,7 @@ Tokens are stored root-only in /etc/memory-agent/git/, never in settings, never 
 never in a model call: each git command gets the token as a one-off HTTP header. Nothing here pushes: an entry marked
 read and write only records that you allow it, for a later piece that will still ask you first."""
 import base64
+import hashlib
 import json
 import os
 import re
@@ -213,3 +214,58 @@ def copy(eid, model, force=False):
         if not (dest / ".git").is_dir():
             return None
     return dest
+
+
+# ---------- committing an approved change ----------
+COMMIT_ORDER = ("pa", "gpt", "qwen", "cur")   # whose token commits: the Assistant's first, it asked for the change
+
+
+def content_sha(path):
+    """A fingerprint of a file's exact contents ("" if it does not exist): a commit goes ahead only if the file is
+    still what the draft was written against."""
+    p = Path(path)
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else ""
+
+
+def commit_file(eid, rel, text, base, message):
+    """Commit and push one file you approved. Only for an entry marked read and write, only if the file in the
+    repository is still exactly what the draft was based on. -> the commit id. Raises ValueError with a plain reason,
+    and then nothing is committed or pushed."""
+    e = get(eid)
+    if not e:
+        raise ValueError("that Git server is no longer listed")
+    if e["access"] != "write":
+        raise ValueError(f"{e['name']} is marked read only on the Settings page, so nothing is committed to it")
+    model = next((m for m in COMMIT_ORDER if has_token(eid, m)), None)
+    if not model:
+        raise ValueError(f"no model has a token for {e['name']}")
+    tok = token(eid, model)
+    dest = copy(eid, model, force=True)   # the newest version first
+    if dest is None or (get(eid) or {}).get("error"):
+        raise ValueError(f"could not get the newest version of {e['name']}: {(get(eid) or {}).get('error', '')}")
+    f = (dest / rel).resolve()
+    if not f.is_relative_to(dest.resolve()) or ".git" in f.relative_to(dest.resolve()).parts:
+        raise ValueError("that path leaves the repository")
+    if content_sha(f) != base:
+        raise ValueError(f"{rel} changed in {e['name']} since the draft was written, so nothing was committed. "
+                         "Ask the Assistant for a new draft.")
+    g = agent.CFG.get("gitea") or {}
+    who = ["-c", f"user.name={g.get('bot_name') or 'Memory agent'}", "-c", f"user.email={g.get('bot_email') or 'memory-agent@localhost'}"]
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        _git(["add", "--", rel], tok, cwd=dest)
+        _git(who + ["commit", "-q", "-m", message, "--", rel], tok, cwd=dest)
+        _git(["push", "origin", f"HEAD:refs/heads/{e['branch']}"], tok, cwd=dest)
+        sha = _git(["rev-parse", "HEAD"], tok, cwd=dest).strip()
+    except RuntimeError as ex:   # nothing half-done stays in the local copy
+        try:
+            _git(["reset", "--hard", "-q", "FETCH_HEAD"], tok, cwd=dest)
+        except RuntimeError:
+            pass
+        reason = str(ex)
+        if re.search(r"403|denied|not allowed|permission|write access", reason, re.I):
+            reason = f"the {MODELS[model]}'s token for {e['name']} cannot write ({reason})"
+        raise ValueError(f"the commit was not pushed: {reason}")
+    agent.log(f"git: committed {rel} to {e['name']} ({e['branch']}) as {sha[:10]}, approved by you")
+    return sha
