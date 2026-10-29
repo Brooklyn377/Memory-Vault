@@ -78,6 +78,11 @@ def save_config(groups, turn_minutes):
         minutes = max(0, int(float(turn_minutes)))
     except (TypeError, ValueError):
         raise ValueError("minutes must be a number")
+    for i, g in enumerate(out):
+        for a in g["models"]:
+            for b in g["models"]:
+                if a < b and server_of(a) and server_of(a) == server_of(b):
+                    notes.append(f"The {NICE[a]} and the {NICE[b]} use the same external server, so they take turns even in group {i + 1}.")
     DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG.with_suffix(".tmp")
     tmp.write_text(json.dumps({"groups": out, "turn_minutes": minutes}, indent=1))
@@ -86,10 +91,28 @@ def save_config(groups, turn_minutes):
     return config(), notes
 
 
+def server_of(model):
+    """The external server this model's calls go to (None for a local model). Models that share one server share its
+    single model and slots, so they can never be active at the same time."""
+    try:
+        import remote
+        return remote.base(model).lower() or None if remote.enabled(model) else None
+    except Exception:
+        return None
+
+
 def group_of(model):
+    """The models that may be loaded together with this one. A member that uses the same external server as this
+    model is left out: two models on one server take turns even when they are in one group."""
     for g in config()["groups"]:
         if model in g["models"]:
-            return list(g["models"])
+            out, used = [model], {server_of(model)} - {None}
+            for m in g["models"]:
+                srv = server_of(m)
+                if m != model and not (srv and srv in used):
+                    out.append(m)
+                    used |= {srv} - {None}
+            return [m for m in g["models"] if m in out]
     return [model]
 
 
