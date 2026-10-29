@@ -197,7 +197,7 @@ load();setInterval(function(){if(!document.hidden)load()},10000);
 <script>
 (function(){
 const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",approved:"Approved",committed:"Committed",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled",skipped:"Skipped"};
-const KIND={doc_draft:"Draft a document",note_update:"Change a note",sort_note:"Sort a note"};
+const KIND={file_edit:"Edit a file",doc_draft:"Draft a document",note_update:"Change a note",sort_note:"Sort a note"};
 const OPEN={};
 async function act(id,action){const r=await fetch("/api/jobs/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,action:action})});
  if(!r.ok){const j=await r.json().catch(function(){return{}});alert(j.detail||"Could not do that")}load()}

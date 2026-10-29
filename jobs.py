@@ -21,8 +21,9 @@ import settings
 from scrub import scrub
 
 DIR = agent.STATE / "jobs"
-WORKER = {"doc_draft": "gpt", "note_update": "gpt", "sort_note": "qwen"}
-NICE = {"gpt": "Reviewer", "qwen": "Sweeper"}
+WORKER = {"doc_draft": "gpt", "note_update": "gpt", "sort_note": "qwen"}   # what the Assistant may hand to the others
+GIT_CHANGES = ("doc_draft", "file_edit")   # jobs whose result is a change to a file in a Git server
+NICE = {"gpt": "Reviewer", "qwen": "Sweeper", "pa": "Assistant"}
 ENDPOINT = {"gpt": "http://127.0.0.1:8081/v1", "qwen": "http://127.0.0.1:8080/v1"}
 
 DRAFT_SYS = (
@@ -107,6 +108,8 @@ def requeue(jid):
     j = get(jid)
     if not j or j["status"] != "failed":
         raise ValueError("only a failed job can be queued again")
+    if j["kind"] == "file_edit":
+        raise ValueError("an edit goes stale when the file changes: ask the Assistant to make it again")
     j.update(status="queued", error="", result={})
     _save(j)
 
@@ -127,7 +130,7 @@ def decide(jid, ok):
         raise ValueError("that job is not waiting for you")
     if ok and j["kind"] in ("note_update", "sort_note"):
         j["result"]["filed"] = _file_to_inbox(j)
-    if ok and j["kind"] == "doc_draft" and j["result"].get("access") == "write":
+    if ok and j["kind"] in GIT_CHANGES and j["result"].get("access") == "write":
         try:
             j["result"]["commit"] = _commit(j)
         except (ValueError, OSError) as e:   # nothing was committed: say why, keep the draft
@@ -148,17 +151,17 @@ def decide(jid, ok):
 
 
 # ---------- reading ----------
-def _git_target(target):
-    """git/<server>/<path> -> (entry, path inside). The Reviewer needs its own token for that server."""
-    import gitrepos
+def _git_target(target, model="gpt"):
+    """git/<server>/<path> -> (entry, path inside). The model (the Reviewer for drafts, the Assistant for its own
+    edits) needs its own token for that server."""
     parts = target.split("/", 2)
     if len(parts) < 3 or parts[0] != "git" or not parts[2].strip("/"):
-        raise ValueError("a doc_draft target looks like git/<Git server name>/<file path>")
+        raise ValueError("a Git file looks like git/<Git server name>/<file path>")
     e = gitrepos.by_name(parts[1])
     if not e:
-        raise ValueError(f"there is no Git server called {parts[1]}")
-    if not gitrepos.has_token(e["id"], "gpt"):
-        raise ValueError(f"the Reviewer has no token for {e['name']}; add one under Git servers on the Settings page")
+        raise ValueError(f"there is no Git server called {parts[1]}; the repos tool lists them")
+    if not gitrepos.has_token(e["id"], model):
+        raise ValueError(f"the {gitrepos.MODELS[model]} has no token for {e['name']}; add one under Git servers on the Settings page")
     if ".." in Path(parts[2]).parts:
         raise ValueError("that path leaves the repository")
     return e, parts[2].strip("/")
@@ -325,6 +328,65 @@ def _file_to_inbox(j):
 RUN = {"doc_draft": _doc_draft, "note_update": _note_update, "sort_note": _sort_note}
 
 
+def _card(j, question, why):
+    """The Ask card for a finished job. A change to a Git file shows exactly which repository, branch and file, and the
+    diff."""
+    import questions
+    r, payload = j["result"], {"job": j["id"]}
+    if j["kind"] in GIT_CHANGES:
+        payload.update(repo=r["server"], url=r["url"], branch=r["branch"], file=r["path"], summary=r["summary"],
+                       diff=r["diff"], commit=r["access"] == "write")
+    yes = "Approve and commit" if payload.get("commit") else "Approve"
+    questions.ask(question, why=why, kind="job", payload=payload,
+                  options=[{"label": yes, "value": "approve"}, {"label": "Reject", "value": "reject"}])
+
+
+def propose_edit(target, old, new, why="", chat=""):
+    """The Assistant's own edit of one file in a Git server: no model call and no Reviewer. old is exact text from the
+    file (it must occur once) and new replaces it; a blank old adds new at the end of the file, or creates the file.
+    The change waits as an Ask card with its diff and is committed only after you approve (read and write servers)."""
+    target = str(target or "").strip()
+    e, inner = _git_target(target, "pa")
+    root = gitrepos.copy(e["id"], "pa")
+    if root is None:
+        raise ValueError(f"could not get a copy of {e['name']}")
+    f = (root / inner).resolve()
+    if not f.is_relative_to(root.resolve()) or ".git" in f.relative_to(root.resolve()).parts:
+        raise ValueError("that path leaves the repository")
+    current = f.read_text(encoding="utf-8", errors="replace") if f.is_file() else ""
+    old, new = str(old or ""), str(new if new is not None else "")
+    if old:
+        n = current.count(old)
+        if n != 1:
+            raise ValueError(f"the text to replace is {'not in' if not n else 'in more than one place in'} {inner}: open the "
+                             "file and copy the exact text (a longer piece, if it repeats), or leave old empty to add at the end")
+        text = current.replace(old, new, 1)
+    elif new.strip():
+        text = current + ("" if not current or current.endswith("\n") else "\n") + new + ("" if new.endswith("\n") else "\n")
+    else:
+        raise ValueError("give the new text to add, or old and new to replace")
+    diff = "".join(difflib.unified_diff(current.splitlines(True), text.splitlines(True), f"a/{inner}", f"b/{inner}"))
+    if not diff:
+        raise ValueError("that is the same as the file now: nothing to change")
+    why = " ".join(str(why or "").split())[:300] or f"Edit {inner}"
+    j = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": "file_edit", "worker": "pa", "target": target,
+         "instructions": why, "chat": chat, "status": "waiting", "created": datetime.now().isoformat(timespec="seconds"),
+         "error": "", "result": {"summary": why, "diff": diff[:60000], "sources": [], "dropped": 0, "server": e["name"],
+                                 "server_id": e["id"], "url": e["url"], "branch": e["branch"], "path": inner, "access": e["access"],
+                                 "base": gitrepos.content_sha(f), "new_file": not f.is_file()}}
+    DIR.mkdir(parents=True, exist_ok=True)
+    (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
+    _save(j)
+    commit = e["access"] == "write"
+    _card(j, f"{'Commit' if commit else 'Draft'} a change to {inner} in {e['name']}? {why}",
+          f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
+          + (" (a new file)" if j["result"]["new_file"] else "") + ". "
+          + ("Approve commits exactly this diff and pushes it; nothing else changes." if commit else
+             f"{e['name']} is read only, so Approve only marks the draft approved; it is on the Queue page to apply."))
+    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; waiting for you")
+    return j
+
+
 def run_one(model):
     """Do the oldest queued job for this model. Returns True if there was one. Called by the workers when idle."""
     todo = queued(model)
@@ -338,13 +400,7 @@ def run_one(model):
         question, why = RUN[j["kind"]](j)
         j["status"] = "waiting"
         _save(j)
-        r, payload = j["result"], {"job": j["id"]}
-        if j["kind"] == "doc_draft":   # the card shows exactly what would change, where
-            payload.update(repo=r["server"], url=r["url"], branch=r["branch"], file=r["path"], summary=r["summary"],
-                           diff=r["diff"], commit=r["access"] == "write")
-        yes = "Approve and commit" if payload.get("commit") else "Approve"
-        questions.ask(question, why=why, kind="job", payload=payload,
-                      options=[{"label": yes, "value": "approve"}, {"label": "Reject", "value": "reject"}])
+        _card(j, question, why)
         agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, waiting for you")
     except Exception as e:
         import thinklog

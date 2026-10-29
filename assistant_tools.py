@@ -190,6 +190,17 @@ def queue_job(kind, target, instructions):
             "the result waits for the person's approval as an Ask card. Tell them it is queued.")
 
 
+def edit_file(path, old, new, why):
+    """Propose one change to one file in a Git server. Nothing changes until the person approves it."""
+    import jobs
+    j = jobs.propose_edit(path, old, new, why, CHAT["id"])
+    r = j["result"]
+    return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
+            "their Ask page, which shows the exact diff"
+            + ("; approving commits and pushes it." if r["access"] == "write" else f"; {r['server']} is read only, so approving only marks the draft approved.")
+            + " Tell them it is waiting there.")
+
+
 def job_list():
     import jobs
     rows = jobs.summary()
@@ -202,7 +213,8 @@ TOOLS = {"search": lambda a: search(a.get("text", ""), a.get("where", "all")),
          "links": lambda a: links(a.get("path", "")),
          "tasks": lambda a: tasks(), "questions": lambda a: questions(), "queue": lambda a: queue(),
          "repos": lambda a: repos(), "jobs": lambda a: job_list(),
-         "queue_job": lambda a: queue_job(a.get("kind"), a.get("target"), a.get("instructions"))}
+         "queue_job": lambda a: queue_job(a.get("kind"), a.get("target"), a.get("instructions")),
+         "edit_file": lambda a: edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
 
 
 def run(name, args):

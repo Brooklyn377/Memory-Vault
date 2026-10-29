@@ -113,8 +113,10 @@ A fourth model you chat with. It is off until you turn it on: on its card on the
   a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card,
   and the Queue page shows each job, its changes, and Approve / Reject / Cancel / Queue again. Approving a note
   change files it to the inbox (the usual proposal path).
-- **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file, and the
-  Reviewer drafts it. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
+- **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file and it makes
+  the change itself (it is your quick helper for lookups, config changes and file edits; the Reviewer is much slower
+  and is only for long work, or whole new documents). It replaces exact text it copied from the file, or adds to the
+  end, or creates a file: one file per change. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
   the diff line by line. On a Git server marked **read and write**, **Approve and commit** commits exactly that
   change to that one file and pushes it (as the bot named in `config.yaml`), using the Assistant's token for that
   server (or another model's, if it has none). If the file changed in the repository after the draft was written,
