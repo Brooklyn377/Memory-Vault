@@ -339,19 +339,18 @@ const MEMC={qwen:"#4c9aff",gpt:"#f5a623",cur:"#34d399",pa:"#e879f9"},MEMN={qwen:
 const gbs=n=>(n/1073741824).toFixed(1);
 function showMem(d){
   const el=document.getElementById("mem");if(!el||!d||!d.total)return;
-  const T=d.total,over=d.projected-d.safe;
+  const T=d.total;
   let bar='<div style="position:relative;display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line);margin:6px 0">';
   IDS.forEach(k=>{const m=d.models[k];if(m&&m.rss)bar+='<div style="width:'+(m.rss/T*100)+'%;background:'+MEMC[k]+'"></div>'});
   bar+='<div style="width:'+(d.other/T*100)+'%;background:#8b93a7"></div>';
-  bar+='<div style="position:absolute;top:0;bottom:0;left:'+(d.safe/T*100)+'%;width:2px;background:#fff"></div></div>';
+  bar+='</div>';
   let rows="";
   IDS.forEach(k=>{const m=d.models[k];if(!m)return;
     const grow=m.exp>m.rss*1.05?' · expected '+gbs(m.exp)+' GB when fully loaded':'';
     rows+='<div><span style="color:'+MEMC[k]+'">'+MEMN[k]+'</span> <b>'+gbs(m.rss)+' GB</b> (weights '+gbs(m.file)+' + working '+gbs(m.anon)+')'+grow+'</div>'});
   if(!rows)rows='<div>No model servers loaded.</div>';
-  const warn=over>0?'<div style="color:#f87171;font-weight:600">Over the safe limit by '+gbs(over)+' GB once fully loaded. Unload a model.</div>':'';
   const sw=d.swap_total?' · swap '+gbs(d.swap_used)+' / '+gbs(d.swap_total)+' GB'+(d.swap_used>d.swap_total*0.9?' (nearly full)':''):'';
-  el.innerHTML='Container memory <b>'+gbs(T)+' GB</b> · safe limit '+gbs(d.safe)+' GB (white line) · models '+gbs(d.models_total)+' GB + other '+gbs(d.other)+' GB'+bar+rows+warn+'<div style="margin-top:4px">file cache '+gbs(d.cached)+' GB (model files count here) · free '+gbs(d.free)+' GB'+sw+'</div>'}
+  el.innerHTML='Container memory <b>'+gbs(T)+' GB</b> · models loaded here '+gbs(d.models_total)+' GB + other '+gbs(d.other)+' GB'+bar+rows+'<div style="margin-top:4px">file cache '+gbs(d.cached)+' GB (model files count here) · free '+gbs(d.free)+' GB'+sw+'</div>'}
 function draw(){
   const w=cv.clientWidth,h=cv.clientHeight,dpr=window.devicePixelRatio||1;
   if(!w)return;

@@ -121,6 +121,14 @@ def managed(model):
     return model in MODELS and not _external(model) and _has_model(model) and alive()
 
 
+def _manual_hold(model):
+    try:
+        import power
+        return power.manual(model)
+    except Exception:
+        return False
+
+
 def _off(model):
     try:
         import power
@@ -322,6 +330,10 @@ def step(now=None):
     except OSError:
         return did
     stop, start = [], []
+    for m in MODELS:   # a local server of a model that runs on another machine only uses memory: stop it
+        if _external(m) and _running(m) and not _manual_hold(m):
+            _stop_unit(m)
+            did.append("stop " + m + " (it runs on another machine)")
     with _lock():
         cfg = config()
         st = active()

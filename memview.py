@@ -1,4 +1,4 @@
-"""Container memory for the Thinking tab: the total, what each model server holds (weights vs working memory), and the safe limit."""
+"""Container memory for the Thinking tab: the total, what each model server loaded here holds (weights vs working memory), the rest, the file cache and swap. Models on another machine are not in it."""
 import os
 
 import settings
@@ -15,6 +15,14 @@ def _meminfo():
             if v.strip():
                 d[k] = int(v.split()[0]) * 1024
     return d
+
+
+def _external(key):
+    try:
+        import remote
+        return remote.enabled(key)
+    except Exception:
+        return False
 
 
 def _expected(key):
@@ -40,7 +48,7 @@ def memory():
                 continue
             port = next((cmd[i + 1].decode() for i, a in enumerate(cmd[:-1]) if a == b"--port"), None)
             key = PORTS.get(port)
-            if not key:
+            if not key or _external(key):   # a model on another machine is not in this machine's memory
                 continue
             st = {}
             with open(f"/proc/{pid}/status") as f:
@@ -58,14 +66,8 @@ def memory():
         m["exp"] = _expected(k)
     anon_all = max(0, total - mi.get("MemFree", 0) - mi.get("Cached", 0) - mi.get("Buffers", 0))
     other = max(0, anon_all - sum(m["anon"] for m in models.values()))
-    try:
-        import gguf_info
-        head = gguf_info.HEADROOM
-    except Exception:
-        head = 4 * GIB
-    return {"total": total, "safe": max(0, total - head), "models": models, "other": other,
+    return {"total": total, "models": models, "other": other,
             "models_total": sum(m["rss"] for m in models.values()),
-            "projected": sum(max(m["rss"], m["exp"]) for m in models.values()) + other,
             "free": mi.get("MemFree", 0), "cached": mi.get("Cached", 0) + mi.get("Buffers", 0),
             "available": mi.get("MemAvailable", 0),
             "swap_total": mi.get("SwapTotal", 0), "swap_used": mi.get("SwapTotal", 0) - mi.get("SwapFree", 0)}
