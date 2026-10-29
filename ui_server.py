@@ -49,6 +49,16 @@ NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant
 MODELS = tuple(NICE)
 
 
+def _running_ctx(m):
+    """The context the server is really running with (from its /slots), or None if it is not answering."""
+    try:
+        import ui_think
+        s = ui_think.slots(m)
+        return int(s["ctx"]) if s.get("up") and s.get("ctx") and "slots" in s else None
+    except Exception:
+        return None
+
+
 def _num(f, key, label, m):
     """A number typed on the page; text that is not a number is the one thing refused, with a plain reason."""
     try:
@@ -138,7 +148,7 @@ def register(app, authed):
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
                 "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
-                                "health": applier.health(m), "pending": pend.get(m)} for m in MODELS}}
+                                "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m)} for m in MODELS}}
 
     @router.get("/api/server/limits")
     def lim(request: Request, model: str, file: str, parallel: int = 4):
@@ -299,6 +309,8 @@ async function stat(){clearTimeout(T);const d=await api("/api/server/info");let 
  for(const m of IDS){const s=d.servers[m],e=E[m];if(!e)continue;
   e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
+  if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=   // llama.cpp rounds up to a multiple of 256" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
+   (s.remote&&s.remote.enabled?" (set on that server)":" (llama.cpp lowered it, most likely to fit memory; see Fit context under Advanced server flags)");
   e.cancel.style.display=s.pending?"":"none";
   if((s.health!=="ready"&&!((m==="cur"||m==="pa")&&s.health==="down"))||s.pending)busy=true}
  const l=d.last;

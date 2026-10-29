@@ -123,7 +123,7 @@ def answer(qid, text):
         if text not in ("retry", "skip"):
             raise ValueError("unknown answer")
         agent.decide_note(q["payload"]["name"], text)
-    elif q["kind"] in ("gitpull", "assistant"):   # notices: answering only acknowledges them
+    elif q["kind"] in ("gitpull", "assistant", "serverfail"):   # notices: answering only acknowledges them
         pass
     elif q["kind"] == "job":
         if text not in ("approve", "reject"):

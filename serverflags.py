@@ -23,6 +23,10 @@ SPEC = [
     {"key": "rope_scaling", "flag": "--rope-scaling", "kind": "choice", "choices": ["none", "linear", "yarn"], "label": "Rope scaling (longer context)"},
     {"key": "rope_freq_scale", "flag": "--rope-freq-scale", "kind": "float", "lo": 0.05, "hi": 4, "min": 0.01, "step": "0.05", "label": "Rope frequency scale (1 divided by the stretch)"},
     {"key": "yarn_orig_ctx", "flag": "--yarn-orig-ctx", "kind": "int", "lo": 0, "hi": 1048576, "label": "YaRN original context (0 = from the model)"},
+    # Newer llama.cpp can lower the context you set so it fits free memory. Off by default: the context you set is
+    # what runs, and the memory estimate on the card is only a recommendation. Passed only if this build has --fit.
+    {"key": "fit", "flag": "--fit", "kind": "choice", "choices": ["off", "on"], "default": "off",
+     "label": "Fit context to free memory (default here: off; on lets llama.cpp lower the context you set)"},
     {"key": "draft_model", "flag": "--model-draft", "kind": "model", "label": "Draft model (speculative decoding)"},
     {"key": "draft_max", "flag": "--draft-max", "kind": "int", "lo": 1, "hi": 64, "label": "Draft tokens to guess at most"},
     {"key": "draft_min", "flag": "--draft-min", "kind": "int", "lo": 0, "hi": 64, "label": "Draft tokens to guess at least"},
@@ -94,6 +98,8 @@ def build(s):
     f, parts = s.get("flags") or {}, []
     for sp in SPEC:
         v = f.get(sp["key"])
+        if (v is None or v == "") and sp.get("default") and sp["flag"] in supported():
+            v = sp["default"]   # a flag whose default here differs from llama.cpp's, for builds that have it
         if v is None or v is False or v == "":
             continue
         if sp["kind"] == "bool":

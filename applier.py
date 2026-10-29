@@ -128,6 +128,17 @@ def apply_now(model, vals):
         except Exception:
             pass
         _atomic(LAST, json.dumps({"model": model, "at": now, "error": f"{type(e).__name__}: {str(e)[:100]}"}))
+        try:   # say so where you will see it, not only on the Settings page
+            import questions
+            nice = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}.get(model, model)
+            questions.ask(f"The {nice} server did not start with context {vals.get('context', '?'):,} "
+                          f"({vals.get('model_file', '')}), so its previous settings were put back.",
+                          why=f"{type(e).__name__}: {str(e)[:150]}. Most often the model and context do not fit in memory. "
+                              "Lower the context or slots, or try again; the journal of the server unit has the details.",
+                          kind="serverfail", options=[{"label": "OK", "value": "ok"}],
+                          payload={"model": model, "at": now, "values": {k: vals.get(k) for k in KEYS}})
+        except Exception:
+            pass
         raise
     _atomic(LAST, json.dumps({"model": model, "at": now, "before": {k: before[k] for k in KEYS},
                               "after": {k: new[model][k] for k in KEYS}}))

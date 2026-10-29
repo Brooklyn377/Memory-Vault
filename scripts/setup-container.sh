@@ -164,11 +164,11 @@ PY
     # memory-publish reads this file; it stays empty and the unit stays off until publishing is set up.
     [[ -f "$ETC/publish.env" ]] || printf 'GITEA_WRITE_TOKEN=\n' | write_file "$ETC/publish.env" 600
 fi
-# The llama env files hold what settings.json says, in the format applier.write_env writes. Also on updates:
-# a model slot added in a newer version gets its file, and existing files are never touched.
+# The llama env files hold what settings.json says, in the format applier.write_env writes. Written again on every
+# update, from settings.json (the source of truth), so server arguments added in a newer version reach the servers
+# when the updater restarts them; a model slot added in a newer version gets its file.
 for pair in qwen:llama-qwen gpt:llama-gpt cur:llama-cur pa:llama-pa; do
     role="${pair%%:*}"; env="$ETC/${pair#*:}.env"
-    [[ -f "$env" ]] && continue
     if (( DRY )); then echo "+ write $env from settings.json"; continue; fi
     (cd "$APP" && "$APP/venv/bin/python" - "$role" <<'PY'
 import sys, settings, serverflags
