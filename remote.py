@@ -49,16 +49,6 @@ def saved_key(model):
         return ""
 
 
-def local_ready(model):
-    def probe_local():
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{PORT[model]}/health", timeout=2) as r:
-                return r.status == 200
-        except Exception:
-            return False
-    return _cached(("local", model), 5, probe_local)
-
-
 def enabled(model):
     """True while this model's calls go to the external server. Switching back is immediate: a "back" left by an older
     version (calls stayed external until the local model loaded) counts as local."""

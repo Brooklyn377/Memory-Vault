@@ -11,7 +11,6 @@ import re
 import secrets
 import sys
 import time
-import urllib.request
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request

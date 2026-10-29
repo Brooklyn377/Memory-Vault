@@ -8,7 +8,6 @@ CLI:  hygiene.py list | queue
 import json
 import re
 import sys
-from pathlib import Path
 
 import agent
 import bootstrap

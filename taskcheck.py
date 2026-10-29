@@ -7,7 +7,6 @@ import reviewer
 import todo
 
 LOG = agent.STATE / "task_changes.jsonl"
-MAX_TASKS = 30
 SYS = ("You keep a person's to-do board honest. You get OPEN TASKS and NEW FACTS from their notes. "
        "If a new fact shows a task is finished or was answered elsewhere, use action close. "
        "If a fact only adds progress, use action update. Otherwise change nothing. "

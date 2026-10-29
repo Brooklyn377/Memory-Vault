@@ -11,12 +11,11 @@ import sys
 import time
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 
 import agent
 import questions
 import todo
-from bootstrap import clean, slug
+from bootstrap import clean
 
 R = agent.CFG.get("reviewer", {})
 ENDPOINT = R.get("endpoint", "http://127.0.0.1:8081/v1").rstrip("/")

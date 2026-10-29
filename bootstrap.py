@@ -5,7 +5,6 @@ The model returns JSON (summary + entities); plain code does all file writing an
 Resumable: progress is kept in <state>/bootstrap.json.
 """
 import json
-import os
 import re
 import time
 import unicodedata

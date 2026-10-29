@@ -2,10 +2,7 @@
 Run with memory-bootstrap and memory-sweep STOPPED (both rewrite these files).
 For each alias -> canonical pair: combine 'Mentioned in' lists and names into the canonical
 entity, delete the alias note, and repoint every [[entities/<alias>]] link in the vault."""
-import json
 import re
-import sys
-from pathlib import Path
 
 import yaml
 

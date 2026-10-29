@@ -2,7 +2,6 @@
 import difflib
 import html
 import re
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse

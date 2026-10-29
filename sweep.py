@@ -13,7 +13,6 @@ import json
 import re
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 import yaml
@@ -30,10 +29,7 @@ VAULT, STATE, M = agent.VAULT, agent.STATE, agent.M
 SWEEP = STATE / "sweep.json"
 MERGES = STATE / "merges.yaml"
 CONV_DIR = VAULT / "raw" / "conversations"
-CHUNK_CHARS = 8000
 MAX_SINGLE = 12000  # one message up to this size is never cut
-MAX_FACTS = 6
-MAX_TRIES = 3
 HEAD_RE = re.compile(r"^### (Human|Assistant)(?: \(([^)]*)\))?[ \t]*$", re.M)
 
 SYS = (
@@ -95,28 +91,6 @@ def split_big(text, limit):
 def make_chunks(body, d=None):
     import chunking
     return chunking.make_chunks(body, d, __import__("tuning").get("sweep.chunk_chars"), split_messages, split_big, MAX_SINGLE)
-
-
-def _make_chunks_old(body):
-    chunks, cur, first, last = [], [], None, 0
-    for n, (stamp, text) in enumerate(split_messages(body), start=1):
-        parts = split_big(text, MAX_SINGLE) if len(text) > MAX_SINGLE else [text]
-        for k, part in enumerate(parts):
-            if k:
-                part = f"(continued)\n{part}"
-            if cur and sum(len(c) for c in cur) + len(part) > CHUNK_CHARS:
-                chunks.append({"text": "\n\n".join(cur), "first": first, "last": last})
-                cur, first = [], None
-            if first is None:
-                first = (n, stamp[:10])
-            cur.append(part)
-            last = n
-    if cur:
-        chunks.append({"text": "\n\n".join(cur), "first": first, "last": last})
-    for c in chunks:
-        c["start_msg"], c["date"] = c["first"]
-        c["hash"] = hashlib.sha256(c["text"].encode()).hexdigest()[:16]
-    return chunks
 
 
 def read_chat(rel):

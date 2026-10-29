@@ -8,11 +8,9 @@ CLI:  questions.py list | dupes
 """
 import hashlib
 import json
-import os
 import re
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import yaml
 
@@ -26,7 +24,7 @@ MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 MAX_ANSWER = 4000
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
-KEEP = ("filecheck", "curatecheck", "inboxcheck", "assistant", "gitpull", "serverfail", "job")
+KEEP = ("filecheck", "curatecheck", "assistant", "gitpull", "serverfail", "job")
 
 
 def _path(qid):
@@ -84,8 +82,6 @@ def dismiss(qid):
     elif q["kind"] == "curatecheck":
         import curator
         curator.decide(q["payload"]["rel"], "skip")
-    elif q["kind"] == "inboxcheck":
-        agent.decide_note(q["payload"]["name"], "skip")
     _save(q)
 
 
@@ -121,10 +117,6 @@ def answer(qid, text):
             raise ValueError("unknown answer")
         import curator
         curator.decide(q["payload"]["rel"], text)
-    elif q["kind"] == "inboxcheck":
-        if text not in ("retry", "skip"):
-            raise ValueError("unknown answer")
-        agent.decide_note(q["payload"]["name"], text)
     elif q["kind"] in ("gitpull", "assistant", "serverfail"):   # notices: answering only acknowledges them
         pass
     elif q["kind"] == "job":

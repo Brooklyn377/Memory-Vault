@@ -16,8 +16,6 @@ VAULT=/srv/memory-vault
 MODELS=/opt/models
 LLAMA=/opt/llama.cpp
 LLAMA_REPO=https://github.com/ggml-org/llama.cpp
-# One-off maintenance scripts from the original install; not part of the service.
-SKIP_PY=(fix_collisions.py apply_edits.py patch_commit_only.py)
 # Units enabled at boot. memory-publish needs a Gitea server (see README); memory-backup needs a script
 # that is not part of this project. memory-curator-llm and memory-bootstrap are started on demand.
 # memory-assistant-llm stays off until you load the Assistant on the Settings page.
@@ -104,7 +102,6 @@ run install -d -m 755 "$APP" "$APP/systemd" "$MODELS" "$VAULT"
 run install -d -m 700 "$ETC" "$STATE"
 for f in "$SRC"/*.py; do
     name="$(basename "$f")"
-    [[ " ${SKIP_PY[*]} " == *" $name "* ]] && continue
     run install -m 644 "$f" "$APP/$name"
 done
 for f in requirements.txt requirements.lock config.example.yaml; do
