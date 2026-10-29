@@ -261,9 +261,9 @@ function merge(){
   const u=UI[key]={act:""};
   u.chip=h("span",{class:"mc"},"...");u.sub=h("div",{class:"mut"});u.msg=h("div",{class:"mut"});
   const card=h("div",{class:"card"},h("div",{class:"mh"},h("i",{style:"background:"+col}),h("b",{},name),u.chip,powerButton(key,u)),u.sub,u.msg);
-  card.append(sec("Server and where it runs",parts(srv),true));
-  card.append(sec("Generation settings",parts(gen),true));
-  if(key==="cur"&&cu)card.append(sec("Curator behaviour",parts(cu),true));
+  card.append(sec("Server and where it runs",parts(srv),false));
+  card.append(sec("Generation settings",parts(gen),false));
+  if(key==="cur"&&cu)card.append(sec("Curator behaviour",parts(cu),false));
   card.append(sec("Prompts",parts(pr),false));
   card.append(h("button",{class:"pri",style:"margin-top:10px",onclick:function(){window.applyAll()}},"Apply all models"));
   gen.remove();srv.remove();pr.remove();mm.append(card)});

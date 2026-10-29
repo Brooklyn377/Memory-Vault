@@ -2,7 +2,8 @@
 
 A model group is a set of local models that may be loaded at the same time. A model in no group is alone. The models
 of one group are loaded together; any other local model waits its turn. With no groups at all, one local model is loaded
-at a time. A model on an external server needs no turn: it never waits and never makes another model wait.
+at a time. A model on an external server takes turns and sits in groups like a local one; the manager only starts and
+stops the servers on this machine, so for an external model the turn is when its calls go out.
 
 How it works. A call that needs a model asks for it (a "want") and holds a "lease" while it runs (thinklog.chat does
 both). The manager, a thread of the web service, looks at the wants and leases every few seconds: when a model outside
@@ -117,8 +118,8 @@ def alive():
 
 
 def managed(model):
-    """True if this model's calls take turns: it is local, has a model file, and the manager is running."""
-    return model in MODELS and not _external(model) and _has_model(model) and alive()
+    """True if this model's calls take turns: it has a model file and the manager is running."""
+    return model in MODELS and _has_model(model) and alive()
 
 
 def _manual_hold(model):
@@ -240,8 +241,7 @@ def _lock():
 @contextmanager
 def lease(model, urgent=False, stop=None):
     """Hold this model's turn while a call runs. Waits (asking for the turn) until the model is loaded in the group that
-    has it. stop(): called while waiting; raise from it to give up (a server switch or stop). Does nothing for a model
-    on an external server, or without the manager."""
+    has it. stop(): called while waiting; raise from it to give up (a server switch or stop). Does nothing without the manager."""
     import applier
     if not managed(model):
         yield
@@ -278,7 +278,7 @@ def holds(model):
 def others_waiting(model):
     """True if a local model outside this model's group is wanted: it should give way after its current work."""
     mine = set(group_of(model))
-    return any(m not in mine and m != model and not _external(m) for m in wants())
+    return any(m not in mine and m != model for m in wants())
 
 
 def others_idle(model):
@@ -286,7 +286,7 @@ def others_idle(model):
     import applier
     counts, w = lease_counts(), wants()
     for m in MODELS:
-        if m == model or _external(m):
+        if m == model:
             continue
         if counts.get(m) or m in w or not applier.idle(m):
             return False
@@ -338,7 +338,7 @@ def step(now=None):
         cfg = config()
         st = active()
         grp = list(st["group"])
-        w = {m: d for m, d in wants(now).items() if not _external(m) and _has_model(m)}
+        w = {m: d for m, d in wants(now).items() if _has_model(m)}
         counts = lease_counts()
         running = [m for m in MODELS if not _external(m) and _running(m)]
         if not grp and running:   # servers already up (after an update or a restart): they are the loaded group
@@ -367,7 +367,7 @@ def step(now=None):
         elif st["draining"]:
             st["draining"] = False
         _set_active(st)
-        start = [m for m in order if m in grp and m not in running]   # wanted members of the loaded group that are not up
+        start = [m for m in order if m in grp and m not in running and not _external(m)]   # wanted members of the loaded group that are not up
     for m in stop:   # outside the lock: stopping a server takes a while, and callers only wait meanwhile
         _stop_unit(m)
         did.append("stop " + m)

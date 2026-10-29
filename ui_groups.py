@@ -1,5 +1,5 @@
 """Settings page, Model groups: which local models may be loaded together. No groups (the default): one local model at a
-time and the others take turns. Models on an external server need no turn and are not part of any group."""
+time and the others take turns. Models on an external server are in groups and take turns like the others."""
 from fastapi import APIRouter, HTTPException, Request
 
 import applier
@@ -21,8 +21,8 @@ def info():
     return {"groups": cfg["groups"], "turn_minutes": cfg["turn_minutes"],
             "models": [{"key": m, "name": turns.NICE[m], "external": _external(m), "has_file": bool(settings.get(m).get("model_file"))}
                        for m in turns.MODELS],
-            "loaded": [m for m in turns.MODELS if not _external(m) and applier._active(m)],
-            "turn": st["group"], "waiting": [m for m in turns.wants() if m not in st["group"] and not _external(m)],
+            "loaded": [m for m in turns.MODELS if (applier.health(m) == "ready" if _external(m) else applier._active(m))],
+            "turn": st["group"], "waiting": [m for m in turns.wants() if m not in st["group"]],
             "manager": turns.alive()}
 
 
@@ -78,7 +78,7 @@ async function save(){
  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
  msg.textContent="Saved."+((j.notes||[]).length?" "+j.notes.join(" "):"");load()}
 $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
- h("div",{class:"mut"},"Local models that are in one group can be loaded at the same time. Any other local model waits its turn: it is loaded when the group that is loaded has nothing to do, or has had its turn for the minutes below. With no groups, one local model is loaded at a time. A model on an external server needs no turn and never waits."),
+ h("div",{class:"mut"},"Local models that are in one group can be loaded at the same time. Any other local model waits its turn: it is loaded when the group that is loaded has nothing to do, or has had its turn for the minutes below. With no groups, one local model is loaded at a time."),
  status,list,
  h("button",{onclick:function(){list.append(groupBox([]))}},"Add group"),
  h("div",{class:"fld",style:"margin-top:8px"},h("label",{},"Minutes a group keeps its turn while others wait (0: give way as soon as it is idle; a chat message from you never waits)"),mins),
