@@ -223,15 +223,15 @@ def chat(model, endpoint, body, label, slot=None):
         power.wait_on(model)   # a model you unloaded or stopped: its calls wait here, local or external
     except Exception:
         pass
-    if external:
-        return _chat_remote(model, body, label)
     import turns
     began = time.time()
 
     def give_up():   # while waiting for its turn: the server was switched or stopped
         if _aborted_since(model, began):
             raise Aborted(f"{model} was switched or stopped")
-    with turns.lease(model, urgent=(label == "chat"), stop=give_up):   # waits for the model's turn (model groups)
+    with turns.lease(model, urgent=(label == "chat"), stop=give_up):   # waits for the model's turn (model groups), local or external
+        if external:
+            return _chat_remote(model, body, label)
         return _chat_local(model, endpoint, body, label, slot)
 
 
