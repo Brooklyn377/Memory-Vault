@@ -72,8 +72,8 @@ idle. Models on different machines never wait for each other. The local model se
 boot; the turn manager (in the web service) starts and stops them.
 
 Under **Settings → Model groups**, **Add group** and tick the models that may work at the same time (for example Sweeper
-and Reviewer, if memory holds both). A group is only a list: a model can be in several groups, and two models can work
-together when some group lists both. When several models want the same hardware, the **Assistant goes first, then the
+and Reviewer, if memory holds both). A group is only a list: a model can be in several groups, and the models working at
+the same time on one machine must all be in one group. When several models want the same hardware, the **Assistant goes first, then the
 Reviewer, the Sweeper and the Curator**.
 
 - **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page

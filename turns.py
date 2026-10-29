@@ -1,8 +1,8 @@
 """Which models may work at the same time, and whose turn it is.
 
 Models that run on the same hardware (this machine, or one external server) work one at a time, unless a group lists
-them together: a group is a list of models that may work at the same time, and a model may be in several groups. Two
-models that no group lists together take turns. Models on different hardware never wait for each other. When several
+them together: a group is a list of models that may work at the same time, and a model may be in several groups. The
+models working at one time on the same hardware must all be in one group; the rest take turns. Models on different hardware never wait for each other. When several
 want the same hardware, the Assistant goes first, then the Reviewer, the Sweeper and the Curator.
 
 How it works. A call that needs a model asks for it (a "want") and holds a "lease" while it runs (thinklog.chat does
@@ -98,6 +98,17 @@ def hardware(model):
 
 def together(a, b):
     return any(a in g["models"] and b in g["models"] for g in config()["groups"])
+
+
+def blockers(model, loaded):
+    """The loaded models on the same hardware that must finish before this one can work: the models that working
+    together would need a group for. Models working at one time must all be in one group, so the group that this model
+    is in and that holds most of the loaded ones is the one it joins; the rest are in its way. [] means it fits."""
+    same = [x for x in loaded if x != model and hardware(x) == hardware(model)]
+    if not same:
+        return []
+    best = max((g["models"] for g in config()["groups"] if model in g["models"]), key=lambda g: sum(x in g for x in same), default=[])
+    return [x for x in same if x not in best]
 
 
 def conflict(a, b):
@@ -382,11 +393,12 @@ def step(now=None):
             did.append("adopt " + "+".join(loaded))
         # who goes first: you (a chat message, a model loaded by hand), then the Assistant, Reviewer, Sweeper, Curator
         order = sorted(w, key=lambda m: (not (w[m]["urgent"] or m == "pa"), PRIORITY.index(m), w[m]["at"]))
+        in_the_way = set()
         waiting = []   # wanted models that had to wait: a lower one may not slip in front of them
         for m in order:
             if m in loaded:
                 continue
-            block = [x for x in loaded if conflict(m, x)]
+            block = blockers(m, loaded)
             if not block:
                 if not any(conflict(m, b) for b in waiting):
                     loaded.append(m)
@@ -396,6 +408,7 @@ def step(now=None):
                     waiting.append(m)
                 continue
             waiting.append(m)
+            in_the_way |= set(block)
             first = w[m]["urgent"] or m == "pa"
 
             def can_go(x):
@@ -416,7 +429,7 @@ def step(now=None):
                     since[m] = now
                     waiting.remove(m)
                     did.append("switch to " + m)
-        drain = {x for x in drain if x in loaded and any(conflict(m, x) for m in waiting)}
+        drain = {x for x in drain if x in loaded and x in in_the_way}
         _set_active({"group": loaded, "since": since, "draining": sorted(drain)})
         stop = [m for m in stop if m in running]   # only a server on this machine is stopped
         start = [m for m in order if m in loaded and m not in running and not _external(m)]   # wanted ones that are not up

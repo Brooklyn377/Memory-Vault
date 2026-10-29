@@ -78,7 +78,7 @@ async function save(){
  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
  msg.textContent="Saved."+((j.notes||[]).length?" "+j.notes.join(" "):"");load()}
 $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
- h("div",{class:"mut"},"A group is a list of models that can work at the same time. A model can be in several groups. Two models on the same machine (or the same external server) that no group lists together take turns: the Assistant goes first, then the Reviewer, the Sweeper and the Curator. Models on different machines never wait for each other."),
+ h("div",{class:"mut"},"A group is a list of models that can work at the same time. A model can be in several groups. The models working at the same time on one machine (or one external server) must all be in one group, the others take turns: the Assistant goes first, then the Reviewer, the Sweeper and the Curator. Models on different machines never wait for each other."),
  status,list,
  h("button",{onclick:function(){list.append(groupBox([]))}},"Add group"),
  h("div",{class:"fld",style:"margin-top:8px"},h("label",{},"Minutes a group keeps its turn while others wait (0: give way as soon as it is idle; a chat message from you never waits)"),mins),
