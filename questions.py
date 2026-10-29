@@ -24,7 +24,7 @@ MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 MAX_ANSWER = 4000
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
-KEEP = ("filecheck", "curatecheck", "assistant", "gitpull", "serverfail", "job")
+KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job")
 
 
 def _path(qid):
@@ -82,6 +82,9 @@ def dismiss(qid):
     elif q["kind"] == "curatecheck":
         import curator
         curator.decide(q["payload"]["rel"], "skip")
+    elif q["kind"] == "reviewstuck":
+        import reviewgate
+        reviewgate.decide_stuck(q["payload"]["key"], "skip")
     _save(q)
 
 
@@ -117,6 +120,11 @@ def answer(qid, text):
             raise ValueError("unknown answer")
         import curator
         curator.decide(q["payload"]["rel"], text)
+    elif q["kind"] == "reviewstuck":
+        if text not in ("retry", "skip"):
+            raise ValueError("unknown answer")
+        import reviewgate
+        reviewgate.decide_stuck(q["payload"]["key"], text)
     elif q["kind"] in ("gitpull", "assistant", "serverfail"):   # notices: answering only acknowledges them
         pass
     elif q["kind"] == "job":

@@ -31,6 +31,13 @@ def _curator():
     return out
 
 
+def _reviews():
+    import reviewgate
+    return [{"source": "review", "key": k, "what": f"Review: {str(e.get('rel', '')).split('/')[-1][:60]}",
+             "why": f"the Reviewer gave no usable answer {e.get('unusable', 0)} times", "at": ""}
+            for k, e in reviewgate._entries() if e.get("stuck")]
+
+
 def _jobs():
     import jobs
     return [{"source": "job", "key": j["id"], "what": f"Job: {j['kind']} {j.get('target') or ''}".strip(), "why": j.get("error", ""),
@@ -43,8 +50,8 @@ def _chat():
             for m in ui_chat._all() if m["status"] == "error"]
 
 
-SOURCES = {"file": _filechecks, "curator": _curator, "job": _jobs, "chat": _chat}
-CARD = {"file": ("filecheck", "name"), "curator": ("curatecheck", "rel")}
+SOURCES = {"file": _filechecks, "curator": _curator, "review": _reviews, "job": _jobs, "chat": _chat}
+CARD = {"file": ("filecheck", "name"), "curator": ("curatecheck", "rel"), "review": ("reviewstuck", "key")}
 
 
 def listing():
@@ -80,6 +87,9 @@ def act(source, key, action):
     elif source == "curator":
         import curator
         curator.decide(key, action)
+    elif source == "review":
+        import reviewgate
+        reviewgate.decide_stuck(key, action)
     elif source == "job":
         import jobs
         jobs.requeue(key) if action == "retry" else jobs.drop(key)

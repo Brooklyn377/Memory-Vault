@@ -160,9 +160,25 @@ def one_pass():
     return process_updates() + scan()
 
 
+def _review_loop():
+    """Reviews the Sweeper's parked chunks one after another, apart from the worker's other jobs, so the Sweeper never
+    waits for a verdict: it goes on with other conversations and comes back when one is in."""
+    import reviewgate
+    while True:
+        try:
+            n = reviewgate.review_next()
+        except Exception as e:
+            agent.log(f"reviewer: review failed: {type(e).__name__}: {str(e)[:100]}")
+            n = 0
+        if not n:
+            time.sleep(10)
+
+
 def watch():
+    import threading
     import jobs
     agent.log("reviewer worker started")
+    threading.Thread(target=_review_loop, daemon=True).start()
     jobs.interrupted("gpt")
     while True:
         if not ready():

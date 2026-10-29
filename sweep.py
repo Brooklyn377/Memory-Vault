@@ -411,8 +411,22 @@ def one_pass():
     sync_merges(st, merges)
     hygiene.queue()
     work, complete = revisit(st, merges), True
-    for p in sorted(CONV_DIR.glob("*.md")):  # filenames start with the date: oldest first
-        rel = p.relative_to(VAULT).as_posix()
+    todo = [p.relative_to(VAULT).as_posix() for p in sorted(CONV_DIR.glob("*.md"))]  # filenames start with the date: oldest first
+    known = set(todo)
+    for rel, key in reviewgate.ready_docs():
+        if rel not in known:   # a conversation that is gone: its verdict is not waited for
+            reviewgate.mark_seen(key)
+    while todo:
+        # A conversation whose chunk waited for the Reviewer goes first the moment the verdict is in, so it is the next
+        # thing worked on. The others go in date order. A verdict is picked up once, however the pass goes.
+        jump = next(((r, k) for r, k in reviewgate.ready_docs() if r in known), None)
+        if jump:
+            reviewgate.mark_seen(jump[1])
+            rel = jump[0]
+            if rel in todo:
+                todo.remove(rel)
+        else:
+            rel = todo.pop(0)
         w, ok = process_doc(rel, st, merges)
         work += w
         complete &= ok
@@ -474,14 +488,14 @@ def fingerprint():
 
 
 def wait_for_news(before, poll=20, longest=3600):
-    """Sleep until a chat is imported or changed, an answer arrives, or parked updates can be judged."""
+    """Sleep until a chat is imported or changed, an answer arrives, or a parked update has been reviewed."""
     waited = 0
     while waited < longest:
         time.sleep(poll)
         waited += poll
         if fingerprint() != before:
             return
-        if reviewgate.waiting() and reviewgate.reviewer.ready():
+        if reviewgate.ready_docs():   # a review finished: that conversation goes on
             return
 
 

@@ -16,7 +16,7 @@ KINDS = ("vault", "fact", "task", "link", "review", "prune", "file", "ask", "cha
          "import", "problem", "system", "call")
 CALL_WHO = {"qwen": "sweeper", "gpt": "reviewer", "cur": "curator", "pa": "assistant"}
 ASK_WHO = {"hygiene": "sweeper", "free": "sweeper", "merge": "system", "filecheck": "reviewer",
-           "inboxcheck": "system", "curate": "curator", "curatecheck": "curator", "assistant": "assistant", "gitpull": "system", "serverfail": "system",
+           "inboxcheck": "system", "curate": "curator", "curatecheck": "curator", "assistant": "assistant", "gitpull": "system", "serverfail": "system", "reviewstuck": "reviewer",
            "job": "assistant"}
 LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (.*)$")
 ERR = re.compile(r"\b(error|failed|unusable|could not|parked)\b", re.I)

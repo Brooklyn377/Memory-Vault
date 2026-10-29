@@ -136,9 +136,12 @@ def reviewer_next():
         if m.get("status") in ("queued", "working"):
             items.append({"text": "Chat: " + " ".join(str(m.get("text", "")).split())[:70], "sub": "message " + m["status"]})
     rq = STATE / "review_queue"
-    parked = list(rq.glob("*.json")) if rq.is_dir() else []
-    if parked:
-        items.append({"text": f"{len(parked)} chunk update(s) from the Sweeper", "sub": "parked until the Reviewer is free"})
+    parked = [jread(p, {}) for p in rq.glob("*.json")] if rq.is_dir() else []
+    todo_rev = [e for e in parked if not e.get("verdict") and not e.get("stuck")]
+    if todo_rev:
+        items.append({"text": f"{len(todo_rev)} chunk update(s) from the Sweeper", "sub": "waiting for the Reviewer; the Sweeper works on other chats meanwhile"})
+    if any(e.get("verdict") for e in parked):
+        items.append({"text": f"{sum(1 for e in parked if e.get('verdict'))} reviewed chunk update(s)", "sub": "the Sweeper picks these chats up next"})
     for t in todo.pending():
         items.append({"text": "To-do: " + t["title"], "sub": "your update is waiting to be read"})
     scanned = jread(STATE / "todo_scanned.json", {})
