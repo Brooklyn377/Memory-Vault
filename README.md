@@ -118,25 +118,40 @@ while running, so those stay as that machine started them, and the card only kee
 checks. To set them from the card, run the model runner next to llama-server on that machine. It is one Python file,
 `model_runner.py` (in this repository), that needs only Python 3.8 or newer, on Linux, Windows or macOS.
 
-1. Copy `model_runner.py` to that machine, next to where you keep it.
-2. Set it up once. This writes `model_runner.json` next to the script and prints a token, once:
-   ```bash
-   python3 model_runner.py --setup --llama /path/to/llama-server --models /path/to/models
-   ```
-   Options: `--port` (the runner's port, default 8090), `--llama-port` (llama-server's port, default 8080),
-   `--listen` (default `0.0.0.0`). On Windows, use `python` and the path to `llama-server.exe`.
-3. Stop any llama-server you started yourself on that port: the runner starts its own.
-4. Run it: `python3 model_runner.py`. To keep it running, make it a service (systemd on Linux, a scheduled task
-   at log-on on Windows). Its llama-server output goes to `model_runner-llama.log` next to the script.
-5. On the model's card: Where it runs = External server, Server address = `http://<that machine>:8080`, Runner
-   address = `http://<that machine>:8090`, Runner token = the token from step 2. Press Apply all.
+1. Copy `model_runner.py` to that machine.
+2. Set it up once, in one of two ways. Both write `model_runner.json` next to the script and print a token, once.
+   - **llama-server in a container** (Podman or Docker, for example the `ghcr.io/ggml-org/llama.cpp:server-*`
+     images). Start it once the way you like, then let the runner adopt it by its container name:
+     ```bash
+     python3 model_runner.py --setup --adopt llama            # add --engine docker for Docker
+     ```
+     The runner reads the container's image, models folder, port, GPU devices, security options, restart policy
+     and command. The container keeps running untouched. Later, Apply all recreates it with the same image,
+     folders, port and GPU access, replacing only the model, context, threads, slots and the flags set on the card;
+     everything else in its command (such as `--jinja` and `--api-key`) is kept. To see your containers:
+     `podman ps` (or `docker ps`).
+   - **llama-server as a program on that machine:**
+     ```bash
+     python3 model_runner.py --setup --llama /path/to/llama-server --models /path/to/models
+     ```
+     Stop any llama-server you started yourself on that port: the runner starts its own. On Windows, use `python`
+     and the path to `llama-server.exe`.
+
+   Other options: `--port` (the runner's port, default 8090), `--listen` (default `0.0.0.0`), and without a
+   container `--llama-port` (llama-server's port, default 8080).
+3. Run it: `python3 model_runner.py`. To keep it running, make it a service (a systemd user service on Linux, a
+   scheduled task at log-on on Windows). Stopping the runner stops a llama-server program it started; a container
+   keeps running. The runner's log is `model_runner-llama.log` next to the script (API keys are not written to it).
+4. On the model's card: Where it runs = External server, Server address = `http://<that machine>:8080` (and its API
+   key if llama-server has one), Runner address = `http://<that machine>:8090`, Runner token = the token from step
+   2. Press Apply all.
 
 The card then shows that machine's model files, and Model file, Context, Threads, Parallel slots and the server
-flags (including GPU layers) apply there: Apply all restarts its llama-server with them. If llama-server does not
-come up, the runner puts the previous settings back, and an Ask card shows llama-server's last lines. Hold to stop /
-Hold to start stops and starts that llama-server. Every request to the runner needs the token. Only model files in
-its models folder can be used, a flag is passed only if that llama-server's own `--help` lists it, and nothing goes
-through a shell. Keep the runner's port on your local network.
+flags (including GPU layers) apply there: Apply all restarts its llama-server with them. If it does not come up,
+the runner puts the previous settings back, and an Ask card shows llama-server's last lines. Hold to stop / Hold to
+start stops and starts that llama-server. Every request to the runner needs the token. Only model files in its
+models folder can be used, a flag is passed only if that llama-server's own `--help` lists it, and only the
+configured program or container engine is run, never through a shell. Keep the runner's port on your local network.
 
 ## Security notes
 - The web page is plain HTTP on port 8000. Keep it on your local network, or put a reverse proxy with HTTPS
