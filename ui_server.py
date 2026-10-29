@@ -329,7 +329,7 @@ window.applyAll=async()=>{
   when=await ask3("This restarts the "+need.join(" and ")+" server. Anything running there is cut off. Every other unsaved or queued change on this page is applied too.");
   if(!when)return}
  const r=await post("/api/settings/apply_all",{models:body.models,servers:body.servers,when:when});
- if(r.ok)dirty=false;
+ if(r.ok){dirty=false;if(window.offerRetry)window.offerRetry()}
  else window.warnPop("Could not apply",[r.detail||"Could not apply"]);
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
  if(r.ok)for(const m of IDS){const e=E[m];if(e&&e.rn&&e.where.value==="remote"&&e.rn.value!==e.rn0){e.rn0=e.rn.value;

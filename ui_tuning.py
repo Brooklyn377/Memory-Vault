@@ -54,7 +54,8 @@ function build(m,items){
    if(await window.warnPop("These limits may not be safe",j.confirm,"Save anyway"))return save(vals,true);
    msg.textContent="Not saved.";return}
   if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
-  msg.textContent="Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):"")}
+  msg.textContent="Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):"");
+  if(window.offerRetry)window.offerRetry()}
  function values(){const o={};for(const k in inp)o[k]=inp[k].value;return o}
  const d=h("details",{class:"sec"},h("summary",{},"Limits and guardrails"),...rows,
   h("div",{class:"mut",style:"margin-top:6px"},"A blank box uses the default; -1 turns a limit off. These are separate from Apply all: they save here and never restart a model server."),

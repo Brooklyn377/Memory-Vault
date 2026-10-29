@@ -167,6 +167,15 @@ def _idle():
         return False
 
 
+RESCAN = agent.STATE / "file_rescan"
+
+
+def rescan():
+    """Go over every file again on the next pass (Retry all): files whose earlier read failed before failures were
+    set aside still have their chats unread, so they are read again."""
+    RESCAN.write_text(str(datetime.now()))
+
+
 def _sig():
     chats = list((VAULT / "raw" / "conversations").glob("*.md"))
     orig = list(ORIG.glob("*/*"))
@@ -176,7 +185,8 @@ def _sig():
         newest = f"{newest}:{applier._pid('gpt')}"
     except Exception:
         pass
-    return f"{len(chats)}:{len(orig)}:{newest}:{len(list(QUEUE.glob('*.json'))) if QUEUE.is_dir() else 0}"
+    rescan_at = RESCAN.stat().st_mtime if RESCAN.exists() else 0
+    return f"{len(chats)}:{len(orig)}:{newest}:{len(list(QUEUE.glob('*.json'))) if QUEUE.is_dir() else 0}:{rescan_at}"
 
 
 def watch():
@@ -193,8 +203,8 @@ def watch():
                 time.sleep(30)
             try:
                 r = process(n)
-            except Exception as e:
-                r = f"error {type(e).__name__}"
+            except Exception as e:   # set aside with an Ask card and on the Failed list, so it is never forgotten
+                r = park(n, [], f"error {type(e).__name__}: {str(e)[:150]}")
             if r not in ("nothing new to read", "no saved original"):
                 agent.log(f"file changes: {n}: {r}")
         seen = sig

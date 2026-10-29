@@ -25,6 +25,8 @@ NOT_SAME = STATE / "not_same.json"
 MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 MAX_ANSWER = 4000
+# Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
+KEEP = ("filecheck", "curatecheck", "inboxcheck", "assistant", "gitpull", "serverfail", "job")
 
 
 def _path(qid):
@@ -42,8 +44,8 @@ def ask(question, why="", kind="free", options=None, payload=None):
     QDIR.mkdir(parents=True, exist_ok=True)
     if _path(qid).exists():
         return qid  # already asked (open, answered or dismissed): do not nag
-    if len(list_questions("open")) >= MAX_OPEN:
-        return None
+    if len(list_questions("open")) >= MAX_OPEN and kind not in KEEP:
+        return None   # a full queue drops new questions, never a failure or a result waiting for you
     _path(qid).write_text(json.dumps({
         "id": qid, "created": datetime.now().isoformat(timespec="seconds"), "status": "open",
         "kind": kind, "question": question, "why": str(why)[:500],

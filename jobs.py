@@ -111,6 +111,15 @@ def requeue(jid):
     _save(j)
 
 
+def drop(jid):
+    """Skip a failed job: it stays listed as skipped and is not run."""
+    j = get(jid)
+    if not j or j["status"] != "failed":
+        raise ValueError("only a failed job can be skipped")
+    j["status"] = "skipped"
+    _save(j)
+
+
 def decide(jid, ok):
     """Your answer on a finished job's Ask card. Approve files note jobs to the inbox; a draft is only marked."""
     j = get(jid)

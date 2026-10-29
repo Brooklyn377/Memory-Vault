@@ -248,6 +248,16 @@ def handle(m, who="gpt"):
         m["confirm"] = "pending"
 
 
+def drop(mid):
+    """Skip a failed message: it stays in the chat, marked skipped, and is not answered."""
+    m = _load(mid)
+    if not m or m["status"] != "error":
+        raise ValueError("only a failed message can be skipped")
+    m["status"] = "skipped"
+    _save(m)
+    return m
+
+
 def retry(mid):
     """Send a failed message again: your choice, never a timer."""
     m = _load(mid)
@@ -368,7 +378,7 @@ CHAT_HTML = r"""
 <div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
 <button class="pri" id="cs">Send</button><span id="ce" class="mut"></span></div>
 <script>
-const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed"};
+const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed",skipped:"Skipped"};
 let seen=-1;
 function bubble(m){
  const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];

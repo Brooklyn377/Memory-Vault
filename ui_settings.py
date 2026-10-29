@@ -185,13 +185,19 @@ const LAB={sweep:"Sweep",ask:"Ask",review:"Review",chat:"Chat",curate:"Curate"};
 function num(v,step){const e=h("input",{type:"number"});e.value=v;if(step)e.step=step;return e}
 function fld(label,el,off){return h("div",{class:"fld"+(off?" off":"")},h("label",{},label),el)}
 // Warning popup listing settings that may not be safe. With a yes label it asks (true: go ahead); without, it informs.
-window.warnPop=function(title,items,yes){return new Promise(res=>{
+window.warnPop=function(title,items,yes,no){return new Promise(res=>{
  const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
  const done=v=>{ov.remove();res(v)};
- const btns=yes?[h("button",{class:"pri",onclick:()=>done(true)},yes),h("button",{onclick:()=>done(false)},"Go back")]:[h("button",{class:"pri",onclick:()=>done(true)},"OK")];
+ const btns=yes?[h("button",{class:"pri",onclick:()=>done(true)},yes),h("button",{onclick:()=>done(false)},no||"Go back")]:[h("button",{class:"pri",onclick:()=>done(true)},"OK")];
  ov.append(h("div",{class:"card",style:"max-width:520px;width:100%;max-height:90vh;overflow:auto"},h("h3",{},"⚠ "+title),
   h("ul",{style:"margin:0 0 12px;padding-left:18px"},...items.map(t=>h("li",{class:"mut",style:"margin-bottom:6px"},t))),...btns));
  document.body.append(ov)})};
+// After a settings change: tasks that failed earlier (often because a limit was too small) can go again now.
+window.offerRetry=async function(){try{
+ const d=await api("/api/failed");if(!d.items.length)return;
+ const list=d.items.slice(0,10).map(x=>x.what+(x.why?": "+x.why:""));if(d.items.length>10)list.push("and "+(d.items.length-10)+" more");
+ if(await window.warnPop(d.items.length+(d.items.length===1?" failed task is":" failed tasks are")+" waiting. Retry them with the new settings?",list,"Retry all now","Not now"))
+  await fetch("/api/failed/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({all:true})})}catch(e){}};
 function card(m,s,cp){
  const t=num(s.temperature,"0.05"),mt={};
  const rows=Object.keys(s.max_tokens).map(k=>{mt[k]=num(s.max_tokens[k]);return fld((LAB[k]||k)+" max tokens",mt[k],false)});

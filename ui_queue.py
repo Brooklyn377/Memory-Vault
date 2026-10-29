@@ -61,6 +61,27 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         return queuestate.snapshot()
 
+    @router.get("/api/failed")
+    def failed(request: Request):
+        if not authed(request):
+            raise HTTPException(status_code=401, detail="login required")
+        import failures
+        return {"items": failures.listing()}
+
+    @router.post("/api/failed/act")
+    async def failed_act(request: Request):
+        if not authed(request):
+            raise HTTPException(status_code=401, detail="login required")
+        import failures
+        d = await request.json()
+        try:
+            if d.get("all"):
+                return {"ok": True, "retried": failures.retry_all()}
+            failures.act(str(d.get("source", "")), str(d.get("key", "")), d.get("action"))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
     @router.get("/api/jobs")
     def job_list(request: Request):
         if not authed(request):
@@ -156,6 +177,21 @@ function render(){
 async function load(){try{D=await api("/api/queue");render()}catch(e){}}
 load();setInterval(function(){if(!document.hidden)load()},5000);
 setInterval(function(){if(!document.hidden)render()},2000);
+})();
+</script>
+<div id="fq"></div>
+<script>
+(function(){
+async function act(body){const r=await fetch("/api/failed/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+ const j=await r.json().catch(function(){return{}});if(!r.ok)window.alert(j.detail||"Could not do that");load();return j}
+async function load(){try{const d=await api("/api/failed");
+ const rows=d.items.map(function(x){return h("div",{class:"qr"},h("div",{},x.what),h("div",{class:"mut qs"},(x.why||"")+(x.at?" · "+x.at:"")),
+  h("button",{class:"pri",onclick:function(){act({source:x.source,key:x.key,action:"retry"})}},"Retry"),
+  h("button",{onclick:function(){act({source:x.source,key:x.key,action:"skip"})}},"Skip"))});
+ $("#fq").replaceChildren(h("div",{class:"card"},h("h3",{},"Failed, waiting for you"+(d.items.length?" ("+d.items.length+")":"")),
+  d.items.length?h("div",{class:"mut"},"Nothing here retries by itself. Retry all also has the file checker go over every file again."):h("div",{class:"mut"},"Nothing failed. Retry all still has the file checker go over every file again."),
+  h("button",{class:"pri",onclick:async function(){const j=await act({all:true});if(j&&j.ok)window.alert("Queued again: "+j.retried+(j.retried===1?" task":" tasks")+", and every file is read again.")}},"Retry all"),...rows))}catch(e){}}
+load();setInterval(function(){if(!document.hidden)load()},10000);
 })();
 </script>
 <div id="jq"></div>
