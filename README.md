@@ -45,6 +45,8 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 | `--cores N`, `--memory MB` | container size |
 | `--bridge NAME`, `--ip CIDR`, `--gw ADDR` | network (default: `vmbr0`, DHCP) |
 | `--dns ADDR` | DNS server, or `host` for the Proxmox host's (default: the gateway with a fixed address) |
+| `--gpu cpu\|DEVICE` | run the local models on the CPU (default) or on a host GPU through Vulkan |
+| `--add-gpu CTID` | pass a GPU into an existing container and switch its models to it |
 | `--sweeper-url`, `--reviewer-url`, `--curator-url` | model download links |
 | `--small` | one tiny test model for all three, small container |
 | `--no-models` | install without models |
@@ -123,6 +125,22 @@ A fourth model you chat with. It is off until you turn it on: on its card on the
   read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
   `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is pushed except a change you
   approved on an Ask card, and only to a server marked read and write.
+
+## Optional: a GPU in the container
+The local models run on the CPU by default. To run them on a GPU of the Proxmox host instead (through Vulkan: AMD,
+Intel or NVIDIA), the GPU has to be passed into the container. That needs Proxmox VE 8.1 or newer.
+
+- **New install:** the installer asks "Run the local models on" when the host has a GPU (or use `--gpu
+  /dev/dri/renderD128`). CPU stays the default.
+- **Existing container:** on the Proxmox host, run
+  ```bash
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)" _ --add-gpu <container ID>
+  ```
+  It asks which GPU, passes it in, restarts the container, and switches its local models to the GPU.
+- **Settings → Hardware** shows whether the models run on the CPU or the GPU and which GPU the container sees, with
+  a button to switch either way. A switch rebuilds llama.cpp (this takes a while), then restarts the model servers;
+  if the build fails, nothing changes. On the GPU each model puts all its layers there unless GPU layers is set under
+  its Advanced server flags, and the GPU's memory is what limits the context.
 
 ## Optional: a model on another machine (model runner)
 Any of the four models can run on another machine, for example a PC with a GPU. Set **Where it runs** to

@@ -111,8 +111,20 @@ def check(flags, model_file="", old=None, warn=None, sup=None, models=None):
     return out
 
 
+BACKEND = Path("/etc/memory-agent/backend")   # cpu or vulkan, written by memory-agent-backend
+
+
+def backend():
+    try:
+        return BACKEND.read_text().strip() or "cpu"
+    except OSError:
+        return "cpu"
+
+
 def build(s):
     f, parts = s.get("flags") or {}, []
+    if backend() == "vulkan" and f.get("gpu_layers") in (None, ""):
+        f = dict(f, gpu_layers=999)   # on the GPU, all layers on it unless GPU layers is set on the card
     for sp in SPEC:
         v = f.get(sp["key"])
         if (v is None or v == "") and sp.get("default") and sp["flag"] in supported():

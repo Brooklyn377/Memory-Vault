@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Runs the local models on the CPU or on a GPU (Vulkan) in this container: installs what the backend needs and
+# rebuilds llama-server for it, then restarts the model servers that are running.
+#   memory-agent-backend vulkan     GPU through Vulkan (AMD, Intel, NVIDIA): the GPU must be passed into this
+#                                   container first (on the Proxmox host: install.sh --add-gpu CTID)
+#   memory-agent-backend cpu        back to the CPU
+#   memory-agent-backend --status   the backend in use and the GPUs this container can see
+# The new llama-server is built beside the current one and swapped in only if the build works, so a failed build
+# changes nothing. The choice is kept in /etc/memory-agent/backend, which the installer and updates also follow.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+LLAMA=/opt/llama.cpp
+CHOICE=/etc/memory-agent/backend
+UNITS=(llama-server memory-reviewer memory-assistant-llm memory-curator-llm)
+
+die() { echo "error: $*" >&2; exit 1; }
+gpus() { ls /dev/dri/renderD* 2>/dev/null || true; }
+
+case "${1:-}" in
+    --status)
+        echo "backend: $(cat "$CHOICE" 2>/dev/null || echo cpu)"
+        if [[ -n "$(gpus)" ]]; then echo "GPU devices: $(gpus | tr '\n' ' ')"; else echo "GPU devices: none"; fi
+        if command -v vulkaninfo >/dev/null; then vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p'; fi
+        exit 0 ;;
+    vulkan|cpu) want="$1" ;;
+    *) echo "usage: memory-agent-backend vulkan|cpu|--status" >&2; exit 2 ;;
+esac
+[[ $EUID -eq 0 ]] || die "run as root"
+[[ -d "$LLAMA/.git" ]] || die "llama.cpp is not at $LLAMA"
+
+opts=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DBUILD_SHARED_LIBS=OFF)
+if [[ "$want" == vulkan ]]; then
+    [[ -n "$(gpus)" ]] || die "this container sees no GPU (/dev/dri/renderD*). On the Proxmox host, run: install.sh --add-gpu <container ID>"
+    echo "== Vulkan packages"
+    apt-get update -q
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+        libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
+    vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
+    opts+=(-DGGML_VULKAN=ON)
+fi
+
+echo "== Building llama-server for: $want (this takes a while)"
+new="$LLAMA/build-$want"
+rm -rf "$new"
+cmake -S "$LLAMA" -B "$new" "${opts[@]}"
+cmake --build "$new" --target llama-server -j "$(nproc)"
+[[ -x "$new/bin/llama-server" ]] || die "the build made no llama-server; nothing was changed"
+
+echo "== Switching to it"
+mkdir -p "$LLAMA/build/bin"
+install -m 755 "$new/bin/llama-server" "$LLAMA/build/bin/llama-server.new"
+mv -f "$LLAMA/build/bin/llama-server.new" "$LLAMA/build/bin/llama-server"
+rm -rf "$new"
+printf '%s\n' "$want" > "$CHOICE.tmp" && mv "$CHOICE.tmp" "$CHOICE"
+# The model servers' settings files again, now with this backend's defaults (on a GPU: all layers on it).
+(cd /opt/memory-agent && ./venv/bin/python -c 'import applier, settings
+for m in applier.ENV:
+    applier.write_env(m, settings.get(m))')
+
+mapfile -t running < <(for u in "${UNITS[@]}"; do systemctl is-active --quiet "$u" && echo "$u"; done)
+if (( ${#running[@]} )); then
+    echo "== Restarting ${running[*]}"
+    systemctl restart "${running[@]}"
+fi
+echo "done: the local models now run on the $([[ $want == vulkan ]] && echo GPU \(Vulkan\) || echo CPU)"

@@ -15,6 +15,7 @@ DEF_CURATOR="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF/resolve/main/LF
 
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
 BRIDGE=""; IP=""; GW=""; DNS=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0; PLAIN=0
+GPU=""; ADDGPU=""
 SWEEPER_URL=""; REVIEWER_URL=""; CURATOR_URL=""
 
 usage() {
@@ -34,6 +35,8 @@ Container
   --gw ADDRESS          gateway, needed with a fixed address
   --dns ADDRESS         DNS server, or "host" for the Proxmox host's (default: the gateway with a fixed
                         address, otherwise host)
+  --gpu cpu|DEVICE      run the local models on the CPU (default) or on this host's GPU through Vulkan, e.g.
+                        --gpu /dev/dri/renderD128; the device is passed into the container (Proxmox VE 8.1+)
 
 Models (.gguf download links, e.g. Hugging Face "resolve" links)
   --sweeper-url URL     main model, reads chats (default: Qwen3.5-9B Q4_K_M)
@@ -44,6 +47,8 @@ Models (.gguf download links, e.g. Hugging Face "resolve" links)
 
 Other
   --update CTID         update the code in an existing container; config, login and data are kept
+  --add-gpu CTID        pass a GPU of this host into an existing container and switch its local models to it
+                        (asks which GPU; --gpu DEVICE to say it)
   --llama-ref REF       llama.cpp branch or tag to build (default: its newest code)
   --repo OWNER/NAME     where to download the code (default: $REPO)
   --ref REF             branch or tag of the code (default: $REF)
@@ -66,6 +71,8 @@ while [[ $# -gt 0 ]]; do
         --ip) IP="$2"; shift ;;
         --gw) GW="$2"; shift ;;
         --dns) DNS="$2"; shift ;;
+        --gpu) GPU="$2"; shift ;;
+        --add-gpu) ADDGPU="$2"; shift ;;
         --sweeper-url) SWEEPER_URL="$2"; shift ;;
         --reviewer-url) REVIEWER_URL="$2"; shift ;;
         --curator-url) CURATOR_URL="$2"; shift ;;
@@ -233,12 +240,51 @@ remote_size() {
     n="$(curl -fsIL --max-time 20 "$1" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="content-length:"{n=$2} END{print n}')"
     if [[ -n "$n" ]]; then awk -v n="$n" 'BEGIN{printf "%.1f GB", n/1e9}'; else echo "? GB"; fi
 }
+# gpu_choices: name, description pairs for choose: cpu, then each GPU render device of this host with its PCI name.
+gpu_choices() {
+    local n dev pci
+    printf '%s\n%s\n' cpu "CPU only"
+    for n in /dev/dri/renderD*; do
+        [[ -e "$n" ]] || continue
+        pci="$(basename "$(readlink -f "/sys/class/drm/$(basename "$n")/device")" 2>/dev/null)"
+        dev="$(have lspci && lspci -s "$pci" 2>/dev/null | cut -d' ' -f2- | cut -c1-50)"
+        printf '%s\n%s\n' "$n" "GPU: ${dev:-$pci}"
+    done
+}
+valid_gpu() { [[ "$1" == cpu || ( "$1" =~ ^/dev/dri/renderD[0-9]+$ && -e "$1" ) ]] && return 0; echo "cpu, or a GPU device such as /dev/dri/renderD128"; return 1; }
+# pass_gpu CTID DEVICE: the device into the container at the next free devN, readable by its services.
+pass_gpu() {
+    local i=0
+    while (( ! DRY )) && pct config "$1" | grep -q "^dev$i:"; do i=$((i + 1)); done
+    run pct set "$1" --"dev$i" "$2,mode=0666"
+}
 
 [[ $EUID -eq 0 ]] || (( DRY )) || die "run as root on the Proxmox host"
 if ! (( DRY )); then
     have pct || die "pct not found: this must run on a Proxmox VE host"
 fi
 have curl || die "curl is needed"
+
+# --- --add-gpu: an existing container gets a GPU and its local models move to it ----------------------------------
+if [[ -n "$ADDGPU" ]]; then
+    mapfile -t gc < <(gpu_choices)
+    (( ${#gc[@]} > 2 )) || die "this host has no GPU render device (/dev/dri/renderD*)"
+    [[ "$GPU" == cpu ]] && GPU=""
+    choose GPU "GPU to pass into container $ADDGPU" "${gc[2]}" "${gc[@]:2}"
+    restore_screen
+    say "Passing $GPU into container $ADDGPU"
+    pass_gpu "$ADDGPU" "$GPU"
+    run pct reboot "$ADDGPU"
+    if ! (( DRY )); then
+        for _ in $(seq 60); do pct exec "$ADDGPU" -- true >/dev/null 2>&1 && break; sleep 2; done
+        pct exec "$ADDGPU" -- test -x /usr/local/bin/memory-agent-backend \
+            || die "the container's code is too old for this: update it first (Settings > Updates), then run this again"
+    fi
+    say "Switching its local models to the GPU (building llama.cpp for Vulkan takes a while)"
+    run pct exec "$ADDGPU" -- /usr/local/bin/memory-agent-backend vulkan
+    say "Done: the local models of container $ADDGPU run on the GPU. Settings > Hardware shows it."
+    exit 0
+fi
 
 # --- the code: from this checkout when run from one, otherwise downloaded --------------------------------
 WORK="$(mktemp -d)"
@@ -300,6 +346,12 @@ else
     [[ "$IP" != dhcp ]] && ask GW "Gateway for $IP" "" valid_gw
     ask DNS "DNS server: an address (several separated by spaces), or host for the Proxmox host's" \
         "${GW:-host}" valid_dns
+    mapfile -t gc < <(gpu_choices)
+    if (( ${#gc[@]} > 2 )); then   # this host has a GPU: CPU stays the default
+        choose GPU "Run the local models on" cpu "${gc[@]}"
+    else
+        ask GPU "Run the local models on" cpu valid_gpu
+    fi
 
     say "Models"
     if (( SMALL )); then
@@ -334,7 +386,8 @@ else
 Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
 $CORES cores, $MEMORY MB memory, $DISK GB disk
 Bridge $BRIDGE, address $IP${GW:+, gateway $GW}, DNS $DNS
-Models:$models" 18 76 >/dev/null
+Local models on: $([[ $GPU == cpu ]] && echo CPU || echo "GPU $GPU (Vulkan)")
+Models:$models" 19 76 >/dev/null
         exec 1>&4 4>&-
         restore_screen
         cat "$WORK/answers.txt"
@@ -362,6 +415,10 @@ Models:$models" 18 76 >/dev/null
         --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 --features nesting=1 \
         --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
         --net0 "$net" "${dns[@]}" --onboot 1 --start 1
+    if [[ "$GPU" != cpu ]]; then   # the GPU into the container, then a restart so it appears there
+        pass_gpu "$CTID" "$GPU"
+        run pct reboot "$CTID"
+    fi
 fi
 
 if ! (( DRY )); then
@@ -383,6 +440,7 @@ args=(--src /root/memory-agent-src --version "$VERSION" --repo "$REPO" --ref "$R
 [[ -n "$UPDATE" ]] && args+=(--update)
 (( SMALL )) && args+=(--small)
 [[ -n "$LLAMA_REF" ]] && args+=(--llama-ref "$LLAMA_REF")
+[[ -n "$GPU" && "$GPU" != cpu ]] && args+=(--gpu vulkan)
 [[ -n "$SWEEPER_URL" ]] && args+=(--sweeper-url "$SWEEPER_URL")
 [[ -n "$REVIEWER_URL" ]] && args+=(--reviewer-url "$REVIEWER_URL")
 [[ -n "$CURATOR_URL" ]] && args+=(--curator-url "$CURATOR_URL")

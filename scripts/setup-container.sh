@@ -6,7 +6,7 @@
 # config, login, settings, models and the vault are kept.
 set -euo pipefail
 
-SRC=""; UPDATE=0; DRY=0; SMALL=0; LLAMA_REF=""; VERSION=""; REPO=""; REF=""
+SRC=""; UPDATE=0; DRY=0; SMALL=0; LLAMA_REF=""; VERSION=""; REPO=""; REF=""; GPU=""
 declare -A URL=([qwen]="" [gpt]="" [cur]="")
 
 APP=/opt/memory-agent
@@ -27,7 +27,7 @@ ENABLE=(llama-server memory-reviewer memory-web memory-importer memory-journal m
 usage() {
     cat <<EOF
 setup-container.sh --src DIR [--update] [--small] [--llama-ref REF] [--version SHA] [--repo OWNER/NAME --ref REF]
-                   [--sweeper-url URL] [--reviewer-url URL] [--curator-url URL] [--dry-run]
+                   [--sweeper-url URL] [--reviewer-url URL] [--curator-url URL] [--gpu vulkan] [--dry-run]
 EOF
 }
 
@@ -37,6 +37,7 @@ while [[ $# -gt 0 ]]; do
         --update) UPDATE=1 ;;
         --small) SMALL=1 ;;
         --llama-ref) LLAMA_REF="$2"; shift ;;
+        --gpu) GPU="$2"; shift ;;
         --version) VERSION="$2"; shift ;;
         --repo) REPO="$2"; shift ;;
         --ref) REF="$2"; shift ;;
@@ -71,6 +72,19 @@ run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recomm
     python3 python3-venv ca-certificates curl git cmake build-essential libcurl4-openssl-dev
 
 say "llama.cpp"
+# CPU or a GPU through Vulkan: --gpu vulkan from the installer, else what was chosen before (Settings > Hardware).
+if [[ "$GPU" == vulkan ]]; then
+    if (( DRY )); then echo "+ write /etc/memory-agent/backend: vulkan"; else install -d -m 700 /etc/memory-agent; echo vulkan > /etc/memory-agent/backend; fi
+fi
+BACKEND="$(cat /etc/memory-agent/backend 2>/dev/null || echo cpu)"
+[[ "$GPU" == vulkan ]] && BACKEND=vulkan
+gpuopts=()
+if [[ "$BACKEND" == vulkan ]]; then
+    echo "Backend: GPU through Vulkan"
+    run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+        libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
+    gpuopts=(-DGGML_VULKAN=ON)
+fi
 flags="$(grep -o -w -E 'avx|avx2|avx512f|fma|f16c' /proc/cpuinfo | sort -u | tr '\n' ' ' || true)"
 echo "CPU features: ${flags:-none of avx/avx2/avx512f/fma/f16c}. Building for this CPU (GGML_NATIVE)."
 if [[ -x "$LLAMA/build/bin/llama-server" ]]; then
@@ -81,7 +95,7 @@ else
         [[ -n "$LLAMA_REF" ]] && clone+=(--branch "$LLAMA_REF")
         run "${clone[@]}" "$LLAMA_REPO" "$LLAMA"
     fi
-    run cmake -S "$LLAMA" -B "$LLAMA/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON
+    run cmake -S "$LLAMA" -B "$LLAMA/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON "${gpuopts[@]}"
     run cmake --build "$LLAMA/build" --target llama-server -j "$(nproc)"
 fi
 
@@ -101,6 +115,7 @@ run install -m 644 "$SRC"/systemd/*.service "$APP/systemd/"
 run "$APP/venv/bin/pip" install -q --disable-pip-version-check -r "$APP/requirements.lock"
 run "$APP/venv/bin/python" -m py_compile "$APP"/*.py
 run install -m 755 "$SRC/scripts/memory-agent-update" /usr/local/bin/memory-agent-update
+run install -m 755 "$SRC/scripts/memory-agent-backend" /usr/local/bin/memory-agent-backend
 [[ -n "$VERSION" ]] && printf '%s\n' "$VERSION" | write_file "$APP/VERSION" 644
 # Where memory-agent-update gets new code. Written once; edit it to follow another branch.
 if [[ -n "$REPO" && ! -f "$ETC/source" ]]; then
