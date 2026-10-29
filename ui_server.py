@@ -64,6 +64,7 @@ def _running_ctx(m):
 
 def _runner_status(m, r):
     """The model runner's status for the remote settings on the page (r), or None without a runner or reply."""
+    r = remote.with_preset(r)   # a chosen preset's runner token, when none was typed
     url = str((r or {}).get("runner") or "").strip()
     if not url:
         return None
@@ -222,6 +223,18 @@ def _plan(d):
             prop[m], warn = new[m], warn + [f"{NICE[m]}: {x}" for x in w]
         if m in jobs:
             prop[m].update(jobs[m])
+    # Two models on one runner share its llama-server: each Apply all would restart it with that card's settings.
+    by_runner = {}
+    for m in MODELS:
+        r = ((d.get("servers") or {}).get(m) or {}).get("remote") or {}
+        if r.get("enabled") and str(r.get("runner") or "").strip():
+            by_runner.setdefault(str(r["runner"]).strip().rstrip("/"), []).append(m)
+    for url, ms in by_runner.items():
+        vs = [ext_jobs.get(m) or direct.get(m) or {} for m in ms]
+        if len(ms) > 1 and any(v and v != vs[0] for v in vs):
+            warn.append(f"{' and '.join(NICE[m] for m in ms)} use the same runner ({url}) with different settings; "
+                        "they share one llama-server there, so each Apply all would restart it with the other's settings. "
+                        "Give them the same model, context and slots, or separate runners.")
     # Calls that would no longer fit: only the ones this change brings, so an old warning does not come back every time.
     before = set(tuning.token_warnings())
     warn += [x for x in tuning.token_warnings(s=prop) if x not in before]
@@ -241,6 +254,7 @@ def register(app, authed):
         need(request)
         s, pend = settings.load(), applier.pending()
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
+                "presets": remote.presets(),
                 "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
                                 "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m),
@@ -328,7 +342,10 @@ HTML = r"""
 const NM={qwen:"Sweeper server (port 8080)",gpt:"Reviewer server (port 8081)",cur:"Curator server (port 8082)",pa:"Assistant server (port 8083)"};
 const IDS=Object.keys(NM);
 const E={};
-let T=null,FS=[];
+let T=null,FS=[],PS=[];   // PS: the saved server presets
+// After a preset is saved or deleted: every card's Where it runs list, keeping each card's choice.
+async function refreshPresets(){try{PS=(await api("/api/remote/presets")).presets;
+ for(const m of IDS){const e=E[m];if(e&&e.fillWhere){e.fillWhere(e.where.value);e.pdel.style.display=e.pid()?"":"none"}}}catch(err){}}
 const lastEl=h("div",{class:"card mut"},"");
 async function post(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));return{ok:r.ok,detail:j.detail||"",data:j}}
 function num(v){const e=h("input",{type:"number"});e.value=v;return e}
@@ -360,7 +377,12 @@ function mk(m,s,models,maxT){
  e.adv=h("details",{},h("summary",{class:"mut"},"Advanced server flags (blank uses the default)"),...frows);
  e.lim=h("div",{class:"mut"});
  const rs=s.remote||{};
- e.where=h("select",{},h("option",{value:"local"},"Local model on this server"),h("option",{value:"remote"},"External server"));e.where.value=rs.enabled?"remote":"local";
+ // Where it runs: here, an external server typed on this card, or a saved preset (the same server for any model).
+ e.where=h("select",{});
+ e.fillWhere=function(v){e.where.replaceChildren(h("option",{value:"local"},"Local model on this server"),h("option",{value:"remote"},"External server"),
+  ...PS.map(function(p){return h("option",{value:"preset:"+p.id},"Preset: "+p.name)}));
+  e.where.value=Array.prototype.some.call(e.where.options,function(o){return o.value===v})?v:(v==="local"?"local":"remote")};
+ e.fillWhere(rs.enabled?(rs.preset?"preset:"+rs.preset:"remote"):"local");
  e.ru=h("input",{type:"text",placeholder:"http://192.168.1.50:8080"});e.ru.value=rs.url||"";
  e.rt=h("select",{},h("option",{value:"llamacpp"},"llama.cpp server"),h("option",{value:"openai"},"Other OpenAI-compatible"));e.rt.value=rs.api||"llamacpp";
  // The external server's own model list, offered as a dropdown; the name also tells this page which thinking switches apply.
@@ -387,6 +409,28 @@ function mk(m,s,models,maxT){
  e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model on that server",e.rn),e.rnl,fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm,
   h("div",{class:"mut",style:"margin-top:10px"},"Model runner (optional): run model_runner.py on that machine, and this card sets its model, context, slots and flags (see the README)."),
   fld("Runner address",e.rr),fld("Runner token",e.rrk),fld("Clear the saved token",e.rrc),e.rrm);
+ // Presets: save this external server under a name, so any model's card can pick it in Where it runs.
+ e.pname=h("input",{type:"text",placeholder:"a name, e.g. Gaming PC",maxlength:"60"});
+ e.pm=h("div",{class:"mut"});
+ e.pid=function(){return e.where.value.indexOf("preset:")===0?e.where.value.slice(7):""};
+ e.pdel=h("button",{onclick:async function(){const p=PS.find(function(x){return x.id===e.pid()});if(!p)return;
+  if(!await window.warnPop("Delete the preset "+p.name+"?",["Models that use it keep their settings and keys."],"Delete","Keep it"))return;
+  const r=await post("/api/remote/presets/delete",{id:p.id});e.pm.textContent=r.ok?"Preset deleted.":r.detail;if(r.ok){e.where.value="remote";await refreshPresets()}}},"Delete preset");
+ e.psave=h("button",{onclick:async function(){
+  const r=await post("/api/remote/presets/save",{model_key:m,name:e.pname.value,preset:e.pid(),url:e.ru.value,api:e.rt.value,model:e.rn.value,
+   key:e.rk.value,ack:e.ra.checked,runner:e.rr.value,runner_key:e.rrk.value});
+  if(!r.ok){e.pm.textContent=r.detail;window.warnPop("Could not save the preset",[r.detail]);return}
+  e.pm.textContent="Saved as the preset "+r.data.preset.name+". It is in Where it runs on every model's card.";
+  await refreshPresets();e.fillWhere("preset:"+r.data.preset.id);dirty=true;sync()}},"Save as preset");
+ e.pbox=h("div",{style:"margin-top:10px"},h("div",{class:"mut"},"Preset: save this external server (address, type, model, keys and runner) under a name, so any model can pick it in Where it runs."),
+  fld("Preset name",e.pname),e.psave,e.pdel,e.pm);
+ e.rbox.append(e.pbox);
+ // Picking a preset fills the fields from it; its keys are used unless you type others.
+ e.usePreset=function(){const p=PS.find(function(x){return x.id===e.pid()});e.pdel.style.display=p?"":"none";if(!p)return;
+  e.pname.value=p.name;e.ru.value=p.url;e.rt.value=p.api||"llamacpp";e.rn.value=p.model||"";e.ra.checked=!!p.ack;e.rr.value=p.runner||"";
+  e.rk.value="";e.rk.placeholder=p.key_set?"from the preset, type to replace":"none in the preset";
+  e.rrk.value="";e.rrk.placeholder=p.runner_key_set?"from the preset, type to replace":"none in the preset";
+  if(p.runner)e.askRunner&&e.askRunner()};
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
@@ -398,7 +442,7 @@ function mk(m,s,models,maxT){
  e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;
   const names=(st.models||[]).map(function(x){return x.name});if(e.rn.value&&names.indexOf(e.rn.value)<0)names.unshift(e.rn.value);
   e.rnl.replaceChildren(...names.map(function(n){return h("option",{value:n})}));sync()};
- function sync(){const r=e.where.value==="remote",mg=r&&!!e.rr.value.trim();
+ function sync(){const r=e.where.value!=="local",mg=r&&!!e.rr.value.trim();
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});e.lim.style.display=r?"none":"";
   hw[0].style.display=r?"none":"";   // Model file lists this container's models: only for a local model
@@ -406,11 +450,11 @@ function mk(m,s,models,maxT){
   e.extnote.style.display=r?"":"none";
   e.extnote.textContent=mg?"Managed through the runner on that machine: Apply all restarts its llama-server with the model, context, slots and flags below, and puts the old ones back if it does not come up.":"On an external server without a runner, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine; add a runner below to set them from here."}
  e.rr.oninput=sync;
- e.where.onchange=sync;e.useRunner(s.runner);sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
+ e.where.onchange=function(){e.usePreset();sync()};e.useRunner(s.runner);e.usePreset();sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
  limit(m);
- (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value==="remote",url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked,runner:e.rr.value,runner_key:e.rrk.value,runner_clear:e.rrc.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
+ (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value!=="local",preset:e.pid(),url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked,runner:e.rr.value,runner_key:e.rrk.value,runner_clear:e.rrc.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
  return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,e.extnote,e.loc,
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
 // The model list changed (a download finished or a file was deleted): refresh every Model file list, keeping choices.
@@ -456,11 +500,11 @@ window.applyAll=async()=>{
  if(r.ok){dirty=false;if(window.offerRetry)window.offerRetry()}
  else window.warnPop("Could not apply",[r.detail||"Could not apply"]);
  note(!r.ok?r.detail:!need.length?"Saved.":when==="idle"?"Everything saved. Server changes apply when idle.":"Everything saved. Restarting...");
- if(r.ok)for(const m of IDS){const e=E[m];if(e&&e.rn&&e.where.value==="remote"&&e.rn.value!==e.rn0){e.rn0=e.rn.value;
+ if(r.ok)for(const m of IDS){const e=E[m];if(e&&e.rn&&e.where.value!=="local"&&e.rn.value!==e.rn0){e.rn0=e.rn.value;
   e.msg.textContent+=" Reload the page to update the thinking switches for "+(e.rn.value||"this model")+"."}}
  stat()};
 (async()=>{const d=await api("/api/server/info");
- FS=d.flagspec||[];$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
+ FS=d.flagspec||[];PS=d.presets||[];$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
 })();
 </script>
 """

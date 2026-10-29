@@ -228,6 +228,16 @@ above Context changes to "Managed through the runner on that machine".
 To check it worked: the server line at the top of the card no longer says "running with … tokens of context, not
 the … you set", and the Thinking tab shows the new context. llama.cpp rounds the context up to a multiple of 256.
 
+### Use the same server for other models (presets)
+On a card with an external server, type a **Preset name** and press **Save as preset**. The preset keeps the
+address, server type, model, API key, runner address and runner token (keys stored root-only, never shown). It then
+appears in **Where it runs** on every model's card as "Preset: <name>": pick it and press Apply all, with no need to
+type the keys again. Saving with a preset selected updates it, so a new name renames it. **Delete preset** removes
+it; models that use it keep their settings.
+
+Two models on the same runner share one llama-server. Give them the same model, context and slots, or each Apply
+all restarts it with the other's settings; Apply all warns about this.
+
 ### If it does not work
 | What you see | What it means |
 |---|---|
