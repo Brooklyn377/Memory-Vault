@@ -73,8 +73,7 @@ idle. The model servers are therefore not started at boot; the turn manager (in 
 Under **Settings → Model groups**, **Add group** and tick the models that may be loaded together (for example Sweeper
 and Reviewer, if memory holds both). Models in a group are loaded together; any other local model waits its turn. You
 can make several groups; a model is in one. A model on an **external server** needs no turn: it never waits and never
-makes another model wait, so it is not part of any group. The page warns, without refusing, when a group's models
-are estimated not to fit in memory together.
+makes another model wait, so it is not part of any group.
 
 - **How a turn passes:** a group that still has work keeps its turn for at least the minutes set on that page
   (default 10), and always until its running calls finish; then the next waiting model's group is loaded. A model
