@@ -39,7 +39,7 @@ def _running_ctx(m):
     """The context the server is really running with (from its /slots), or None if it is not answering."""
     try:
         import ui_think
-        s = ui_think.slots(m)
+        s = ui_think.slots(m, whole_server=True)
         return int(s["ctx"]) if s.get("up") and s.get("ctx") and "slots" in s else None
     except Exception:
         return None

@@ -116,8 +116,30 @@ def live(model):
     return (call, n) if call else None
 
 
-def slots(model):
+def _from_log(model):
+    """What this model is doing on an external server, from the agent's own log of its calls."""
+    import remote, settings
+    now = live(model)
+    return {"up": remote.health(model) == "ready", "busy": bool(now), "calls": 1 if now else 0,
+            "task": now[0] if now else "", "ctx": int(settings.get(model)["context"]),
+            "used": now[1] if now else 0, "decoded": now[1] if now else 0}
+
+
+def _shared(model):
+    """True if another model uses the same external server: its /slots shows both models' calls, so it cannot say which is whose."""
     try:
+        import turns
+        srv = turns.server_of(model)
+        return bool(srv) and any(m != model and turns.server_of(m) == srv for m in SERVERS)
+    except Exception:
+        return False
+
+
+def slots(model, whole_server=False):
+    """Live state of a model. whole_server: read the server's own /slots even when other models share it."""
+    try:
+        if not whole_server and _shared(model):
+            return _from_log(model)
         req = urllib.request.Request(_base(model) + "/slots")
         import remote
         if remote.enabled(model) and remote.saved_key(model):   # an external server with a key wants it here too
@@ -129,11 +151,7 @@ def slots(model):
         try:
             import remote
             if remote.enabled(model):   # no /slots from that server: what this agent sent it, from the log
-                import settings
-                now = live(model)
-                return {"up": remote.health(model) == "ready", "busy": bool(now), "calls": 1 if now else 0,
-                        "task": now[0] if now else "", "ctx": int(settings.get(model)["context"]),
-                        "used": now[1] if now else 0, "decoded": now[1] if now else 0}
+                return _from_log(model)
         except Exception:
             pass
         return {"up": False, "swapped": swap.holding()}

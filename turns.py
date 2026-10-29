@@ -96,7 +96,7 @@ def server_of(model):
     single model and slots, so they can never be active at the same time."""
     try:
         import remote
-        return remote.base(model).lower() or None if remote.enabled(model) else None
+        return remote.base(model).rstrip("/").lower() or None if remote.enabled(model) else None
     except Exception:
         return None
 
