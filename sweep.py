@@ -318,6 +318,7 @@ def run_chunk(st, rel, d, meta, chunks, idx, merges, clarification=None):
         pass
     t0, data = time.time(), reviewgate.queued(rel, c["hash"], clarification)
     for attempt in range(0 if data else __import__("tuning").get("sweep.attempts")):
+        wait_server()   # a server that is loading or restarting costs no attempt
         try:
             data = call_model(user)
         except Exception as e:
@@ -469,14 +470,32 @@ def rebuild(st=None, merges=None):
     return st
 
 
+def wait_server(longest=1800):
+    """Wait while the Sweeper's server (local or external) is loading or restarting, for example after Apply all.
+    Waiting is not a failed attempt; after `longest` seconds the attempt goes ahead and reports what went wrong."""
+    import applier
+    end, said = time.time() + longest, False
+    while applier.health("qwen") != "ready" and time.time() < end:
+        if not said:
+            agent.log("sweep: waiting for the Sweeper's server to answer")
+            said = True
+        time.sleep(5)
+
+
 def fingerprint():
-    """Cheap snapshot of what can give the sweep new work: imported chats, your answers and the Assistant's jobs."""
+    """Cheap snapshot of what can give the sweep new work: imported chats, your answers, the Assistant's jobs, and a
+    switch, stop or restart of the Sweeper's server (its abort signal), so a chunk set back by a restart goes again."""
     import jobs
+    import thinklog
     parts = []
     for d in (CONV_DIR, questions.QDIR, jobs.DIR):
         for f in sorted(d.glob("*")) if d.exists() else []:
             st = f.stat()
             parts.append(f"{f.name}:{st.st_size}:{st.st_mtime_ns}")
+    try:
+        parts.append((thinklog.ABORT / "qwen").read_text())
+    except OSError:
+        pass
     return hashlib.sha1("|".join(parts).encode()).hexdigest()
 
 
