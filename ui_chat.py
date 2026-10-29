@@ -6,12 +6,15 @@
 A failed Assistant answer is not retried by itself: the message is marked failed, an Ask card says why, and
 "Send again" on the Chat page queues it again.
 """
+import hashlib
 import json
 import re
 import secrets
 import sys
 import time
 from datetime import datetime
+
+import yaml
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -232,7 +235,7 @@ def handle(m, who="gpt"):
     v = _vault()
     top, extra = retrieve(m["text"])
     if not top and m["kind"] == "lookup" and who == "gpt":
-        m["reply"], m["sources"] = "The vault has no notes that match that.", []
+        m["reply"], m["sources"], m["by"] = "The vault has no notes that match that.", [], "Reviewer"
         return
     parts = [f"NOTE {r}:\n{v.body[r][:__import__('tuning').get('chat.note_chars')]}" for r in top]
     parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
@@ -271,6 +274,38 @@ def retry(mid):
     return m
 
 
+CONV = VAULT / "raw" / "conversations"
+
+
+def archive(m):
+    """Add a replied exchange to its day's conversation file in raw/conversations, in the format of imported chats, so
+    the Sweeper reads your chat like any other conversation and the notes can find it. One file per day; the text is
+    scrubbed like an import."""
+    day = f"{m['id'][:4]}-{m['id'][4:6]}-{m['id'][6:8]}"
+    stamp = f"{day} {m['id'][9:11]}:{m['id'][11:13]}:{m['id'][13:15]}"
+    name = f"{day}-chat-with-the-assistant-{hashlib.sha1(('assistant-chat-' + day).encode()).hexdigest()[:8]}.md"
+    clean = lambda t: scrub(str(t))[0].replace("[[", "[ [")
+    turn = lambda who, t: f"### {who} ({stamp})\n\n{clean(t)}\n"
+    sections = turn("Human", ("/fix " if m["kind"] == "correction" else "") + m["text"]) + "\n" + turn("Assistant", m["reply"])
+    path = CONV / name
+    CONV.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        fm_match = re.match(r"\A---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+        fm = (yaml.safe_load(fm_match.group(1)) or {}) if fm_match else {}
+        fm["messages"], fm["updated"] = int(fm.get("messages", 0)) + 2, day
+        text = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n" + text[fm_match.end():] if fm_match else text
+        text = text.rstrip("\n") + "\n\n" + sections
+    else:
+        title = f"Chat with the Assistant, {day}"
+        fm = {"type": "conversation", "source_id": f"assistant-chat-{day}", "title": title, "created": day, "updated": day,
+              "messages": 2, "imported": day}
+        text = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + f"---\n\n# {title}\n\n" + sections
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
 def watch():
     import reviewer
     agent.log("chat worker started")
@@ -278,6 +313,13 @@ def watch():
         if m["status"] == "working":
             m["status"] = "queued"
             _save(m)
+        if m["status"] == "replied" and not m.get("archived"):   # replies from before chats were saved as conversations
+            try:
+                archive(m)
+                m["archived"] = True
+                _save(m)
+            except Exception as e:
+                agent.log(f"chat: could not save {m['id']} as a conversation ({type(e).__name__}: {str(e)[:80]})")
     while True:
         todo = [m for m in _all() if m["status"] == "queued"]
         if not todo:
@@ -294,6 +336,11 @@ def watch():
             handle(m, who)
             m["status"] = "replied"
             agent.log(f"chat: replied to {m['id']} ({m['by']})")
+            try:   # your chat is also a conversation in the vault: a failure here never fails the reply
+                archive(m)
+                m["archived"] = True
+            except Exception as ae:
+                agent.log(f"chat: could not save {m['id']} as a conversation ({type(ae).__name__}: {str(ae)[:80]})")
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:120]}"
             import thinklog

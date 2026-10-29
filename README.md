@@ -105,7 +105,8 @@ external server on the Settings page.
 ## Optional: the Assistant
 A fourth model you chat with. It is off until you turn it on: on its card on the Settings page, choose a model
 (local) or an external server, load it, and tick "Use the Assistant for chat". Plain chat messages then go to it;
-`/fix` corrections stay with the Reviewer. While it is off or not answering, the Reviewer answers as before.
+`/fix` corrections stay with the Reviewer. Your chat is also saved as a conversation, one file a day under `raw/conversations`
+in the same format as an imported chat, so the Sweeper reads it and the notes can find it. While it is off or not answering, the Reviewer answers as before.
 
 - **It looks things up before answering:** all vault notes and raw chats, the agent's own state and logs, and
   the Git servers it has a token for. Files named like keys, tokens, passwords or env files, and everything in
