@@ -93,7 +93,8 @@ def _apply_ext(m, vals, before):
         sup = (remote.runner(m, "GET", "/status", timeout=15).get("flags")) or []
         thinklog.abort(m)   # calls running there now are cut off; the restart would end them anyway
         r = remote.runner(m, "POST", "/apply", {"model_file": vals["model_file"], "context": vals["context"],
-                                                 "threads": vals["threads"], "parallel": vals["parallel"],
+                                                 "threads": None,   # its own default: threads are not set for an external server
+                                                 "parallel": vals["parallel"],
                                                  "flags": serverflags.runner_flags(vals, sup)}, timeout=1000)
         if not r.get("ok"):
             raise ValueError(r.get("error", "the runner could not apply it") + ". llama-server said: "
@@ -146,7 +147,8 @@ def _plan(d):
             # the file name, without a folder such as /models/. Blank keeps what that machine runs now.
             mfile = str(f["remote"].get("model") or "").replace("\\", "/").rsplit("/", 1)[-1] or (st.get("settings") or {}).get("model_file", "")
             vals = {"model_file": mfile, "context": _num(f, "context", "Context", m),
-                    "threads": _num(f, "threads", "Threads", m), "parallel": _num(f, "parallel", "Parallel slots", m),
+                    "threads": cur["threads"],   # not shown for an external server: llama-server there picks its own
+                    "parallel": _num(f, "parallel", "Parallel slots", m),
                     "flags": serverflags.check(f.get("flags") or {}, mfile, cur.get("flags"), warn,
                                                sup=st.get("flags") or [], models=names)}
             if (vals["threads"] < 1 and vals["threads"] != cur["threads"]) or (vals["parallel"] < 1 and vals["parallel"] != cur["parallel"]):
@@ -384,6 +386,7 @@ function mk(m,s,models,maxT){
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});e.lim.style.display=r?"none":"";
   hw[0].style.display=r?"none":"";   // Model file lists this container's models: only for a local model
+  hw[2].style.display=r?"none":"";   // CPU threads: this container's; an external server (often a GPU) picks its own
   e.extnote.style.display=r?"":"none";
   e.extnote.textContent=mg?"Managed through the runner on that machine: Apply all restarts its llama-server with the model, context, slots and flags below, and puts the old ones back if it does not come up.":"On an external server without a runner, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine; add a runner below to set them from here."}
  e.rr.oninput=sync;
