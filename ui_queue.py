@@ -196,7 +196,7 @@ load();setInterval(function(){if(!document.hidden)load()},10000);
 <div id="jq"></div>
 <script>
 (function(){
-const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",approved:"Approved",committed:"Committed",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled",skipped:"Skipped"};
+const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",drafted:"Draft ready",approved:"Approved",committed:"Committed",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled",skipped:"Skipped"};
 const KIND={file_edit:"Edit a file",doc_draft:"Draft a document",note_update:"Change a note",sort_note:"Sort a note"};
 const OPEN={};
 async function act(id,action){const r=await fetch("/api/jobs/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,action:action})});
@@ -208,7 +208,8 @@ function detail(j){const r=j.result||{},out=[];
  if(r.claims)r.claims.forEach(function(c){out.push(h("div",{},"→ "+c.note+": "+c.statement),h("div",{class:"mut"},'"'+c.quote+'"'))});
  if(r.diff){out.push(h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:50vh;overflow:auto"},r.diff));
   out.push(h("a",{href:"/api/jobs/draft?id="+encodeURIComponent(j.id)},"Download the draft"));
-  if(j.status==="approved")out.push(h("div",{class:"mut"},"Approved. Nothing was pushed"+(r.access==="write"?"":" ("+r.server+" is read only)")+": apply the draft to "+r.server+"/"+r.path+" yourself."))}
+  if(j.status==="drafted")out.push(h("div",{class:"mut"},r.server+" is read only, so nothing was pushed: apply the draft to "+r.server+"/"+r.path+" yourself."));
+  if(j.status==="approved")out.push(h("div",{class:"mut"},"Marked as applied. Nothing was pushed ("+r.server+" is read only)."))}
  if(r.commit)out.push(h("div",{class:"mut"},"Committed to "+r.server+" ("+r.branch+") as "+String(r.commit).slice(0,10)+". To undo it, revert that commit in the repository."));
  if(r.filed)out.push(h("div",{class:"mut"},"Filed to "+r.filed+". The inbox agent turns it into a proposal; the vault itself is not changed yet."));
  if(j.error)out.push(h("div",{style:"color:#f5a524"},j.error));
@@ -216,6 +217,7 @@ function detail(j){const r=j.result||{},out=[];
 function row(j){
  const d=h("details",{class:"sec"},h("summary",{},(KIND[j.kind]||j.kind)+(j.target?" · "+j.target:"")+" · "+(ST[j.status]||j.status)),...detail(j));
  if(j.status==="waiting")d.append(h("button",{class:"pri",onclick:function(){act(j.id,"approve")}},"Approve"),h("button",{onclick:function(){act(j.id,"reject")}},"Reject"));
+ if(j.status==="drafted")d.append(h("button",{class:"pri",onclick:function(){act(j.id,"approve")}},"Mark as applied"),h("button",{onclick:function(){act(j.id,"reject")}},"Discard"));
  if(j.status==="queued")d.append(h("button",{onclick:function(){act(j.id,"cancel")}},"Cancel"));
  if(j.status==="failed")d.append(h("button",{onclick:function(){act(j.id,"again")}},"Queue again"));
  d.open=!!OPEN[j.id];d.ontoggle=function(){OPEN[j.id]=d.open};return d}

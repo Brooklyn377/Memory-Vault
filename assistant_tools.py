@@ -246,7 +246,7 @@ def queue_job(kind, target, instructions):
     import jobs
     j = jobs.create(kind, target, instructions, CHAT["id"])
     return (f"Queued job {j['id']} ({kind}) for the {jobs.NICE[j['worker']]}. It runs when that model is idle, and "
-            "the result waits for the person's approval as an Ask card. Tell them it is queued.")
+            "the result waits for the person's approval as an Ask card when it would push or change something; a draft for a read-only Git server just appears on their Queue page. Tell them it is queued.")
 
 
 def edit_file(path, old, new, why):
@@ -254,10 +254,12 @@ def edit_file(path, old, new, why):
     import jobs
     j = jobs.propose_edit(path, old, new, why, CHAT["id"])
     r = j["result"]
+    if r["access"] != "write":
+        return (f"Drafted the change to {r['path']} in {r['server']} ({r['branch']}). {r['server']} is read only, so nothing can be "
+                "pushed and there is no approval to give: the draft with its diff is on the person's Queue page to download "
+                "and apply. Tell them it is drafted there.")
     return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
-            "their Ask page, which shows the exact diff"
-            + ("; approving commits and pushes it." if r["access"] == "write" else f"; {r['server']} is read only, so approving only marks the draft approved.")
-            + " Tell them it is waiting there.")
+            "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
 
 
 def job_list():

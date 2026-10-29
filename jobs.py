@@ -126,7 +126,7 @@ def drop(jid):
 def decide(jid, ok):
     """Your answer on a finished job's Ask card. Approve files note jobs to the inbox; a draft is only marked."""
     j = get(jid)
-    if not j or j["status"] != "waiting":
+    if not j or j["status"] not in ("waiting", "drafted"):
         raise ValueError("that job is not waiting for you")
     if ok and j["kind"] in ("note_update", "sort_note"):
         j["result"]["filed"] = _file_to_inbox(j)
@@ -245,12 +245,10 @@ def _doc_draft(j):
                    "dropped": len(sources) - len(ok), "server": e["name"], "server_id": e["id"], "url": e["url"],
                    "branch": e["branch"], "path": inner, "access": e["access"], "base": gitrepos.content_sha(f),
                    "new_file": not f.is_file()}
-    commit = e["access"] == "write"
-    return (f"{'Commit' if commit else 'Draft'} a change to {inner} in {e['name']}? {j['result']['summary']}",
+    return (f"Commit a change to {inner} in {e['name']}? {j['result']['summary']}",
             f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
             + (" (a new file)" if j["result"]["new_file"] else "") + f". {len(ok)} quote(s) checked against the notes. "
-            + ("Approve commits exactly this diff and pushes it; nothing else changes." if commit else
-               f"{e['name']} is read only, so Approve only marks the draft approved; it is on the Queue page to apply."))
+            "Approve commits exactly this diff and pushes it; nothing else changes.")
 
 
 def _commit(j):
@@ -333,6 +331,10 @@ def _card(j, question, why):
     diff."""
     import questions
     r, payload = j["result"], {"job": j["id"]}
+    if j["kind"] in GIT_CHANGES and r["access"] != "write":   # nothing would be pushed: a draft needs no approval, it waits on the Queue page
+        j["status"] = "drafted"
+        _save(j)
+        return
     if j["kind"] in GIT_CHANGES:
         payload.update(repo=r["server"], url=r["url"], branch=r["branch"], file=r["path"], summary=r["summary"],
                        diff=r["diff"], commit=r["access"] == "write")
@@ -377,13 +379,10 @@ def propose_edit(target, old, new, why="", chat=""):
     DIR.mkdir(parents=True, exist_ok=True)
     (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
     _save(j)
-    commit = e["access"] == "write"
-    _card(j, f"{'Commit' if commit else 'Draft'} a change to {inner} in {e['name']}? {why}",
+    _card(j, f"Commit a change to {inner} in {e['name']}? {why}",
           f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
-          + (" (a new file)" if j["result"]["new_file"] else "") + ". "
-          + ("Approve commits exactly this diff and pushes it; nothing else changes." if commit else
-             f"{e['name']} is read only, so Approve only marks the draft approved; it is on the Queue page to apply."))
-    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; waiting for you")
+          + (" (a new file)" if j["result"]["new_file"] else "") + ". Approve commits exactly this diff and pushes it; nothing else changes.")
+    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; " + ("waiting for you" if e["access"] == "write" else "drafted, on the Queue page"))
     return j
 
 
@@ -401,7 +400,7 @@ def run_one(model):
         j["status"] = "waiting"
         _save(j)
         _card(j, question, why)
-        agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, waiting for you")
+        agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, " + ("waiting for you" if j["status"] == "waiting" else "drafted, on the Queue page"))
     except Exception as e:
         import thinklog
         if isinstance(e, thinklog.Aborted):   # its server was switched or stopped: back in the queue, not a failure
