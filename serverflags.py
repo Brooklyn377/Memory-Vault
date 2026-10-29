@@ -8,6 +8,7 @@ BIN = "/opt/llama.cpp/build/bin/llama-server"
 NAME = re.compile(r"[\w.\-]+\.gguf")
 KV = ["f16", "q8_0", "q5_1", "q4_0"]
 SPEC = [
+    {"key": "gpu_layers", "flag": "--n-gpu-layers", "kind": "int", "lo": 0, "hi": 999, "label": "GPU layers (999 = all; blank: llama-server's default)"},
     {"key": "threads_batch", "flag": "--threads-batch", "kind": "int", "lo": 1, "hi": 64, "label": "Prompt-reading threads (blank = same as threads)"},
     {"key": "batch_size", "flag": "--batch-size", "kind": "int", "lo": 32, "hi": 8192, "min": 1, "label": "Batch size (default 2048)"},
     {"key": "ubatch_size", "flag": "--ubatch-size", "kind": "int", "lo": 32, "hi": 4096, "min": 1, "label": "Micro-batch size (default 512)"},
@@ -47,14 +48,30 @@ def supported():
 
 def spec():
     sup = supported()
-    return [{"key": s["key"], "label": s["label"], "kind": s["kind"], "choices": s.get("choices"),
+    return [{"key": s["key"], "flag": s["flag"], "label": s["label"], "kind": s["kind"], "choices": s.get("choices"),
              "step": s.get("step", "1"), "ok": (not sup) or s["flag"] in sup} for s in SPEC]
 
 
-def check(flags, model_file="", old=None, warn=None):
+def runner_flags(s, sup):
+    """The flags as llama-server options for a model runner on another machine: {"--flag": value or True}, with
+    this page's defaults (such as --fit off) when that llama-server lists them (sup: its options)."""
+    f, out = s.get("flags") or {}, {}
+    for sp in SPEC:
+        v = f.get(sp["key"])
+        if (v is None or v == "") and sp.get("default") and sp["flag"] in sup:
+            v = sp["default"]
+        if v is None or v is False or v == "":
+            continue
+        out[sp["flag"]] = True if sp["kind"] == "bool" else v
+    return out
+
+
+def check(flags, model_file="", old=None, warn=None, sup=None, models=None):
     """Checks the flags and returns the ones set. lo and hi are the usual range, min (default lo) the lowest that can
-    work: a changed number outside either only adds a warning to warn. Nothing numeric is refused."""
-    by, sup, out, old = {s["key"]: s for s in SPEC}, supported(), {}, old or {}
+    work: a changed number outside either only adds a warning to warn. Nothing numeric is refused. sup and models:
+    the options and model files of a model runner's machine instead of this one's."""
+    by, out, old = {s["key"]: s for s in SPEC}, {}, old or {}
+    sup = supported() if sup is None else set(sup)
     warn = [] if warn is None else warn
     for k, v in (flags or {}).items():
         s = by.get(k)
@@ -73,7 +90,7 @@ def check(flags, model_file="", old=None, warn=None):
             out[k] = str(v)
         elif kind == "model":
             name = str(v)
-            if not NAME.fullmatch(name) or not (MODELS / name).is_file():
+            if not NAME.fullmatch(name) or not (name in models if models is not None else (MODELS / name).is_file()):
                 raise ValueError("the draft model must be a file in the model list")
             if name == model_file:
                 raise ValueError("the draft model must be a different file")

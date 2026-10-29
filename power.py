@@ -93,6 +93,8 @@ def load(m, force=False):
     import remote
     import swap
     if remote.enabled(m):   # start an external model you stopped: its calls go out again
+        if remote.managed(m):   # and with a runner, its llama-server is started again on that machine
+            remote.runner(m, "POST", "/start", {})
         _flag(m, "off").unlink(missing_ok=True)
         agent.log(f"settings: {NICE[m]} (external server) started by you")
         return
@@ -131,8 +133,15 @@ def unload(m):
     if remote.enabled(m):   # stop an external model: cut off its running calls now and hold new ones
         _flag(m, "off").write_text("1")
         thinklog.abort(m)
+        note = ""
+        if remote.managed(m):   # with a runner, its llama-server is stopped on that machine too, freeing its memory
+            try:
+                remote.runner(m, "POST", "/stop", {})
+                note = " Its llama-server on that machine was stopped too."
+            except ValueError as e:
+                note = f" Its llama-server could not be stopped there: {e}."
         agent.log(f"settings: {NICE[m]} (external server) stopped by you; its running calls were cut off")
-        return "Stopped. Its running calls were cut off, so that server stops generating; new calls wait until you start it."
+        return "Stopped. Its running calls were cut off; new calls wait until you start it." + note
     thinklog.abort(m)   # local: the server is stopped below; this also ends the waiting callers' connections at once
     note = ""
     if m == "cur":

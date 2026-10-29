@@ -103,6 +103,41 @@ def probe(url, api, keyv=""):
     return state, names
 
 
+def runner_url(model):
+    """The model runner on the external machine (model_runner.py), if you added one: it lets this page manage it."""
+    return str(raw(model).get("runner", "")).rstrip("/")
+
+
+def runner_key(model):
+    try:
+        return (KEYDIR / f"runner-{model}.key").read_text().strip()
+    except OSError:
+        return ""
+
+
+def managed(model):
+    """True while this model runs on an external server whose settings this page controls through its runner."""
+    return enabled(model) and bool(runner_url(model))
+
+
+def runner(model, method, path, body=None, timeout=30, url=None, key=None):
+    """Call the runner. -> its JSON reply. Raises ValueError with a plain reason when it cannot be used."""
+    url, key = (url or runner_url(model)).rstrip("/"), key if key is not None else runner_key(model)
+    req = urllib.request.Request(url + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.loads(e.read() or b"{}").get("error") or e.reason
+        except ValueError:
+            why = e.reason
+        raise ValueError("the runner rejected the token" if e.code == 401 else f"the runner says: {why}")
+    except (OSError, ValueError) as e:
+        raise ValueError(f"cannot reach the runner at {url} ({type(e).__name__})")
+
+
 def health(model):
     c = raw(model)
     if not c.get("url"):
@@ -163,7 +198,15 @@ def check(model, d, warn=None):
         warn.append(f"{NICE[model]}: the server rejected the API key; calls to it will fail until the key is right.")
     elif state == "down":
         warn.append(f"{NICE[model]}: cannot reach {url} right now; calls to it will fail until it answers.")
-    return {"enabled": True, "url": url, "api": api, "model": name, "ack": ack}
+    run_url = str(d.get("runner") or "").strip()
+    if run_url:
+        run_url = norm_url(run_url)
+        run_key = str(d.get("runner_key") or "").strip() or ("" if d.get("runner_clear") else runner_key(model))
+        try:
+            runner(model, "GET", "/status", url=run_url, key=run_key, timeout=10)
+        except ValueError as e:
+            warn.append(f"{NICE[model]}: {e}; its settings cannot be changed from here until it answers.")
+    return {"enabled": True, "url": url, "api": api, "model": name, "ack": ack, "runner": run_url}
 
 
 def save(model, d):
@@ -178,6 +221,13 @@ def save(model, d):
         fd = os.open(kf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(typed)
+    rk, rtyped = KEYDIR / f"runner-{model}.key", str(d.get("runner_key") or "").strip()
+    if d.get("runner_clear"):
+        rk.unlink(missing_ok=True)
+    if rtyped:
+        fd = os.open(rk, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(rtyped)
     s = settings.load()
     old = dict(s[model].get("remote") or {})
     new = {**old, **cfg} if cfg["enabled"] else dict(old, enabled=False)
@@ -201,7 +251,8 @@ def save(model, d):
 def public(model):
     c = raw(model)
     return {"enabled": enabled(model), "url": c.get("url", ""), "api": c.get("api", "llamacpp"),
-            "model": c.get("model", ""), "ack": bool(c.get("ack")), "key_set": (KEYDIR / f"remote-{model}.key").exists()}
+            "model": c.get("model", ""), "ack": bool(c.get("ack")), "key_set": (KEYDIR / f"remote-{model}.key").exists(),
+            "runner": c.get("runner", ""), "runner_key_set": (KEYDIR / f"runner-{model}.key").exists()}
 
 
 def register(app, authed):

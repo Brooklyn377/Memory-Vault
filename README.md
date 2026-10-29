@@ -111,6 +111,33 @@ A fourth model you chat with. It is off until you turn it on: on its card on the
   read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
   `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is ever pushed.
 
+## Optional: managing a model on another machine (model runner)
+Any of the four models can run on another machine (a GPU box, a PC) by choosing **External server** on its card.
+Without more, the agent only sends that server its calls: llama-server cannot change its model, context or slots
+while running, so those stay as that machine started them, and the card only keeps the context for its own token
+checks. To set them from the card, run the model runner next to llama-server on that machine. It is one Python file,
+`model_runner.py` (in this repository), that needs only Python 3.8 or newer, on Linux, Windows or macOS.
+
+1. Copy `model_runner.py` to that machine, next to where you keep it.
+2. Set it up once. This writes `model_runner.json` next to the script and prints a token, once:
+   ```bash
+   python3 model_runner.py --setup --llama /path/to/llama-server --models /path/to/models
+   ```
+   Options: `--port` (the runner's port, default 8090), `--llama-port` (llama-server's port, default 8080),
+   `--listen` (default `0.0.0.0`). On Windows, use `python` and the path to `llama-server.exe`.
+3. Stop any llama-server you started yourself on that port: the runner starts its own.
+4. Run it: `python3 model_runner.py`. To keep it running, make it a service (systemd on Linux, a scheduled task
+   at log-on on Windows). Its llama-server output goes to `model_runner-llama.log` next to the script.
+5. On the model's card: Where it runs = External server, Server address = `http://<that machine>:8080`, Runner
+   address = `http://<that machine>:8090`, Runner token = the token from step 2. Press Apply all.
+
+The card then shows that machine's model files, and Model file, Context, Threads, Parallel slots and the server
+flags (including GPU layers) apply there: Apply all restarts its llama-server with them. If llama-server does not
+come up, the runner puts the previous settings back, and an Ask card shows llama-server's last lines. Hold to stop /
+Hold to start stops and starts that llama-server. Every request to the runner needs the token. Only model files in
+its models folder can be used, a flag is passed only if that llama-server's own `--help` lists it, and nothing goes
+through a shell. Keep the runner's port on your local network.
+
 ## Security notes
 - The web page is plain HTTP on port 8000. Keep it on your local network, or put a reverse proxy with HTTPS
   in front of it. Do not expose it to the internet.

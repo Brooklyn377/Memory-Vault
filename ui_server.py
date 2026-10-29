@@ -1,10 +1,13 @@
 """Settings page, server part: model file, context, threads and slots for each llama-server."""
+import json
 import os
 import re
 import threading
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+import agent
 import applier
 import gguf_info
 import remote
@@ -59,6 +62,56 @@ def _running_ctx(m):
         return None
 
 
+def _runner_status(m, r):
+    """The model runner's status for the remote settings on the page (r), or None without a runner or reply."""
+    url = str((r or {}).get("runner") or "").strip()
+    if not url:
+        return None
+    try:
+        key = str(r.get("runner_key") or "").strip() or ("" if r.get("runner_clear") else remote.runner_key(m))
+        return remote.runner(m, "GET", "/status", url=remote.norm_url(url), key=key, timeout=10)
+    except ValueError:
+        return None
+
+
+def _runner_info(m):
+    """For the page: the saved runner's model files, options, settings and health, or its error, or None."""
+    if not remote.runner_url(m):
+        return None
+    try:
+        return remote.runner(m, "GET", "/status", timeout=4)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+def _apply_ext(m, vals, before):
+    """Have the model runner restart that machine's llama-server with these settings. On failure the settings here go
+    back, and an Ask card says what llama-server said."""
+    import thinklog
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        sup = (remote.runner(m, "GET", "/status", timeout=15).get("flags")) or []
+        thinklog.abort(m)   # calls running there now are cut off; the restart would end them anyway
+        r = remote.runner(m, "POST", "/apply", {"model_file": vals["model_file"], "context": vals["context"],
+                                                 "threads": vals["threads"], "parallel": vals["parallel"],
+                                                 "flags": serverflags.runner_flags(vals, sup)}, timeout=1000)
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "the runner could not apply it") + ". llama-server said: "
+                             + " | ".join(l[-200:] for l in (r.get("log") or [])[-3:]))
+        applier._atomic(applier.LAST, json.dumps({"model": m, "at": now, "before": {k: before.get(k) for k in applier.KEYS},
+                                                  "after": {k: vals.get(k) for k in applier.KEYS}}))
+        agent.log(f"settings: {NICE[m]} on its external server restarted with {vals['model_file']}, context {vals['context']}")
+    except Exception as e:
+        s = settings.load()
+        s[m].update({k: before[k] for k in ("model_file", "context", "threads", "parallel", "flags") if k in before})
+        settings.save(s)
+        applier._atomic(applier.LAST, json.dumps({"model": m, "at": now, "error": str(e)[:200]}))
+        import questions
+        questions.ask(f"The {NICE[m]}'s external server did not take the new settings (context {vals['context']:,}, "
+                      f"{vals['model_file']}), so its previous settings were kept.", why=str(e)[-450:],
+                      kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"model": m, "at": now})
+
+
 def _num(f, key, label, m):
     """A number typed on the page; text that is not a number is the one thing refused, with a plain reason."""
     try:
@@ -73,11 +126,12 @@ def _plan(d):
     memory estimate, or a model file that is not there is a warning, applied if you say so. A server that does not
     come up ready is rolled back by applier.apply_now; without a model file the values are saved with no restart.
     Only text that cannot be read as the setting (not a number, an odd address) raises.
-    For a model on an external server only its context is saved, with no restart and no memory check: the token
-    checks use it. Model file, threads, slots and flags are that machine's business and stay as they were here."""
+    For a model on an external server with a model runner, every server setting is applied on that machine through
+    the runner (ext_jobs). Without a runner, only its context is saved, for the token checks.
+    Returns (jobs, warnings, direct, ext_jobs)."""
     import tuning
     import ui_settings
-    s, pend, jobs, warn, direct = settings.load(), applier.pending(), {}, [], {}
+    s, pend, jobs, warn, direct, ext_jobs = settings.load(), applier.pending(), {}, [], {}, {}
     prop = settings.load()   # the model settings as they would be after this change
     for m in MODELS:
         cur, f = s[m], (d.get("servers") or {}).get(m)
@@ -85,7 +139,26 @@ def _plan(d):
         if f and f.get("remote") is not None:
             remote.check(m, f["remote"], warn)
             ext = bool(f["remote"].get("enabled"))
-        if f and ext:
+        st = _runner_status(m, f["remote"]) if f and ext else None
+        if f and ext and st:   # an external server with a runner: its settings are applied on that machine
+            names = [x["name"] for x in st.get("models") or []]
+            vals = {"model_file": str(f.get("file", "")), "context": _num(f, "context", "Context", m),
+                    "threads": _num(f, "threads", "Threads", m), "parallel": _num(f, "parallel", "Parallel slots", m),
+                    "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn,
+                                               sup=st.get("flags") or [], models=names)}
+            if (vals["threads"] < 1 and vals["threads"] != cur["threads"]) or (vals["parallel"] < 1 and vals["parallel"] != cur["parallel"]):
+                warn.append(f"{NICE[m]}: threads and slots below 1 cannot work; that server will not start (it is rolled back).")
+            if vals["context"] < HARD_MIN_CTX and vals["context"] != cur["context"]:
+                warn.append(f"{NICE[m]}: context {vals['context']:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
+            if vals["model_file"] not in names:
+                warn.append(f"{NICE[m]}: choose a model file from that machine's list; until then its settings are saved here "
+                            "but not applied there.")
+                direct[m] = vals
+            elif any(cur.get(k, {} if k == "flags" else None) != v for k, v in vals.items()) or not st.get("settings"):
+                ext_jobs[m] = vals
+            prop[m].update(vals)
+            vals = None
+        elif f and ext:
             ctx_ext = _num(f, "context", "Context", m)
             if ctx_ext < HARD_MIN_CTX and ctx_ext != cur["context"]:
                 warn.append(f"{NICE[m]}: context {ctx_ext:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
@@ -130,7 +203,7 @@ def _plan(d):
     # Calls that would no longer fit: only the ones this change brings, so an old warning does not come back every time.
     before = set(tuning.token_warnings())
     warn += [x for x in tuning.token_warnings(s=prop) if x not in before]
-    return jobs, warn, direct
+    return jobs, warn, direct, ext_jobs
 
 
 def register(app, authed):
@@ -148,7 +221,8 @@ def register(app, authed):
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
                 "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
-                                "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m)} for m in MODELS}}
+                                "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m),
+                                "runner": _runner_info(m)} for m in MODELS}}
 
     @router.get("/api/server/limits")
     def lim(request: Request, model: str, file: str, parallel: int = 4):
@@ -173,7 +247,8 @@ def register(app, authed):
     async def check_all(request: Request):
         need(request)
         try:
-            jobs, warn, _ = _plan(await request.json())
+            jobs, warn, _, ext_jobs = _plan(await request.json())
+            jobs = dict(jobs, **ext_jobs)   # both restart a server: the page asks before either
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "restart": [NICE[m] for m in jobs], "warn": warn}
@@ -184,20 +259,24 @@ def register(app, authed):
         d = await request.json()
         try:
             import ui_settings
-            jobs, _, direct = _plan(d)
+            jobs, _, direct, ext_jobs = _plan(d)
             when = d.get("when")
-            if jobs and when not in ("now", "idle"):
+            if (jobs or ext_jobs) and when not in ("now", "idle"):
                 raise ValueError("choose now or idle")
             for _m, _f in (d.get("servers") or {}).items():
                 if _f and _f.get("remote") is not None:
                     remote.save(_m, _f["remote"])
-            if direct:   # models on an external server: only their context, for the token checks
+            before = {m: dict(settings.get(m)) for m in ext_jobs}
+            if direct or ext_jobs:   # external servers: saved here now (the token checks use them); a runner applies them there
                 s = settings.load()
-                for m, vals in direct.items():
+                for m, vals in list(direct.items()) + list(ext_jobs.items()):
                     s[m].update(vals)
                 settings.save(s)
             for m, mod in (d.get("models") or {}).items():
-                ui_settings.apply(m, mod, ctx=jobs[m]["context"] if m in jobs else direct[m]["context"] if m in direct else None)
+                ctx = (jobs.get(m) or ext_jobs.get(m) or direct.get(m) or {}).get("context")
+                ui_settings.apply(m, mod, ctx=ctx)
+            for m, vals in ext_jobs.items():   # a runner restart takes a while: in the background, like local restarts
+                threading.Thread(target=_apply_ext, args=(m, vals, before[m]), daemon=True).start()
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -279,18 +358,33 @@ function mk(m,s,models,maxT){
   if(r.ok)e.names(j.models)}},"Test connection");
  if(rs.enabled&&rs.url)fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model_key:m,url:rs.url,api:rs.api||"llamacpp",key:""})})
   .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){});
- e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model on that server",e.rn),e.rnl,fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm);
- // On an external server only Context applies here (the token checks use it). The model file, threads, slots,
- // server flags and the memory estimate describe this container's hardware, so they are hidden and kept as they are.
+ // A model runner (model_runner.py) on that machine lets this card manage its llama-server: model, context, slots, flags.
+ e.rr=h("input",{type:"text",placeholder:"http://192.168.1.50:8090 (optional)"});e.rr.value=rs.runner||"";
+ e.rrk=h("input",{type:"password",placeholder:rs.runner_key_set?"saved, type to replace":"printed when you set up the runner",autocomplete:"off"});
+ e.rrc=h("input",{type:"checkbox"});e.rrm=h("div",{class:"mut"});
+ e.rbox=h("div",{},fld("Server address",e.ru),fld("Server type",e.rt),fld("Model on that server",e.rn),e.rnl,fld("API key",e.rk),fld("Clear the saved key",e.rc),fld("Server is outside my network: send my notes to it",e.ra),e.rtest,e.rm,
+  h("div",{class:"mut",style:"margin-top:10px"},"Model runner (optional): run model_runner.py on that machine, and this card sets its model, context, slots and flags (see the README)."),
+  fld("Runner address",e.rr),fld("Runner token",e.rrk),fld("Clear the saved token",e.rrc),e.rrm);
+ // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
+ // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),e.lim,fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
  e.loc=h("div",{},hw[0],fld("Context (tokens)",e.ctx),...hw.slice(1));
- e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"On an external server, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine.");
- function sync(){const r=e.where.value==="remote";FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=!f.ok});e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r?"none":""});e.extnote.style.display=r?"":"none"}
- e.where.onchange=sync;sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
+ e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"");
+ e.rst=null;   // the runner's last status: its model files and llama-server options
+ e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;const names=(st.models||[]).map(function(x){return x.name}),v=e.file.value;
+  e.file.replaceChildren(...(v&&names.indexOf(v)>=0?[]:[h("option",{value:""},"No model chosen")]),...names.map(function(n){return h("option",{value:n},n)}));
+  e.file.value=names.indexOf(v)>=0?v:"";sync()};
+ function sync(){const r=e.where.value==="remote",mg=r&&!!e.rr.value.trim();
+  FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
+  e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});e.lim.style.display=r?"none":"";
+  e.extnote.style.display=r?"":"none";
+  e.extnote.textContent=mg?"Managed through the runner on that machine: Apply all restarts its llama-server with the model, context, slots and flags below, and puts the old ones back if it does not come up.":"On an external server without a runner, set Context to the context it runs with, so the token checks here are right. Its model, threads and hardware are set on that machine; add a runner below to set them from here."}
+ e.rr.oninput=sync;
+ e.where.onchange=sync;e.useRunner(s.runner);sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.file.onchange=()=>limit(m);e.par.onchange=()=>limit(m);
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
  limit(m);
- (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value==="remote",url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
+ (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,remote:{enabled:e.where.value==="remote",url:e.ru.value,api:e.rt.value,model:e.rn.value,key:e.rk.value,clear_key:e.rc.checked,ack:e.ra.checked,runner:e.rr.value,runner_key:e.rrk.value,runner_clear:e.rrc.checked},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
  return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,e.extnote,e.loc,
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
 // The model list changed (a download finished or a file was deleted): refresh every Model file list, keeping choices.
@@ -309,8 +403,12 @@ async function stat(){clearTimeout(T);const d=await api("/api/server/info");let 
  for(const m of IDS){const s=d.servers[m],e=E[m];if(!e)continue;
   e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
-  if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=   // llama.cpp rounds up to a multiple of 256" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
-   (s.remote&&s.remote.enabled?" (set on that server)":" (llama.cpp lowered it, most likely to fit memory; see Fit context under Advanced server flags)");
+  // llama.cpp rounds the context up to a multiple of 256, so only a real difference is shown
+  if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
+   (s.remote&&s.remote.enabled&&!s.runner?" (set on that server)":" (llama.cpp lowered it, most likely to the model's own maximum or to fit memory; see Fit context under Advanced server flags)");
+  if(s.runner){   // the model runner on that machine
+   e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
+   if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
   e.cancel.style.display=s.pending?"":"none";
   if((s.health!=="ready"&&!((m==="cur"||m==="pa")&&s.health==="down"))||s.pending)busy=true}
  const l=d.last;
