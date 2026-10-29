@@ -323,7 +323,6 @@ async function stat(){clearTimeout(T);const d=await api("/api/server/info");let 
  for(const m of IDS){const s=d.servers[m],e=E[m];if(!e)continue;
   e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
-  if(s.remote&&s.remote.back)e.st.textContent+=" · switching back to the local model; calls stay on the external server until it has loaded";
   e.cancel.style.display=s.pending?"":"none";
   if((s.health!=="ready"&&!((m==="cur"||m==="pa")&&s.health==="down"))||s.pending)busy=true}
  const l=d.last;

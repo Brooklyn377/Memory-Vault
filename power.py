@@ -43,10 +43,14 @@ def consume_kill(m):
 
 
 def wait_on(m):
-    """Calls to an unloaded model wait here until you load it again. Not the Curator (loaded on demand) or the
-    Assistant (chat answers with the Reviewer while it is not loaded)."""
-    if m in ("cur", "pa"):
+    """Calls to an unloaded or stopped model wait here until you load or start it again. Not the Assistant (chat answers
+    with the Reviewer meanwhile), and the Curator only on an external server (locally it is loaded on demand)."""
+    if m == "pa":
         return
+    if m == "cur":
+        import remote
+        if not remote.enabled(m):
+            return
     while off(m):
         time.sleep(5)
 
@@ -65,6 +69,9 @@ def state(m):
     import remote
     import swap
     if remote.enabled(m):
+        if off(m):
+            return {"state": "stopped", "detail": f"External server {remote.base(m)}, stopped by you: its calls wait until you start it."
+                    + (" Chat answers with the Reviewer meanwhile." if m == "pa" else "")}
         return {"state": "external", "detail": remote.base(m)}
     h = applier.health(m)
     if h == "ready":
@@ -85,8 +92,10 @@ def state(m):
 def load(m, force=False):
     import remote
     import swap
-    if remote.enabled(m):
-        raise ValueError(f"The {NICE[m]} uses an external server. Switch it to Local first.")
+    if remote.enabled(m):   # start an external model you stopped: its calls go out again
+        _flag(m, "off").unlink(missing_ok=True)
+        agent.log(f"settings: {NICE[m]} (external server) started by you")
+        return
     if m == "pa" and not settings.get("pa")["model_file"]:
         raise ValueError("Choose the Assistant's model file under Server and press Apply all first.")
     if m in ("qwen", "gpt") and swap.holding():
@@ -118,8 +127,13 @@ def unload(m):
     """Immediate: stop the unit, then kill whatever is left. Returns a note for the page, or ''."""
     import remote
     import swap
-    if remote.enabled(m):
-        raise ValueError(f"The {NICE[m]} uses an external server, so there is no local model to unload.")
+    import thinklog
+    if remote.enabled(m):   # stop an external model: cut off its running calls now and hold new ones
+        _flag(m, "off").write_text("1")
+        thinklog.abort(m)
+        agent.log(f"settings: {NICE[m]} (external server) stopped by you; its running calls were cut off")
+        return "Stopped. Its running calls were cut off, so that server stops generating; new calls wait until you start it."
+    thinklog.abort(m)   # local: the server is stopped below; this also ends the waiting callers' connections at once
     note = ""
     if m == "cur":
         was = manual(m)
@@ -234,11 +248,12 @@ function powerButton(key,u){
  u.btn=btn;u.txt=txt;return btn}
 async function refresh(){try{
  const d=await api("/api/model/power");
- const L={loaded:"Loaded",loading:"Loading",unloaded:"Unloaded",external:"External server"};
+ const L={loaded:"Loaded",loading:"Loading",unloaded:"Unloaded",external:"External server",stopped:"Stopped"};
  M.forEach(function(a){const u=UI[a[0]],s=d[a[0]];if(!u||!s)return;
   u.chip.textContent=L[s.state]||s.state;u.chip.className="mc"+(s.state==="loaded"?" on":"");
   u.sub.textContent=s.detail||"";
-  if(s.state==="external"){u.act="";u.btn.disabled=true;u.txt.textContent="External"}
+  if(s.state==="external"){u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to stop"}
+  else if(s.state==="stopped"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to start"}
   else if(s.swapped){u.act="";u.btn.disabled=true;u.txt.textContent="Curator working"}
   else if(s.state==="unloaded"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
   else{u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to unload"}})

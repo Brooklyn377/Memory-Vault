@@ -100,16 +100,40 @@ def _base(model):
         return SERVERS[model]
 
 
+def live(model):
+    """The call running now, from the agent's own log: for an external server whose /slots cannot be read.
+    -> (call id, tokens generated so far), or None."""
+    call, n = None, 0
+    for p in _files()[-2:]:
+        for r in _records(p, model):
+            if r.get("k") == "start":
+                call, n = r.get("c"), 0
+            elif r.get("c") == call:
+                if r.get("k") == "end":
+                    call = None
+                elif r.get("k") in ("r", "o"):
+                    n += int(r.get("n", 0))
+    return (call, n) if call else None
+
+
 def slots(model):
     try:
-        with urllib.request.urlopen(_base(model) + "/slots", timeout=2) as r:
+        req = urllib.request.Request(_base(model) + "/slots")
+        import remote
+        if remote.enabled(model) and remote.saved_key(model):   # an external server with a key wants it here too
+            req.add_header("Authorization", "Bearer " + remote.saved_key(model))
+        with urllib.request.urlopen(req, timeout=2) as r:
             sl = json.load(r)
     except Exception:
         import swap
         try:
             import remote
-            if remote.enabled(model):
-                return {"up": remote.health(model) == "ready", "busy": False, "calls": 0, "task": "", "ctx": 0, "used": 0, "decoded": 0}
+            if remote.enabled(model):   # no /slots from that server: what this agent sent it, from the log
+                import settings
+                now = live(model)
+                return {"up": remote.health(model) == "ready", "busy": bool(now), "calls": 1 if now else 0,
+                        "task": now[0] if now else "", "ctx": int(settings.get(model)["context"]),
+                        "used": now[1] if now else 0, "decoded": now[1] if now else 0}
         except Exception:
             pass
         return {"up": False, "swapped": swap.holding()}
@@ -119,7 +143,7 @@ def slots(model):
         return ((x.get("next_token") or [{}])[0]).get("n_decoded", 0)
 
     used = sum((x.get("n_prompt_tokens") or 0) + dec(x) for x in busy)
-    return {"up": True, "busy": bool(busy), "calls": len(busy),
+    return {"up": True, "busy": bool(busy), "calls": len(busy), "slots": len(sl),
             "task": ",".join(str(x.get("id_task")) for x in busy),
             "ctx": sl[0].get("n_ctx"), "used": used,
             "decoded": sum(dec(x) for x in busy)}
@@ -299,7 +323,7 @@ function show(m,s){
   while(q.w.length>2&&now-q.w[0][0]>30000)q.w.shift();
   const a=q.w[0],z=q.w[q.w.length-1];
   if(z[0]>a[0]&&z[1]>=a[1])tps=(z[1]-a[1])/((z[0]-a[0])/1000);
-  e.nm.innerHTML=(s.calls>1?"combined, "+s.calls+" calls":"this call")+" <b>"+fmt(d)+"</b> · <b>"+(s.busy&&tps!==null?tps.toFixed(2):"–")+"</b> tok/s · context <b>"+fmt(s.used||0)+" / "+fmt(s.ctx)+"</b>";
+  e.nm.innerHTML=(s.calls>1?"combined, "+s.calls+" calls":"this call")+" <b>"+fmt(d)+"</b> · <b>"+(s.busy&&tps!==null?tps.toFixed(2):"–")+"</b> tok/s · context <b>"+fmt(s.used||0)+" / "+fmt(s.ctx)+"</b>"+(s.slots>1?" · <b>"+s.slots+"</b> slots":"");
 }
 
 function showTot(t,sl){

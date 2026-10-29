@@ -159,10 +159,11 @@ def _ask(system, user):
 
 
 def assistant_on():
-    """True when the Assistant's switch is on and its server (local or external) answers."""
+    """True when the Assistant's switch is on, you have not stopped it, and its server (local or external) answers."""
     try:
         import applier
-        return bool(settings.get("pa").get("enabled")) and applier.health("pa") == "ready"
+        import power
+        return bool(settings.get("pa").get("enabled")) and not power.off("pa") and applier.health("pa") == "ready"
     except Exception:
         return False
 
@@ -195,7 +196,9 @@ def assistant_answer(m, context):
         if last:
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist")
-        data = agent.parse_json(text) if text.lstrip().startswith(("{", "```")) else None
+        data = agent.parse_json(text)   # the JSON may follow some text the model wrote first
+        if isinstance(data, dict) and "tool" not in data and "answer" not in data:
+            data = None                 # some other JSON inside a plain answer
         if not isinstance(data, dict) or "tool" not in data or last:
             if isinstance(data, dict) and data.get("answer"):
                 return str(data["answer"]).strip(), opened
@@ -203,7 +206,9 @@ def assistant_answer(m, context):
                 raise RuntimeError("the Assistant gave no answer")
             return text, opened          # plain text: the model answered without the JSON wrapper
         used += 1
-        name, args = str(data.get("tool")), data.get("args") or {}
+        name, args = str(data.get("tool")), data.get("args")
+        if not isinstance(args, dict):   # models often put the arguments beside "tool" instead of inside "args"
+            args = {k: v for k, v in data.items() if k not in ("tool", "args")}
         if name == "open" and isinstance(args, dict) and args.get("path"):
             opened.append(str(args["path"]))
         result = assistant_tools.run(name, args)
@@ -278,7 +283,11 @@ def watch():
             agent.log(f"chat: replied to {m['id']} ({m['by']})")
         except Exception as e:
             why = f"{type(e).__name__}: {str(e)[:120]}"
-            if who == "pa":   # no retry timer: mark it failed, say why, and leave "Send again" to you
+            import thinklog
+            if isinstance(e, thinklog.Aborted):   # you switched or stopped the server: answer it again with what is current
+                m["status"], m["reply"] = "queued", ""
+                agent.log(f"chat: {m['id']} cut off by a server switch or stop; queued again")
+            elif who == "pa":   # no retry timer: mark it failed, say why, and leave "Send again" to you
                 m["status"], m["reply"] = "error", f"The Assistant could not answer ({type(e).__name__})."
                 import questions
                 questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',

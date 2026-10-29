@@ -304,6 +304,12 @@ def run_one(model):
                       options=[{"label": "Approve", "value": "approve"}, {"label": "Reject", "value": "reject"}])
         agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, waiting for you")
     except Exception as e:
+        import thinklog
+        if isinstance(e, thinklog.Aborted):   # its server was switched or stopped: back in the queue, not a failure
+            j.update(status="queued")
+            _save(j)
+            agent.log(f"jobs: {j['kind']} {j['id']} cut off by a server switch or stop; queued again")
+            return True
         j.update(status="failed", error=f"{type(e).__name__}: {str(e)[:300]}")
         _save(j)
         questions.ask(f"A job from the Assistant failed: {j['kind']} {j['target'] or ''}: {str(e)[:200]}",

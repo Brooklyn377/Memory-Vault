@@ -59,11 +59,10 @@ def local_ready(model):
 
 
 def enabled(model):
-    """True while this model's calls go to the external server."""
+    """True while this model's calls go to the external server. Switching back is immediate: a "back" left by an older
+    version (calls stayed external until the local model loaded) counts as local."""
     c = raw(model)
-    if not c.get("enabled") or not c.get("url"):
-        return False
-    return not (c.get("back") and local_ready(model))
+    return bool(c.get("enabled") and c.get("url") and not c.get("back"))
 
 
 def base(model):
@@ -179,34 +178,28 @@ def save(model, d):
             f.write(typed)
     s = settings.load()
     old = dict(s[model].get("remote") or {})
-    if cfg["enabled"]:
-        new = {**old, **cfg}
-        new.pop("back", None)
-    elif was:
-        new = dict(old)
-        new["enabled"] = model not in ON_DEMAND   # nothing local to wait for
-        new["back"] = model not in ON_DEMAND
-    else:
-        new = dict(old)
-        new["enabled"] = False
-        new.pop("back", None)
+    new = {**old, **cfg} if cfg["enabled"] else dict(old, enabled=False)
+    new.pop("back", None)
     s[model]["remote"] = new
     settings.save(s)
     _cache.clear()
+    if cfg["enabled"] != was or (cfg["enabled"] and (old.get("url"), old.get("model")) != (new.get("url"), new.get("model"))):
+        import thinklog
+        thinklog.abort(model)   # a call running on the old server is cut off now; its work is queued again
+        (agent.STATE / f"model_off_{model}").unlink(missing_ok=True)   # switching means: use the new server now
     if cfg["enabled"] and not was:
         subprocess.run(["systemctl", "stop", "--no-block", UNIT[model]], timeout=30)
         agent.log(f"settings: {NICE[model]} now uses the external server {cfg['url']}")
     elif not cfg["enabled"] and was:
         if model not in ON_DEMAND:
             subprocess.run(["systemctl", "start", "--no-block", UNIT[model]], timeout=30)
-        agent.log(f"settings: {NICE[model]} is going back to its local model")
+        agent.log(f"settings: {NICE[model]} switched back to its local model")
 
 
 def public(model):
     c = raw(model)
     return {"enabled": enabled(model), "url": c.get("url", ""), "api": c.get("api", "llamacpp"),
-            "model": c.get("model", ""), "ack": bool(c.get("ack")), "key_set": (KEYDIR / f"remote-{model}.key").exists(),
-            "back": bool(c.get("enabled") and c.get("back") and not local_ready(model))}
+            "model": c.get("model", ""), "ack": bool(c.get("ack")), "key_set": (KEYDIR / f"remote-{model}.key").exists()}
 
 
 def register(app, authed):

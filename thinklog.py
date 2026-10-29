@@ -6,6 +6,7 @@ import urllib.request
 from pathlib import Path
 
 DIR = Path("/var/lib/memory-agent/think")
+ABORT = Path("/var/lib/memory-agent/abort")   # one file per model: its time cuts off every call started before it
 MAX_BYTES = 5 * 1024 ** 3   # total size of all log files
 FLUSH_CHARS = 200           # write a log line once this much text is waiting
 FLUSH_SECS = 1.5            # or once this many seconds have passed
@@ -162,6 +163,40 @@ class _AuthHandler(urllib.request.BaseHandler):
 urllib.request.install_opener(urllib.request.build_opener(_AuthHandler))
 
 
+class Aborted(RuntimeError):
+    """The call was cut off because you switched or stopped its server. Callers queue the work again; not a failure."""
+
+
+def abort(model):
+    """Cut off every call to this model that is running now, in every service: switching or stopping its server."""
+    ABORT.mkdir(parents=True, exist_ok=True)
+    (ABORT / model).write_text(str(time.time()))
+
+
+def _aborted_since(model, t):
+    try:
+        return float((ABORT / model).read_text()) >= t
+    except (OSError, ValueError):
+        return False
+
+
+def _watch(model, started, resp, done, cut):
+    """Close the connection as soon as the model is aborted; the server then stops generating."""
+    import socket
+    while not done.wait(0.5):
+        if _aborted_since(model, started):
+            cut.set()
+            try:
+                resp.fp.raw._sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                resp.close()
+            except Exception:
+                pass
+            return
+
+
 def _chat_remote(model, body, label):
     import remote
     c = remote.raw(model)
@@ -183,13 +218,13 @@ def chat(model, endpoint, body, label, slot=None):
         external = remote.enabled(model)
     except Exception:
         external = False
-    if external:
-        return _chat_remote(model, body, label)
     try:
         import power
-        power.wait_on(model)
+        power.wait_on(model)   # a model you unloaded or stopped: its calls wait here, local or external
     except Exception:
         pass
+    if external:
+        return _chat_remote(model, body, label)
     return _chat_local(model, endpoint, body, label, slot)
 
 
@@ -216,9 +251,13 @@ def _chat_local(model, endpoint, body, label, slot=None):
     total, started = 0, time.time()
     import swap
     swap.wait_for(endpoint)
+    if _aborted_since(model, started):
+        raise Aborted(f"{model} was switched or stopped")
     _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "w": describe(label, body) + pnote})
+    done, cut = threading.Event(), threading.Event()
     try:
         with urllib.request.urlopen(req, timeout=None) as r:
+            threading.Thread(target=_watch, args=(model, started, r, done, cut), daemon=True).start()
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
                 if not line.startswith("data:") or line.endswith("[DONE]"):
@@ -240,9 +279,15 @@ def _chat_local(model, endpoint, body, label, slot=None):
                     total += 1
                     if "\n" in piece or len(st["buf"]) >= FLUSH_CHARS or time.time() - st["last"] >= FLUSH_SECS:
                         flush()
+    except Exception:
+        if not cut.is_set():
+            raise
     finally:
+        done.set()
         flush()
         add_total(model, total)
-        rec("end", f"{label} {time.time() - started:.0f}s", total)
+        rec("end", f"{label} {time.time() - started:.0f}s" + (" (cut off: server switched or stopped)" if cut.is_set() else ""), total)
         prune()
+    if cut.is_set():
+        raise Aborted(f"{model} was switched or stopped")
     return {"content": "".join(out["content"]), "reasoning_content": "".join(out["reasoning_content"])}

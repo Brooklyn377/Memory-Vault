@@ -322,7 +322,8 @@ def run_chunk(st, rel, d, meta, chunks, idx, merges, clarification=None):
             data = call_model(user)
         except Exception as e:
             agent.log(f"sweep FAILED {rel} chunk {idx}: {type(e).__name__}: {str(e)[:80]}")
-            time.sleep(60)
+            if not isinstance(e, __import__("thinklog").Aborted):   # a server switch or stop: try again on the new one at once
+                time.sleep(60)
             continue
         if data and "recap" in data:
             break
