@@ -83,7 +83,10 @@ def create(kind, target, instructions, chat=""):
     if not instructions:
         raise ValueError("say what the job should do")
     if kind == "doc_draft":
-        _git_target(target)
+        e, _ = _git_target(target)
+        if e["access"] != "write":
+            raise ValueError(f"{e['name']} is set to Read only, so nothing could be pushed and nothing is queued: tell the person, "
+                             f"who can set it to Read and write under Settings > Git servers")
     elif kind == "note_update":
         _note(target)
     elif target:
@@ -94,14 +97,6 @@ def create(kind, target, instructions, chat=""):
     _save(j)
     agent.log(f"jobs: queued {kind} for the {NICE[j['worker']]}: {target or instructions[:60]}")
     return j
-
-
-def cancel(jid):
-    j = get(jid)
-    if not j or j["status"] != "queued":
-        raise ValueError("only a queued job can be cancelled")
-    j["status"] = "cancelled"
-    _save(j)
 
 
 def requeue(jid):
@@ -126,7 +121,7 @@ def drop(jid):
 def decide(jid, ok):
     """Your answer on a finished job's Ask card. Approve files note jobs to the inbox; a draft is only marked."""
     j = get(jid)
-    if not j or j["status"] not in ("waiting", "drafted"):
+    if not j or j["status"] != "waiting":
         raise ValueError("that job is not waiting for you")
     if ok and j["kind"] in ("note_update", "sort_note"):
         j["result"]["filed"] = _file_to_inbox(j)
@@ -217,6 +212,8 @@ def _grounded(quote, text):
 def _doc_draft(j):
     import gitrepos
     e, inner = _git_target(j["target"])
+    if e["access"] != "write":
+        raise RuntimeError(f"{e['name']} is set to Read only, so nothing could be pushed; set it to Read and write under Settings > Git servers")
     root = gitrepos.copy(e["id"], "gpt")
     if root is None:
         raise RuntimeError(f"could not get a copy of {e['name']}")
@@ -331,10 +328,6 @@ def _card(j, question, why):
     diff."""
     import questions
     r, payload = j["result"], {"job": j["id"]}
-    if j["kind"] in GIT_CHANGES and r["access"] != "write":   # nothing would be pushed: a draft needs no approval, it waits on the Queue page
-        j["status"] = "drafted"
-        _save(j)
-        return
     if j["kind"] in GIT_CHANGES:
         payload.update(repo=r["server"], url=r["url"], branch=r["branch"], file=r["path"], summary=r["summary"],
                        diff=r["diff"], commit=r["access"] == "write")
@@ -376,13 +369,15 @@ def propose_edit(target, old, new, why="", chat=""):
          "error": "", "result": {"summary": why, "diff": diff[:60000], "sources": [], "dropped": 0, "server": e["name"],
                                  "server_id": e["id"], "url": e["url"], "branch": e["branch"], "path": inner, "access": e["access"],
                                  "base": gitrepos.content_sha(f), "new_file": not f.is_file()}}
+    if e["access"] != "write":   # nothing could be pushed, so nothing is kept or asked: the Assistant shows the change in its reply
+        return j
     DIR.mkdir(parents=True, exist_ok=True)
     (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
     _save(j)
     _card(j, f"Commit a change to {inner} in {e['name']}? {why}",
           f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
           + (" (a new file)" if j["result"]["new_file"] else "") + ". Approve commits exactly this diff and pushes it; nothing else changes.")
-    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; " + ("waiting for you" if e["access"] == "write" else "drafted, on the Queue page"))
+    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; waiting for you")
     return j
 
 
@@ -400,7 +395,7 @@ def run_one(model):
         j["status"] = "waiting"
         _save(j)
         _card(j, question, why)
-        agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, " + ("waiting for you" if j["status"] == "waiting" else "drafted, on the Queue page"))
+        agent.log(f"jobs: {j['kind']} {j['id']} done by the {NICE[model]}, waiting for you")
     except Exception as e:
         import thinklog
         if isinstance(e, thinklog.Aborted):   # its server was switched or stopped: back in the queue, not a failure

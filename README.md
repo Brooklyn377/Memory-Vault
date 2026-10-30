@@ -139,9 +139,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   `/etc/memory-agent`, are never readable, and every result is scrubbed, because its model may run on another
   machine.
 - **It hands slow work to the Reviewer and Sweeper as jobs:** draft a new version of a file in a Git server, change
-  a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card,
-  and the Queue page shows each job, its changes, and Approve / Reject / Cancel / Queue again. Approving a note
-  change files it to the inbox (the usual proposal path).
+  a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card
+  with the changes and Approve / Reject (a failed job asks you on the Failed list). Approving a note change files it to
+  the inbox (the usual proposal path). A document draft is only made for a Git server set to read and write.
 - **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file and it makes
   the change itself (it is your quick helper for lookups, config changes and file edits; the Reviewer is much slower
   and is only for long work, or whole new documents). It replaces exact text it copied from the file, or adds to the
@@ -149,8 +149,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   the diff line by line. On a Git server marked **read and write**, **Approve and commit** commits exactly that
   change to that one file and pushes it (as the bot named in `config.yaml`), using the Assistant's token for that
   server (or another model's, if it has none). If the file changed in the repository after the draft was written,
-  nothing is committed and you are asked to request a new draft. On a **read only** server, approving only marks the
-  draft approved, for you to apply. Every commit is an ordinary commit in the repository's history, so it can be
+  nothing is committed and you are asked to request a new draft. On a **read only** server nothing is queued or asked: the Assistant
+  shows you the change in its answer, for you to apply, and says to set the server to read and write if you want it
+  pushed. Under its answer, the notes it used show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's history, so it can be
   reverted.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and

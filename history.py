@@ -140,6 +140,8 @@ def rows(path, last=4000):
 
 
 def who_of(body):
+    if body.startswith("chat:") and "assistant" in body.lower():
+        return "assistant"
     for pre, w in (("reviewer", "reviewer"), ("review gate", "reviewer"), ("task check", "reviewer"),
                    ("file changes", "reviewer"), ("chat:", "reviewer"), ("sweep", "sweeper"),
                    ("curator", "curator"), ("settings:", "you")):
@@ -173,7 +175,9 @@ def classify(t, msg):
         lk = [note_link(f"files/{fname}.md", "Open the file note")] if (VAULT / "files" / f"{fname}.md").exists() else []
         return ev(t, "reviewer", "file", "Checked " + rest, links=lk)
     if body.startswith("chat:"):
-        return ev(t, "reviewer", "chat", clean(body[5:]))
+        if "(Assistant)" in body and "replied" in body:
+            return None   # shown from the chat messages themselves, with the question and the answer
+        return ev(t, "assistant" if "assistant" in body.lower() else "reviewer", "chat", clean(body[5:]))
     if body.startswith("settings:"):
         return ev(t, "you", "setting", clean(body[9:]))
     if body.startswith("publisher"):
@@ -289,6 +293,47 @@ def from_files():
     return out
 
 
+def from_chat():
+    """What you asked the Assistant and what it answered, from the saved chat messages."""
+    out = []
+    try:
+        import ui_chat
+        msgs = ui_chat._all()
+    except Exception:
+        return out
+    for m in msgs:
+        if m.get("by") != "Assistant" or m.get("status") != "replied":
+            continue
+        try:
+            t = datetime.strptime(m["id"][:15], "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+        web = [x for x in m.get("web") or [] if x.get("kind") == "page"]
+        detail = str(m.get("reply") or "") + (f"\n\nNotes used: {len(m['sources'])}" if m.get("sources") else "") + (f"\nWeb pages opened: {len(web)}" if web else "")
+        out.append(ev(t, "assistant", "chat", "Answered: " + clean(m.get("text", ""))[:200], detail))
+    return out
+
+
+def from_jobs():
+    """Changes the Assistant drafted or proposed (and what became of them), from the saved jobs."""
+    out = []
+    try:
+        import jobs
+        items = jobs.all_jobs()
+    except Exception:
+        return out
+    who = {"pa": "assistant", "gpt": "reviewer", "qwen": "sweeper"}
+    for j in items:
+        t = ts(j.get("created"))
+        if t is None:
+            continue
+        r = j.get("result") or {}
+        what = r.get("path") and f"{r['path']} in {r.get('server', '')}" or j.get("target") or j.get("kind")
+        out.append(ev(t, who.get(j.get("worker"), "assistant"), "file", f"{j.get('kind', 'job')}: {what} ({j.get('status')})",
+                      (r.get("summary") or j.get("instructions") or "") + (("\n\n" + r["diff"][:900]) if r.get("diff") else "") + (("\n" + j["error"]) if j.get("error") else "")))
+    return out
+
+
 def from_calls(files=6):
     out, whats = [], {}
     for f in sorted((STATE / "think").glob("think-*.jsonl"))[-files:]:
@@ -317,7 +362,7 @@ def from_calls(files=6):
 
 
 def collect(calls=False):
-    out = (from_log() + from_review() + from_tasks() + from_curator() + from_questions() + from_files())
+    out = (from_log() + from_review() + from_tasks() + from_curator() + from_questions() + from_files() + from_chat() + from_jobs())
     if calls:
         out += from_calls()
     out = [e for e in out if e["t"] is not None]

@@ -246,7 +246,7 @@ def queue_job(kind, target, instructions):
     import jobs
     j = jobs.create(kind, target, instructions, CHAT["id"])
     return (f"Queued job {j['id']} ({kind}) for the {jobs.NICE[j['worker']]}. It runs when that model is idle, and "
-            "the result waits for the person's approval as an Ask card when it would push or change something; a draft for a read-only Git server just appears on their Queue page. Tell them it is queued.")
+            "the result waits for the person's approval as an Ask card. Tell them it is queued.")
 
 
 def edit_file(path, old, new, why):
@@ -255,10 +255,10 @@ def edit_file(path, old, new, why):
     j = jobs.propose_edit(path, old, new, why, CHAT["id"])
     r = j["result"]
     if r["access"] != "write":
-        return (f"Drafted the change to {r['path']} in {r['server']} ({r['branch']}), but NOT pushed and NOT waiting for approval: "
-                f"{r['server']} is set to Read only. Tell the person exactly that. The draft with its diff is on their Queue page to "
-                f"download and apply. If they want you to push it, they set {r['server']} to Read and write under Settings > Git servers "
-                "(a read and write key alone does not change that setting), then ask you again.")
+        return (f"NOT pushed, and nothing is waiting for the person: {r['server']} is set to Read only. Tell them exactly that, and "
+                f"show them this change for {r['path']} in your answer, in a code block, so they can apply it themselves:\n\n{r['diff'][:3000]}\n\n"
+                f"If they want you to push it instead, they set {r['server']} to Read and write under Settings > Git servers (a read "
+                "and write key alone does not change that setting) and ask you again.")
     return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
             "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
 

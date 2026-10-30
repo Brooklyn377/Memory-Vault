@@ -1,10 +1,9 @@
 """Queue tab, and a read-only viewer for saved file originals and changed copies."""
 import difflib
 import html
-import re
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import agent
 import queuestate
@@ -81,46 +80,6 @@ def register(app, authed):
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
 
-    @router.get("/api/jobs")
-    def job_list(request: Request):
-        if not authed(request):
-            raise HTTPException(status_code=401, detail="login required")
-        import jobs
-        return {"jobs": [{k: j.get(k) for k in ("id", "kind", "target", "instructions", "status", "error", "created",
-                                                 "worker", "result")} for j in jobs.all_jobs()[-50:]][::-1]}
-
-    @router.post("/api/jobs/act")
-    async def job_act(request: Request):
-        if not authed(request):
-            raise HTTPException(status_code=401, detail="login required")
-        import jobs
-        d = await request.json()
-        jid, a = str(d.get("id", "")), d.get("action")
-        try:
-            if a == "cancel":
-                jobs.cancel(jid)
-            elif a == "again":
-                jobs.requeue(jid)
-            elif a in ("approve", "reject"):
-                jobs.decide(jid, a == "approve")
-            else:
-                raise ValueError("unknown action")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        return {"ok": True}
-
-    @router.get("/api/jobs/draft")
-    def job_draft(request: Request, id: str = ""):
-        if not authed(request):
-            raise HTTPException(status_code=401, detail="login required")
-        import jobs
-        j = jobs.get(id) if re.fullmatch(r"[\w-]{1,40}", id) else None
-        p = jobs.DIR / f"{id}.draft"
-        if not j or not p.exists():
-            raise HTTPException(status_code=404, detail="no draft")
-        name = (j.get("result") or {}).get("path", "draft").rsplit("/", 1)[-1]
-        return PlainTextResponse(p.read_text(encoding="utf-8"), headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
     @router.get("/queue", response_class=HTMLResponse)
     def queue_page(request: Request):
         if not authed(request):
@@ -193,37 +152,5 @@ async function load(){try{const d=await api("/api/failed");
 load();setInterval(function(){if(!document.hidden)load()},10000);
 })();
 </script>
-<div id="jq"></div>
-<script>
-(function(){
-const ST={queued:"Queued",running:"Working",waiting:"Waiting for you",drafted:"Draft ready",approved:"Approved",committed:"Committed",rejected:"Rejected",failed:"Failed",cancelled:"Cancelled",skipped:"Skipped"};
-const KIND={file_edit:"Edit a file",doc_draft:"Draft a document",note_update:"Change a note",sort_note:"Sort a note"};
-const OPEN={};
-async function act(id,action){const r=await fetch("/api/jobs/act",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,action:action})});
- if(!r.ok){const j=await r.json().catch(function(){return{}});alert(j.detail||"Could not do that")}load()}
-function detail(j){const r=j.result||{},out=[];
- if(j.instructions)out.push(h("div",{class:"mut"},"Asked: "+j.instructions));
- if(r.summary)out.push(h("div",{},r.summary));
- if(r.old!=null&&r.note)out.push(h("div",{},"In "+r.note+': "'+r.old+'" → "'+r.new+'"'),h("div",{class:"mut"},r.why+(r.source?' Quote from '+r.source.note+': "'+r.source.quote+'"':"")));
- if(r.claims)r.claims.forEach(function(c){out.push(h("div",{},"→ "+c.note+": "+c.statement),h("div",{class:"mut"},'"'+c.quote+'"'))});
- if(r.diff){out.push(h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:50vh;overflow:auto"},r.diff));
-  out.push(h("a",{href:"/api/jobs/draft?id="+encodeURIComponent(j.id)},"Download the draft"));
-  if(j.status==="drafted")out.push(h("div",{class:"mut"},r.server+" is set to Read only, so nothing was pushed: apply the draft to "+r.server+"/"+r.path+" yourself, or set it to Read and write under Settings, Git servers and ask the Assistant again."));
-  if(j.status==="approved")out.push(h("div",{class:"mut"},"Marked as applied. Nothing was pushed ("+r.server+" is read only)."))}
- if(r.commit)out.push(h("div",{class:"mut"},"Committed to "+r.server+" ("+r.branch+") as "+String(r.commit).slice(0,10)+". To undo it, revert that commit in the repository."));
- if(r.filed)out.push(h("div",{class:"mut"},"Filed to "+r.filed+". The inbox agent turns it into a proposal; the vault itself is not changed yet."));
- if(j.error)out.push(h("div",{style:"color:#f5a524"},j.error));
- return out}
-function row(j){
- const d=h("details",{class:"sec"},h("summary",{},(KIND[j.kind]||j.kind)+(j.target?" · "+j.target:"")+" · "+(ST[j.status]||j.status)),...detail(j));
- if(j.status==="waiting")d.append(h("button",{class:"pri",onclick:function(){act(j.id,"approve")}},"Approve"),h("button",{onclick:function(){act(j.id,"reject")}},"Reject"));
- if(j.status==="drafted")d.append(h("button",{class:"pri",onclick:function(){act(j.id,"approve")}},"Mark as applied"),h("button",{onclick:function(){act(j.id,"reject")}},"Discard"));
- if(j.status==="queued")d.append(h("button",{onclick:function(){act(j.id,"cancel")}},"Cancel"));
- if(j.status==="failed")d.append(h("button",{onclick:function(){act(j.id,"again")}},"Queue again"));
- d.open=!!OPEN[j.id];d.ontoggle=function(){OPEN[j.id]=d.open};return d}
-async function load(){try{const d=await api("/api/jobs");
- $("#jq").replaceChildren(d.jobs.length?h("div",{class:"card"},h("h3",{},"Jobs from the Assistant"),...d.jobs.map(row)):"")}catch(e){}}
-load();setInterval(function(){if(!document.hidden)load()},10000);
-})();
-</script>
+
 """

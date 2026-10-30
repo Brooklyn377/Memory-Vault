@@ -460,11 +460,17 @@ function webList(w){
  const btn=h("button",{style:"padding:0 8px"},"See more");
  btn.onclick=function(){const open=more.style.display==="none";more.style.display=open?"":"none";btn.textContent=open?"See less":"See more"};
  return h("div",{class:"mut"},line,btn,more)}
+function notesList(src){
+ const line=h("span",{},"Notes used: "+src.length+(src.length===1?" note":" notes")+" ");
+ const more=h("div",{style:"display:none;margin-top:4px"},...src.map(function(s){return h("div",{},s)}));
+ const btn=h("button",{style:"padding:0 8px"},"See more");
+ btn.onclick=function(){const open=more.style.display==="none";more.style.display=open?"":"none";btn.textContent=open?"See less":"See more"};
+ return h("div",{class:"mut"},line,btn,more)}
 function bubble(m){
  const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];
  if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
-  if(m.sources&&m.sources.length)box.append(h("div",{class:"mut"},"Notes used: "+m.sources.join(", ")));
+  if(m.sources&&m.sources.length)box.append(notesList(m.sources));
   if(m.web&&m.web.length)box.append(webList(m.web));
   if(m.confirm==="pending")box.append(h("button",{class:"pri",onclick:()=>decide(m.id,true)},"Yes, file it"),h("button",{onclick:()=>decide(m.id,false)},"No, that is not right"));
   if(m.confirm==="filed")box.append(h("div",{class:"mut"},"Filed to the inbox. The agent will turn it into a proposal; the vault itself is not changed yet."));
