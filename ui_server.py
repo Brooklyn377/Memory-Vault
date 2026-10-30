@@ -102,6 +102,8 @@ def _apply_ext(m, vals, before):
         applier._atomic(applier.LAST, json.dumps({"model": m, "at": now, "before": {k: before.get(k) for k in applier.KEYS},
                                                   "after": {k: vals.get(k) for k in applier.KEYS}}))
         agent.log(f"settings: {NICE[m]} on its external server restarted with {vals['model_file']}, context {vals['context']}")
+        import power
+        power._flag(m, "off").unlink(missing_ok=True)   # the server is running now: it is no longer "stopped by you"
     except Exception as e:
         s = settings.load()
         s[m].update({k: before[k] for k in ("model_file", "context", "threads", "parallel", "flags") if k in before})
