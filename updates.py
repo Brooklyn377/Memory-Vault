@@ -1,5 +1,5 @@
-"""Updates from the Settings page: check for a newer version (also every CHECK_EVERY seconds in the background, for the
-menu's badge) and apply it on request. Both use /usr/local/bin/memory-agent-update, the same as the command line.
+"""Updates from the Settings page: check for a newer version (when the Settings page is opened, and on Check now) and
+apply it on request. Both use /usr/local/bin/memory-agent-update, the same as the command line.
 
 Applying runs the updater as its own systemd job (update-memory-agent), outside the web service: the update
 restarts the web service, and a child of it would be cut off halfway. Its output goes to LOG, which the page shows."""
@@ -7,7 +7,6 @@ import json
 import os
 import re
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -21,8 +20,7 @@ LOG = agent.STATE / "update.log"
 UNIT = "update-memory-agent"   # not memory-*: the updater's rollback restarts every running memory-* unit
 BACKUPS = Path("/var/backups/memory-agent")   # the updater's backups of the code from before each update
 SOURCE = Path("/etc/memory-agent/source")   # where the code comes from: MA_REPO=owner/name and MA_REF=branch
-CHECK_EVERY = 6 * 3600
-_started = False
+VERSION = Path("/opt/memory-agent/VERSION")   # the code that is installed now (written by the updater)
 
 
 def parse_notes(message):
@@ -99,15 +97,34 @@ def rollback_info():
     return {"available": version != status().get("installed") or not version, "version": version, "at": at}
 
 
-def status():
+def installed_now():
     try:
-        return json.loads(STATUS.read_text())
+        return VERSION.read_text().strip()
+    except OSError:
+        return ""
+
+
+def status():
+    """The last check, with the installed version read now: after an update or a rollback it is the new one at once, and
+    whether an update is available follows from it. stale: the version changed since that check, so its lists are old."""
+    try:
+        st = json.loads(STATUS.read_text())
     except (OSError, ValueError):
-        return {"available": False, "installed": "", "latest": "", "at": 0, "error": ""}
+        st = {"available": False, "installed": "", "latest": "", "at": 0, "error": "", "changes": [], "changes_note": "", "recent": []}
+    live = installed_now()
+    if live:
+        st["stale"] = bool(st.get("installed")) and st["installed"] != live
+        st["installed"] = live
+        if st.get("latest"):
+            st["available"] = st["latest"] != live
+    if not st.get("available"):
+        st["changes"] = []
+    return st
 
 
 def check():
     """Ask GitHub, through the updater, whether there is a newer version. Saves and returns the answer."""
+    prev = status()
     st = {"at": time.time(), "error": "", "installed": "", "latest": "", "available": False, "changes": [], "changes_note": "", "recent": []}
     try:
         r = subprocess.run([UPDATER, "--check"], capture_output=True, text=True, timeout=120)
@@ -125,6 +142,8 @@ def check():
                 st["changes"], st["changes_note"] = changes(st["installed"], st["latest"])
     except Exception as e:
         st["error"] = f"{type(e).__name__}: {str(e)[:150]}"
+    if st["error"]:   # a failed check does not throw away what the last good one found
+        st = dict(prev, at=st["at"], error=st["error"])
     tmp = STATUS.with_suffix(".tmp")
     tmp.write_text(json.dumps(st))
     os.replace(tmp, STATUS)
@@ -169,21 +188,3 @@ def progress():
     except OSError:
         lines = []
     return {"running": running(), "log": lines}
-
-
-def start():
-    """Check in the background: a minute after the web service starts, then every CHECK_EVERY seconds."""
-    global _started
-    if _started:
-        return
-    _started = True
-
-    def loop():
-        time.sleep(60)
-        while True:
-            try:
-                check()
-            except Exception:
-                pass
-            time.sleep(CHECK_EVERY)
-    threading.Thread(target=loop, daemon=True).start()

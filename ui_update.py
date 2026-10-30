@@ -6,7 +6,6 @@ import updates
 
 def register(app, authed):
     router = APIRouter()
-    updates.start()
 
     def need(request: Request):
         if not authed(request):
@@ -87,8 +86,10 @@ function showRollback(s){
  back.dataset.version=r.version||"";back.dataset.at=r.at||""}
 function show(s){showChanges(s);showRecent(s);showRollback(s);info.replaceChildren(
  h("div",{},"Installed: ",h("b",{},short(s.installed)),s.latest?" · newest: ":"",s.latest?h("b",{},short(s.latest)):""),
- h("div",{class:"mut"},s.error?"Last check failed: "+s.error:s.available?"An update is available.":"Up to date."," Checked "+when(s.at)+"; it checks by itself every 6 hours."))}
-async function load(){try{const s=await api("/api/update/status");show(s);if(s.running)follow()}catch(e){}}
+ h("div",{class:"mut"},s.error?"Last check failed: "+s.error:s.available?"An update is available.":"Up to date."," Checked "+when(s.at)+"; it checks when you open this page."))}
+// Opening the page shows the last answer at once, then asks GitHub for the newest version.
+async function load(){try{const s=await api("/api/update/status");show(s);if(s.running){follow();return}
+ msg.textContent="Checking...";const c=await api("/api/update/check",{method:"POST"});show(Object.assign({},s,c,{rollback:s.rollback}));msg.textContent="";if(window.updBadge)window.updBadge()}catch(e){msg.textContent=""}}
 async function follow(){if(polling)return;polling=true;log.style.display="";msg.textContent="Updating. The page restarts along the way; it reloads when the update is done.";
  let seenDown=false;
  while(true){await new Promise(function(r){setTimeout(r,2000)});
