@@ -94,6 +94,7 @@ def load(m):
     import turns
     if turns.managed(m):   # on is only on: the manager loads it when it has work and its turn comes, like any other model
         _flag(m, "off").unlink(missing_ok=True)
+        _flag(m, "on").unlink(missing_ok=True)   # a leftover from the old hold to load, which is gone
         agent.log(f"settings: {NICE[m]} turned on by you")
         return
     if m in ("qwen", "gpt") and swap.holding():
