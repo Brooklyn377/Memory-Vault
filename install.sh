@@ -282,7 +282,7 @@ if [[ -n "$ADDGPU" ]]; then
     fi
     say "Switching its local models to the GPU (building llama.cpp for Vulkan takes a while)"
     run pct exec "$ADDGPU" -- /usr/local/bin/memory-agent-backend vulkan
-    say "Done: the local models of container $ADDGPU run on the GPU. Settings > Hardware shows it."
+    say "Done: the local models of container $ADDGPU run on the GPU. Settings > Servers shows it."
     exit 0
 fi
 

@@ -1,13 +1,16 @@
 """Jobs the Assistant hands to the Reviewer and the Sweeper. Each job is a JSON file in <state>/jobs/, like chat
 messages. The workers pick a job up only when their own work is done, and every result waits for you as an Ask card
-(Approve / Reject). Nothing here writes to the vault or pushes to Git:
-  doc_draft    (Reviewer) a new version of a file in a Git server, quoting vault notes. Approving marks it approved;
-               you apply it yourself (shown on the Queue page). Nothing is pushed.
+(Approve / Reject). Nothing here writes to the vault; only an approved change to a file in a Git server set to Read and
+write is pushed:
+  doc_draft    (Reviewer) a new version of a file in a Git server (read and write only), quoting vault notes. The Ask
+               card shows the diff; Approve and commit commits and pushes exactly that file.
+  file_edit    (Assistant) the Assistant's own change to one file, made by propose_edit. The same card. On a read only
+               server nothing is kept or asked: the Assistant shows the change in its reply.
   note_update  (Reviewer) one exact change to a vault note, with a quote that supports it. Approving files it to the
                inbox, where the inbox agent turns it into a proposal as for any note.
   sort_note    (Sweeper)  reads a note or text and says which notes it belongs to, with quoted claims. Approving
                files it to the inbox, linked to those notes.
-A failed job is marked failed and parks an Ask card; nothing retries by itself. "Queue again" on the Queue page does."""
+A failed job is marked failed and parks an Ask card; nothing retries by itself. "Try again" on the Failed list of the Queue page does."""
 import difflib
 import json
 import os
@@ -421,6 +424,6 @@ def interrupted(model):
 
 
 def summary():
-    """For the Assistant's jobs tool and the Queue page."""
+    """For the Assistant's jobs tool."""
     return [{k: j.get(k) for k in ("id", "kind", "target", "status", "error", "created", "worker")}
             | {"result": {k: v for k, v in (j.get("result") or {}).items() if k != "diff"}} for j in all_jobs()[-50:]]
