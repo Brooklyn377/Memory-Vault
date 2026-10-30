@@ -291,5 +291,10 @@ def run(name, args):
     except (ValueError, OSError) as e:
         text = f"{name} failed: {e}"
     text = scrub(str(text))[0]
+    try:   # every tool call is in the activity log, so the History tab shows what the Assistant looked at and did
+        said = " ".join(scrub(json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else "")[0].split())[:200]
+        agent.log(f"assistant: {name} {said} -> {' '.join(text.split())[:140]}")
+    except Exception:
+        pass
     lim = _t("assistant.tool_chars")
     return text if len(text) <= lim else text[:lim] + f"\n(cut at {lim:,} characters; open a later line to read on)"

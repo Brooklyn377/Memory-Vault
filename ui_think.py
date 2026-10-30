@@ -152,7 +152,8 @@ def _waiting(model):
     """True while this model has asked for its turn and another group has it."""
     try:
         import turns
-        return turns.managed(model) and model in turns.wants() and model not in turns.active()["group"]
+        st = turns.active()
+        return turns.managed(model) and model in turns.wants() and (model not in st["group"] or model in st["draining"])
     except Exception:
         return False
 

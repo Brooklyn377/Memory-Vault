@@ -109,7 +109,7 @@ HTML = r"""
 <div id="qp"></div>
 <script>
 (function(){
-const M=[["sweeper","Sweeper","#4c9aff"],["reviewer","Reviewer","#f5a623"],["curator","Curator","#34d399"]];
+const M=[["sweeper","Sweeper","#4c9aff"],["reviewer","Reviewer","#f5a623"],["curator","Curator","#34d399"],["assistant","Assistant","#e879f9"]];
 let D=null;const SHOWN={};
 function dur(s){s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+"h "+m+"m":m?m+"m "+(s%60)+"s":s+"s"}
 function render(){

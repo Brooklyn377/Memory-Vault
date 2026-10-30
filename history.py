@@ -13,7 +13,7 @@ from bootstrap import slug as _slug
 STATE, VAULT = agent.STATE, agent.VAULT
 WHO = ("sweeper", "reviewer", "curator", "assistant", "you", "system")
 KINDS = ("vault", "fact", "task", "link", "review", "prune", "file", "ask", "chat", "publish", "setting",
-         "import", "problem", "system", "call")
+         "import", "problem", "system", "call", "web", "git", "tool", "turn")
 CALL_WHO = {"qwen": "sweeper", "gpt": "reviewer", "cur": "curator", "pa": "assistant"}
 ASK_WHO = {"hygiene": "sweeper", "free": "sweeper", "merge": "system", "filecheck": "reviewer",
            "inboxcheck": "system", "curate": "curator", "curatecheck": "curator", "assistant": "assistant", "gitpull": "system", "serverfail": "system", "reviewstuck": "reviewer",
@@ -142,9 +142,9 @@ def rows(path, last=4000):
 def who_of(body):
     if body.startswith("chat:") and "assistant" in body.lower():
         return "assistant"
-    for pre, w in (("reviewer", "reviewer"), ("review gate", "reviewer"), ("task check", "reviewer"),
+    for pre, w in (("assistant:", "assistant"), ("reviewer", "reviewer"), ("review gate", "reviewer"), ("task check", "reviewer"),
                    ("file changes", "reviewer"), ("chat:", "reviewer"), ("sweep", "sweeper"),
-                   ("curator", "curator"), ("settings:", "you")):
+                   ("curator", "curator"), ("settings:", "you"), ("downloads:", "you"), ("servers:", "you")):
         if body.startswith(pre):
             return w
     return "system"
@@ -161,8 +161,15 @@ def classify(t, msg):
     who = who_of(body)
     if body.endswith(" started"):
         return ev(t, "system", "system", clean(body))
+    if body.startswith("assistant:"):
+        what = body[10:].strip()
+        return ev(t, "assistant", "web" if what.startswith("web_") else "tool", clean(what[:240]), what)
     if ERR.search(body):
         return ev(t, who, "problem", clean(body))
+    if body.startswith("git:"):
+        return ev(t, "system", "git", clean(body[4:]))
+    if body.startswith("turns:"):
+        return ev(t, "system", "turn", clean(body[6:]))
     if body.startswith("reviewer: "):
         return task_event(t, clean(body[10:]), body[10:])
     if body.startswith("sweep"):
@@ -180,6 +187,8 @@ def classify(t, msg):
         return ev(t, "assistant" if "assistant" in body.lower() else "reviewer", "chat", clean(body[5:]))
     if body.startswith("settings:"):
         return ev(t, "you", "setting", clean(body[9:]))
+    if body.startswith(("downloads:", "servers:")):
+        return ev(t, "you", "setting", clean(body))
     if body.startswith("publisher"):
         return ev(t, "system", "publish", clean(body))
     if body.startswith(("imported", "purged", "importer", "processed")):

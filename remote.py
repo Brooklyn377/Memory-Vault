@@ -507,6 +507,8 @@ def register(app, authed):
         need(request)
         d = await request.json()
         await to_runner(str(d.get("id", "")), "POST", "/download", {"url": str(d.get("url", "")), "confirmed": bool(d.get("confirmed"))})
+        agent.log(f"servers: a model download started on the server {(get_server(str(d.get('id', ''))) or {}).get('name', '')} from "
+                  f"{urllib.parse.urlparse(str(d.get('url', ''))).hostname}")
         return {"ok": True}
 
     @router.post("/api/servers/download/cancel")

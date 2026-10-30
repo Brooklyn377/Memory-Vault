@@ -10,6 +10,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
+import agent
+
 MODELS = Path("/opt/models")
 STATE = Path("/var/lib/memory-agent/downloads")
 HF = ("huggingface.co", "hf.co")
@@ -66,8 +68,10 @@ def _run(st):
         else:
             os.replace(part, MODELS / name)
             st.update(status="done")
+            agent.log(f"downloads: {name} downloaded ({st['done'] / 1e9:.2f} GB)")
     except Exception as e:
         st.update(status="failed", error=f"{type(e).__name__}: {str(e)[:120]}")
+        agent.log(f"downloads: {name} failed: {st['error']}")
     finally:
         STOP.discard(name)
         LIVE.pop(name, None)
@@ -95,6 +99,7 @@ def start(url, confirmed):
     st = {"name": name, "url": urllib.parse.urlunparse(u._replace(path=path)), "host": host,
           "third_party": not _is_hf(host), "status": "starting", "done": 0, "total": 0, "error": ""}
     _save(st)
+    agent.log(f"downloads: {name} started from {host}")
     t = threading.Thread(target=_run, args=(st,), daemon=True)
     LIVE[name] = t
     t.start()

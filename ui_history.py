@@ -44,7 +44,7 @@ HTML = r"""
 <script>
 (function(){
 const WHO={sweeper:["Sweeper","#4c9aff"],reviewer:["Reviewer","#f5a623"],curator:["Curator","#34d399"],assistant:["Assistant","#e879f9"],you:["You","#c084fc"],system:["System","#8b93a7"]};
-const KIND={vault:"Vault changes",fact:"Facts",task:"Tasks",link:"Links",review:"Reviews",prune:"Prunes",file:"Files",ask:"Questions",chat:"Chat",publish:"Publishing",setting:"Settings",import:"Imports",problem:"Problems",system:"Startup",call:"Model calls"};
+const KIND={vault:"Vault changes",fact:"Facts",task:"Tasks",link:"Links",review:"Reviews",prune:"Prunes",file:"Files",ask:"Questions",chat:"Chat",publish:"Publishing",setting:"Settings",import:"Imports",problem:"Problems",system:"Startup",call:"Model calls",web:"Websites",git:"Git servers",tool:"Assistant tools",turn:"Turns"};
 const onW=new Set(["sweeper","reviewer","curator","assistant","you"]);
 const onK=new Set(Object.keys(KIND).filter(k=>k!=="system"&&k!=="call"));
 let items=[],seen=new Set(),more=false,busy=false;

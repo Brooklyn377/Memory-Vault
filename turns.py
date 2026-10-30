@@ -19,6 +19,7 @@ If the manager is not running (its heartbeat is old), callers do not wait for tu
 import fcntl
 import json
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -41,6 +42,7 @@ QUIET = 30         # seconds after its last call that a model still counts as bu
 BEAT_FRESH = 20    # seconds the manager's heartbeat counts
 STEP = 2           # seconds between the manager's looks
 _started = False
+_WAIT = {}   # the last reason logged for each model that is waiting
 
 
 def _dirs():
@@ -446,7 +448,7 @@ def step(now=None):
     with _lock():
         cfg = config()
         st = active()
-        loaded, since, drain = list(st["group"]), dict(st["since"]), set(st["draining"])
+        loaded, since, drain = list(st["group"]), dict(st["since"]), set()   # who is finishing up is worked out afresh each time
         w = {m: d for m, d in wants(now).items() if _has_model(m)}
         counts = lease_counts()
         held = lease_counts(HOLDS)
@@ -457,6 +459,7 @@ def step(now=None):
         # the queue: by the priority you set (Assistant, Reviewer, Sweeper, Curator at first). A higher one waits for a working one
         order = sorted(w, key=lambda m: (cfg["priority"].index(m), w[m]["at"]))
         in_the_way = set()
+        why = {}       # model -> why it has to wait, for the log
         waiting = []   # wanted models that had to wait: a lower one may not slip in front of them
         for m in order:
             if m in loaded:
@@ -469,9 +472,11 @@ def step(now=None):
                     did.append("load " + m)
                 else:
                     waiting.append(m)
+                    why[m] = "waits in the queue behind " + ", ".join(NICE[b] for b in waiting if conflict(m, b) and b != m)
                 continue
             waiting.append(m)
             in_the_way |= set(block)
+            why[m] = "waits for " + ", ".join(NICE[b] for b in block) + " to finish (no group lists them together, or the hardware takes one at a time)"
 
             def can_go(x):
                 inside = x in w or counts.get(x) or held.get(x) or used_lately(x, now)   # it still has work
@@ -490,7 +495,14 @@ def step(now=None):
                     loaded.append(m)
                     since[m] = now
                     waiting.remove(m)
-                    did.append("switch to " + m)
+                    why.pop(m, None)
+                    did.append(f"switch to {m} (after {', '.join(block)} finished)")
+        for m in [m for m in _WAIT if m not in why]:
+            _WAIT.pop(m)
+        for m, r in why.items():   # a wait is logged once, and again only when its reason changes
+            if _WAIT.get(m) != r:
+                _WAIT[m] = r
+                agent.log(f"turns: the {NICE[m]} {r}")
         drain = {x for x in drain if x in loaded and x in in_the_way}
         _set_active({"group": loaded, "since": since, "draining": sorted(drain)})
         stop = [m for m in stop if m in running]   # only a server on this machine is stopped
@@ -501,6 +513,8 @@ def step(now=None):
     for m in start:
         _start_unit(m)
         did.append("start " + m)
+    if did:
+        agent.log("turns: " + re.sub(r"\b(qwen|gpt|cur|pa)\b", lambda k: NICE[k.group(1)], "; ".join(did)))
     return did
 
 

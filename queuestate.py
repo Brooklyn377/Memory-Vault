@@ -1,5 +1,6 @@
 """Queue tab data: what each model is doing now and what is waiting for it. Read-only."""
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -8,10 +9,10 @@ import agent
 from history import chat_name
 
 STATE, VAULT = agent.STATE, agent.VAULT
-KEY = {"sweeper": "qwen", "reviewer": "gpt", "curator": "cur"}
-PORT = {"sweeper": 8080, "reviewer": 8081, "curator": 8082}
+KEY = {"sweeper": "qwen", "reviewer": "gpt", "curator": "cur", "assistant": "pa"}
+PORT = {"sweeper": 8080, "reviewer": 8081, "curator": 8082, "assistant": 8083}
 JOB = {"sweep": "Reading a chat part", "ask": "Reading an inbox note", "review": "Reviewing",
-       "chat": "Answering a chat message", "curate": "Reviewing in depth"}
+       "chat": "Answering a chat message", "assist": "Looking something up for a chat answer", "curate": "Reviewing in depth"}
 LIMIT = 200
 _cache = {}
 
@@ -61,7 +62,20 @@ def inflight():
                         continue
         except OSError:
             continue
-    return sorted((r for c, r in starts.items() if c not in ended), key=lambda r: -r["t"])
+    return sorted((r for c, r in starts.items() if c not in ended and _alive(r.get("p"))), key=lambda r: -r["t"])
+
+
+def _alive(pid):
+    """False for a call whose service is gone (an update or a restart): it never wrote its end. No pid recorded: unknown."""
+    if not pid:
+        return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        return True
+    except (ValueError, TypeError, OSError):
+        return False
 
 
 def now_state():
@@ -79,6 +93,8 @@ def now_state():
         if b is None:
             if m == "curator":
                 state = "unloaded (loads when it runs)"
+            elif m == "assistant":
+                state = "not loaded (loads when you chat)" if not __import__("power").off("pa") else "unloaded by you"
             else:
                 state = "unloaded while the curator works" if held else ("unloaded by you" if __import__("power").off(KEY[m]) else "not answering")
             out[m] = {"state": state, "calls": []}
@@ -127,14 +143,42 @@ def sweeper_next():
     return {"items": items[:LIMIT], "total": len(items), "waiting": waiting[:LIMIT], "notes": notes}
 
 
-def reviewer_next():
-    import todo
-    items = []
+def _chat_messages(assistant):
+    """Chat messages not answered yet: the ones the Assistant answers (assistant=True), or the ones the Reviewer does."""
+    try:
+        import ui_chat
+        pa_on = ui_chat.assistant_on()
+    except Exception:
+        pa_on = False
+    out = []
     chat = STATE / "chat"
     for p in sorted(chat.glob("*.json")) if chat.is_dir() else []:
         m = jread(p, {})
-        if m.get("status") in ("queued", "working"):
-            items.append({"text": "Chat: " + " ".join(str(m.get("text", "")).split())[:70], "sub": "message " + m["status"]})
+        if m.get("status") in ("queued", "working") and ((m.get("kind") == "lookup" and pa_on) == assistant):
+            out.append(m)
+    return out
+
+
+def assistant_next():
+    items = [{"text": "Chat: " + " ".join(str(m.get("text", "")).split())[:70], "sub": "message " + m["status"]} for m in _chat_messages(True)]
+    waiting = []
+    try:
+        import jobs
+        for j in jobs.all_jobs():
+            if j.get("status") == "waiting" and j.get("worker") == "pa":
+                r = j.get("result") or {}
+                waiting.append({"text": f"Commit a change to {r.get('path', '')} in {r.get('server', '')}", "sub": "waiting for your answer in Ask"})
+    except Exception:
+        pass
+    return {"items": items[:LIMIT], "total": len(items), "waiting": waiting[:LIMIT],
+            "notes": ["Chat messages you sent, answered one at a time. A task keeps the Assistant's turn until it is done."]}
+
+
+def reviewer_next():
+    import todo
+    items = []
+    for m in _chat_messages(False):
+        items.append({"text": "Chat: " + " ".join(str(m.get("text", "")).split())[:70], "sub": "message " + m["status"]})
     rq = STATE / "review_queue"
     parked = [jread(p, {}) for p in rq.glob("*.json")] if rq.is_dir() else []
     todo_rev = [e for e in parked if not e.get("verdict") and not e.get("stuck")]
@@ -188,7 +232,7 @@ def curator_next():
 def snapshot():
     return {"now": cached("now", 4, now_state),
             "next": {"sweeper": cached("sw", 30, sweeper_next), "reviewer": cached("rv", 10, reviewer_next),
-                     "curator": cached("cu", 60, curator_next)},
+                     "curator": cached("cu", 60, curator_next), "assistant": cached("as", 10, assistant_next)},
             "at": time.time()}
 
 

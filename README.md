@@ -91,6 +91,17 @@ first in the list goes first. Priority never takes the turn from a model that is
   its turn. After that, unless you made a group, the Sweeper and Reviewer no longer run together on one machine: add a
   group with both if your memory allows it.
 
+## History: what happened behind the scenes
+The **History** tab lists everything the models and you did, newest first, from the agent's logs. Filter by who did it
+(Sweeper, Reviewer, Curator, Assistant, you, system) and by kind. Besides the vault work, it shows:
+- **Assistant tools** and **Websites**: every look-up the Assistant made (search, open a file, Git repositories, web
+  searches and the pages it opened), with what it asked for and a short start of what came back; its answers, with the
+  full reply inside; the changes it drafted or proposed.
+- **Git servers**: every pull and every commit.
+- **Turns**: every time a model got its turn or gave it up, and why a model had to wait.
+- **Settings**: model downloads (here and on a server), servers saved, groups saved, models loaded or stopped by you.
+- **Model calls** (off until you tick it): every call to a model.
+
 ## Update
 New versions come from this repository. The easiest way: **Settings → Updates** (at the bottom) shows the installed
 and newest version, with **Check now** and **Update now**. The agent also checks by itself every 6 hours, and a **1**

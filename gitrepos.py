@@ -202,6 +202,7 @@ def copy(eid, model, force=False):
             shutil.rmtree(dest, ignore_errors=True)
             _git(["clone", "-q", "--depth", "1", "--branch", e["branch"], e["url"], str(dest)], tok)
         _set(eid, pulled=time.time(), error="")
+        agent.log(f"git: pulled {e['name']} ({e['branch']}) for the {MODELS[model]}")
     except Exception as ex:
         why = str(ex)[:200]
         _set(eid, error=why)
