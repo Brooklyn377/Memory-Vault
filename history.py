@@ -168,6 +168,8 @@ def classify(t, msg):
         return ev(t, who, "problem", clean(body))
     if body.startswith("git:"):
         return ev(t, "system", "git", clean(body[4:]))
+    if body.startswith("health:"):
+        return ev(t, "system", "problem" if "not answering" in body else "system", clean(body[7:]))
     if body.startswith("turns:"):
         return ev(t, "system", "turn", clean(body[6:]))
     if body.startswith("reviewer: "):

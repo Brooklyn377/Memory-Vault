@@ -43,6 +43,7 @@ BEAT_FRESH = 20    # seconds the manager's heartbeat counts
 STEP = 2           # seconds between the manager's looks
 _started = False
 _WAIT = {}   # the last reason logged for each model that is waiting
+_UP = {}     # whether each external server answered at the last look
 
 
 def _dirs():
@@ -539,6 +540,24 @@ def _doing(x, w, counts, held, since, now, cfg):
     return what + (f", its turn lasts {int(left // 60)} more min" if left and (counts.get(x) or x in w) else "")
 
 
+def _watch_servers():
+    """Log when an external server stops answering or answers again, so the History tab has the times (a machine that
+    went to sleep or restarted, a llama-server that died)."""
+    import applier
+    import remote
+    for m in MODELS:
+        if not _external(m):
+            _UP.pop(m, None)
+            continue
+        h = applier.health(m)
+        up = h == "ready"
+        if m in _UP and _UP[m] != up:
+            sid = remote.raw(m).get("server")
+            name = (remote.get_server(sid) or {}).get("name") if sid else None
+            agent.log(f"health: the {NICE[m]}'s server" + (f" {name}" if name else "") + (" is answering again" if up else f" is not answering ({h})"))
+        _UP[m] = up
+
+
 def start():
     """Run the manager in a thread of this process (the web service). It beats every few seconds."""
     global _started
@@ -553,4 +572,13 @@ def start():
             except Exception as e:
                 agent.log(f"turns: {type(e).__name__}: {str(e)[:100]}")
             time.sleep(STEP)
+
+    def health_loop():
+        while True:
+            try:
+                _watch_servers()
+            except Exception as e:
+                agent.log(f"turns: {type(e).__name__}: {str(e)[:100]}")
+            time.sleep(15)
     threading.Thread(target=loop, daemon=True).start()
+    threading.Thread(target=health_loop, daemon=True).start()
