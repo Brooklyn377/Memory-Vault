@@ -437,9 +437,9 @@ def watch():
                 m["status"], m["reply"] = "error", f"The Assistant could not answer ({type(e).__name__})."
                 import questions
                 questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',
-                              why="Check the Assistant's server on the Settings page. On the Chat page, Send again "
-                                  "queues the message again; with the Assistant's switch off, the Reviewer answers it.",
-                              kind="assistant", options=[{"label": "OK", "value": "ok"}], payload={"chat": m["id"]})
+                              why="Try again queues the message again. Skip leaves it failed in the chat. Check the Assistant's server on "
+                                  "the Settings page; with the Assistant's switch off, the Reviewer answers it.",
+                              kind="assistant", options=[{"label": "Try again", "value": "retry"}], payload={"chat": m["id"]})
                 agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
             else:
                 m["tries"] += 1

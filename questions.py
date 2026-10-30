@@ -125,7 +125,15 @@ def answer(qid, text):
             raise ValueError("unknown answer")
         import reviewgate
         reviewgate.decide_stuck(q["payload"]["key"], text)
-    elif q["kind"] in ("gitpull", "assistant", "serverfail"):   # notices: answering only acknowledges them
+    elif q["kind"] == "assistant":   # a chat message the Assistant could not answer: Try again queues it again
+        if text != "retry":
+            raise ValueError("unknown answer")
+        import ui_chat
+        try:
+            ui_chat.retry(q["payload"]["chat"])
+        except ValueError:   # already sent again from the Chat page, or removed
+            pass
+    elif q["kind"] in ("gitpull", "serverfail"):   # notices: answering only acknowledges them
         pass
     elif q["kind"] == "job":
         if text not in ("approve", "reject"):
