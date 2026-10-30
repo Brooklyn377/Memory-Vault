@@ -276,6 +276,10 @@ def register(app, authed):
                 raise ValueError("choose now or idle")
             for _m, _f in (d.get("servers") or {}).items():
                 if _f and _f.get("remote") is not None:
+                    r = _f["remote"]
+                    where = "server " + str((remote.get_server(str(r.get("server") or "")) or {}).get("name") or r.get("server")) if r.get("enabled") else \
+                        "this server's " + ("GPU" if _f.get("device") == "gpu" else "CPU")
+                    agent.log(f"settings: Apply all: the {NICE[_m]} runs on {where}")
                     remote.save(_m, _f["remote"])
             before = {m: dict(settings.get(m)) for m in ext_jobs}
             if direct or ext_jobs:   # external servers: saved here now (the token checks use them); a runner applies them there
