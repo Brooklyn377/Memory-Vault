@@ -9,6 +9,9 @@ import re
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
+from pathlib import Path
 
 import agent
 
@@ -16,8 +19,53 @@ UPDATER = "/usr/local/bin/memory-agent-update"
 STATUS = agent.STATE / "update_check.json"
 LOG = agent.STATE / "update.log"
 UNIT = "update-memory-agent"   # not memory-*: the updater's rollback restarts every running memory-* unit
+SOURCE = Path("/etc/memory-agent/source")   # where the code comes from: MA_REPO=owner/name and MA_REF=branch
 CHECK_EVERY = 6 * 3600
 _started = False
+
+
+def parse_notes(message):
+    """A release's commit message -> [{"subject", "detail"}]: the list the release was made with ("- subject", then its
+    detail on the next lines, indented). A message without such a list is one item, its first line."""
+    lines = str(message or "").splitlines()
+    items = []
+    for line in lines[1:]:
+        if line.startswith("- "):
+            items.append({"subject": line[2:].strip(), "detail": ""})
+        elif items and line.strip():
+            items[-1]["detail"] = (items[-1]["detail"] + " " + line.strip()).strip()
+    return items or ([{"subject": lines[0].strip(), "detail": ""}] if lines else [])
+
+
+def changes(installed, latest):
+    """The releases between the installed version and the newest, newest first, from GitHub: [{"sha", "date", "items"}].
+    -> (list, note). If the installed version is not found there, the most recent ones are listed with a note."""
+    try:
+        repo = re.search(r"^MA_REPO=(\S+)", SOURCE.read_text(), re.M).group(1)
+    except (OSError, AttributeError):
+        return [], "the source of the code is not known"
+
+    def get(path):
+        req = urllib.request.Request("https://api.github.com/repos/" + repo + path,
+                                     headers={"Accept": "application/vnd.github+json", "User-Agent": "memory-agent"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    note = ""
+    try:
+        if not installed:
+            raise urllib.error.HTTPError("", 404, "", None, None)
+        commits = list(reversed(get(f"/compare/{installed}...{latest}").get("commits") or []))
+    except urllib.error.HTTPError as e:
+        if e.code not in (404, 422):
+            return [], f"GitHub answered {e.code}"
+        try:
+            commits, note = get(f"/commits?sha={latest}&per_page=10"), "The installed version was not found there, so these are the most recent releases."
+        except (OSError, ValueError) as e2:
+            return [], f"{type(e2).__name__}"
+    except (OSError, ValueError) as e:
+        return [], f"{type(e).__name__}"
+    return [{"sha": c["sha"], "date": ((c.get("commit") or {}).get("committer") or {}).get("date", ""),
+             "items": parse_notes((c.get("commit") or {}).get("message"))} for c in commits], note
 
 
 def status():
@@ -29,7 +77,7 @@ def status():
 
 def check():
     """Ask GitHub, through the updater, whether there is a newer version. Saves and returns the answer."""
-    st = {"at": time.time(), "error": "", "installed": "", "latest": "", "available": False}
+    st = {"at": time.time(), "error": "", "installed": "", "latest": "", "available": False, "changes": [], "changes_note": ""}
     try:
         r = subprocess.run([UPDATER, "--check"], capture_output=True, text=True, timeout=120)
         out = r.stdout + r.stderr
@@ -40,6 +88,8 @@ def check():
         st["available"] = "an update is available" in out
         if r.returncode or not m2 or st["latest"] == "unknown":
             st["error"] = "could not ask GitHub for the newest version" if not st["error"] else st["error"]
+        elif st["available"]:
+            st["changes"], st["changes_note"] = changes(st["installed"], st["latest"])
     except Exception as e:
         st["error"] = f"{type(e).__name__}: {str(e)[:150]}"
     tmp = STATUS.with_suffix(".tmp")

@@ -46,9 +46,20 @@ HTML = r"""
 const short=function(v){return v?String(v).slice(0,10):"unknown"};
 const when=function(t){return t?new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"never"};
 const msg=h("div",{class:"mut"}),log=h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:40vh;overflow:auto;display:none"});
-const info=h("div",{});
+const info=h("div",{}),changes=h("div",{});
 let polling=false;
-function show(s){info.replaceChildren(
+// What is in the updates you have not applied, newest first: each release, and the changes it brought.
+function showChanges(s){
+ if(!s.available){changes.replaceChildren();return}
+ if(!(s.changes||[]).length){changes.replaceChildren(h("div",{class:"mut",style:"margin-top:12px"},"Could not load the list of changes"+(s.changes_note?" ("+s.changes_note+")":"")+"."));return}
+ const n=s.changes.length;
+ changes.replaceChildren(h("div",{style:"margin-top:12px;font-weight:600"},"Changes not applied yet ("+n+(n===1?" update":" updates")+")"),
+  ...(s.changes_note?[h("div",{class:"mut"},s.changes_note)]:[]),
+  h("div",{style:"max-height:45vh;overflow:auto;margin-top:6px"},...s.changes.map(function(c){
+   return h("div",{style:"border-top:1px solid var(--line);padding:8px 0"},
+    h("div",{class:"mut"},when(Date.parse(c.date)/1000)+" · "+short(c.sha)),
+    ...c.items.map(function(i){return h("div",{style:"margin:4px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)}))})))}
+function show(s){showChanges(s);info.replaceChildren(
  h("div",{},"Installed: ",h("b",{},short(s.installed)),s.latest?" · newest: ":"",s.latest?h("b",{},short(s.latest)):""),
  h("div",{class:"mut"},s.error?"Last check failed: "+s.error:s.available?"An update is available.":"Up to date."," Checked "+when(s.at)+"; it checks by itself every 6 hours."))}
 async function load(){try{const s=await api("/api/update/status");show(s);if(s.running)follow()}catch(e){}}
@@ -66,7 +77,7 @@ const go=h("button",{class:"pri",onclick:async function(){
  if(!await window.warnPop("Update now?",["The newest version is downloaded and checked, the current code is backed up, and the services restart. Any model call running now is cut off and done again afterwards.","If the update fails its checks, the previous version is put back by itself."],"Update now","Not now"))return;
  const r=await fetch("/api/update/apply",{method:"POST"});const j=await r.json().catch(function(){return{}});
  if(!r.ok){msg.textContent=j.detail||"Could not start the update";return}follow()}},"Update now");
-$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check),msg,log));
+$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check),msg,changes,log));
 load();
 })();
 </script>

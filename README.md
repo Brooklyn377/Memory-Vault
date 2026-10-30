@@ -114,7 +114,9 @@ The **History** tab lists everything the models and you did, newest first, from 
 New versions come from this repository. The easiest way: **Settings → Updates** (at the bottom) shows the installed
 and newest version, with **Check now** and **Update now**. The agent also checks by itself every 6 hours, and a **1**
 appears next to Settings in the menu when an update is ready. Update now runs the same updater as below and shows
-its progress; the page reloads when it is done.
+its progress; the page reloads when it is done. When an update is waiting, a list under the buttons shows what each release
+you have not applied yet changed, newest first. It comes from the release notes each release is published with, so a
+release made before notes were added only shows its name.
 
 Or on the Proxmox host:
 
