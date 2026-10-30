@@ -255,9 +255,10 @@ def edit_file(path, old, new, why):
     j = jobs.propose_edit(path, old, new, why, CHAT["id"])
     r = j["result"]
     if r["access"] != "write":
-        return (f"Drafted the change to {r['path']} in {r['server']} ({r['branch']}). {r['server']} is read only, so nothing can be "
-                "pushed and there is no approval to give: the draft with its diff is on the person's Queue page to download "
-                "and apply. Tell them it is drafted there.")
+        return (f"Drafted the change to {r['path']} in {r['server']} ({r['branch']}), but NOT pushed and NOT waiting for approval: "
+                f"{r['server']} is set to Read only. Tell the person exactly that. The draft with its diff is on their Queue page to "
+                f"download and apply. If they want you to push it, they set {r['server']} to Read and write under Settings > Git servers "
+                "(a read and write key alone does not change that setting), then ask you again.")
     return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
             "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
 

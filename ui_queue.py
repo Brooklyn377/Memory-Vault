@@ -208,7 +208,7 @@ function detail(j){const r=j.result||{},out=[];
  if(r.claims)r.claims.forEach(function(c){out.push(h("div",{},"→ "+c.note+": "+c.statement),h("div",{class:"mut"},'"'+c.quote+'"'))});
  if(r.diff){out.push(h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:50vh;overflow:auto"},r.diff));
   out.push(h("a",{href:"/api/jobs/draft?id="+encodeURIComponent(j.id)},"Download the draft"));
-  if(j.status==="drafted")out.push(h("div",{class:"mut"},r.server+" is read only, so nothing was pushed: apply the draft to "+r.server+"/"+r.path+" yourself."));
+  if(j.status==="drafted")out.push(h("div",{class:"mut"},r.server+" is set to Read only, so nothing was pushed: apply the draft to "+r.server+"/"+r.path+" yourself, or set it to Read and write under Settings, Git servers and ask the Assistant again."));
   if(j.status==="approved")out.push(h("div",{class:"mut"},"Marked as applied. Nothing was pushed ("+r.server+" is read only)."))}
  if(r.commit)out.push(h("div",{class:"mut"},"Committed to "+r.server+" ("+r.branch+") as "+String(r.commit).slice(0,10)+". To undo it, revert that commit in the repository."));
  if(r.filed)out.push(h("div",{class:"mut"},"Filed to "+r.filed+". The inbox agent turns it into a proposal; the vault itself is not changed yet."));
