@@ -134,8 +134,8 @@ def register(app, authed):
     def settings_page(request: Request):
         if not authed(request):
             return RedirectResponse("/")
-        import ui_server, ui_account, ui_curator, ui_cpu, ui_prompts, power, ui_tuning, ui_git, ui_update, ui_hardware, ui_web, ui_groups
-        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_git.HTML + ui_web.HTML + ui_hardware.HTML + ui_groups.HTML + ui_cpu.HTML + ui_account.HTML + ui_tuning.HTML + power.HTML + ui_update.HTML).replace("__ACTIVE__", "settings")
+        import ui_server, ui_account, ui_curator, ui_servers, ui_prompts, power, ui_tuning, ui_git, ui_update, ui_web, ui_groups
+        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_git.HTML + ui_web.HTML + ui_servers.HTML + ui_groups.HTML + ui_account.HTML + ui_tuning.HTML + power.HTML + ui_update.HTML).replace("__ACTIVE__", "settings")
 
     import downloads
     downloads.register(app, authed)

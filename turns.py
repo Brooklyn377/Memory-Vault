@@ -95,18 +95,58 @@ def server_of(model):
 
 
 def hardware(model):
-    """Where the model runs: this machine, or one external server. Only models on the same hardware wait for each other."""
-    if not _external(model):
-        return "local"
-    return "server " + (server_of(model) or model)
+    """Where the model runs: this machine's CPU or GPU, or one external server. Only models on the same hardware wait
+    for each other."""
+    try:
+        import remote
+        import serverflags
+        import settings
+        if not remote.enabled(model):
+            return serverflags.device(settings.get(model))
+        return "server " + (remote.raw(model).get("server") or server_of(model) or model)
+    except Exception:
+        return "cpu"
 
 
 def limit(model):
-    """How many models may work at the same time on this model's hardware (default 1: they take turns)."""
+    """How many models may work at the same time on this model's hardware (default 1: they take turns). The host's
+    CPU and GPU numbers are in hardware_limits.json; an external server's is on its entry in the server list."""
+    hw = hardware(model)
     try:
-        return max(1, int(json.loads(LIMITS.read_text()).get(hardware(model), 1)))
+        if hw.startswith("server "):
+            import remote
+            return remote.server_limit(hw[7:]) if remote.get_server(hw[7:]) else max(1, int(json.loads(LIMITS.read_text()).get(hw, 1)))
+        return max(1, int(json.loads(LIMITS.read_text()).get(hw, 1)))
     except (OSError, ValueError, TypeError, AttributeError):
         return 1
+
+
+def set_host_limit(key, n):
+    """The number of models that may work at once on this machine's "cpu" or "gpu"."""
+    if key not in ("cpu", "gpu"):
+        raise ValueError("cpu or gpu")
+    try:
+        n = max(1, int(float(n)))
+    except (TypeError, ValueError):
+        raise ValueError("how many models may work at the same time must be a number")
+    try:
+        d = json.loads(LIMITS.read_text())
+    except (OSError, ValueError):
+        d = {}
+    d[key] = n
+    DIR.mkdir(parents=True, exist_ok=True)
+    tmp = LIMITS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d))
+    os.replace(tmp, LIMITS)
+    agent.log(f"settings: up to {n} model(s) at the same time on this server's {key.upper()}")
+
+
+def host_limits():
+    try:
+        d = json.loads(LIMITS.read_text())
+    except (OSError, ValueError):
+        d = {}
+    return {k: max(1, int(d.get(k, 1))) if str(d.get(k, 1)).lstrip("-").isdigit() else 1 for k in ("cpu", "gpu")}
 
 
 def together(a, b):

@@ -1,5 +1,5 @@
-"""Settings page, Hardware: run the local models on the CPU or on a GPU (Vulkan) in this container.
-The switch runs /usr/local/bin/memory-agent-backend as its own systemd job (it rebuilds llama.cpp, which takes a while,
+"""This server's hardware (the Servers card): the GPU set-up, and how many models may work at once on its CPU and GPU.
+The GPU set-up runs /usr/local/bin/memory-agent-backend as its own systemd job (it rebuilds llama.cpp, which takes a while,
 and restarts the model servers); the page shows its output."""
 import subprocess
 
@@ -52,7 +52,19 @@ def register(app, authed):
     @router.get("/api/hardware")
     def get(request: Request):
         need(request)
-        return dict(status(), running=running())
+        import turns
+        return dict(status(), running=running(), limits=turns.host_limits())
+
+    @router.post("/api/hardware/limit")
+    async def limit(request: Request):
+        need(request)
+        d = await request.json()
+        import turns
+        try:
+            turns.set_host_limit(d.get("key"), d.get("n"))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
 
     @router.post("/api/hardware/switch")
     async def post(request: Request):
@@ -74,36 +86,3 @@ def register(app, authed):
 
     app.include_router(router)
 
-
-HTML = r"""
-<div id="hw"></div>
-<script>
-(function(){
-const info=h("div",{}),msg=h("div",{class:"mut"});
-const log=h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:40vh;overflow:auto;display:none"});
-const btn=h("button",{class:"pri"},"");let target="";
-function show(s){const gpu=s.backend==="vulkan";target=gpu?"cpu":"vulkan";
- info.replaceChildren(
-  h("div",{},"Local models run on: ",h("b",{},gpu?"the GPU (Vulkan)":"the CPU")),
-  h("div",{class:"mut"},s.gpus.length?"GPU in this container: "+(s.vulkan.length?s.vulkan.join(", "):s.gpus.join(", ")):
-   "No GPU in this container. To add one, run on the Proxmox host: install.sh --add-gpu <this container's ID>. It passes the GPU in and switches the models to it."),
-  h("div",{class:"mut"},"This is only for the models on this server; a model on an external server uses that machine's hardware."));
- btn.textContent=gpu?"Switch to the CPU":"Switch to the GPU (Vulkan)";btn.style.display=gpu||s.gpus.length?"":"none"}
-async function load(){try{const s=await api("/api/hardware");show(s);if(s.running)follow()}catch(e){}}
-async function follow(){log.style.display="";msg.textContent="Switching. Building llama.cpp takes a while; the model servers restart at the end.";
- while(true){await new Promise(function(r){setTimeout(r,3000)});
-  try{const p=await api("/api/hardware/progress");log.textContent=p.log.join("\n");log.scrollTop=log.scrollHeight;
-   if(!p.running){const t=p.log.join("\n");msg.textContent=/^done:/m.test(t)?"Done.":"It did not go through; nothing was changed. Its output is below.";load();return}}catch(e){}}}
-btn.onclick=async function(){
- const gpu=target==="vulkan";
- if(!await window.warnPop(gpu?"Run the local models on the GPU?":"Run the local models on the CPU?",
-  ["llama.cpp is rebuilt for "+(gpu?"Vulkan":"the CPU")+" (this takes a while), then the model servers here restart: a call running on them is cut off and done again.",
-   gpu?"Each model then puts all its layers on the GPU, unless GPU layers is set under its Advanced server flags. Its memory is the GPU's.":"The models then use this container's memory and CPU cores.",
-   "If the build fails, nothing is changed."],"Switch","Not now"))return;
- const r=await fetch("/api/hardware/switch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({to:target})});
- const j=await r.json().catch(function(){return{}});if(!r.ok){msg.textContent=j.detail||"Could not start it";return}follow()};
-$("#hw").replaceChildren(h("div",{class:"card"},h("h3",{},"Hardware"),info,h("div",{style:"margin-top:8px"},btn),msg,log));
-load();
-})();
-</script>
-"""

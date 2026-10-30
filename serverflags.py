@@ -121,9 +121,19 @@ def backend():
         return "cpu"
 
 
+def device(s):
+    """Where a local model runs: "gpu" or "cpu". Not chosen yet: the GPU once this container runs on one, else the CPU."""
+    if backend() != "vulkan":
+        return "cpu"
+    return "cpu" if s.get("device") == "cpu" else "gpu"
+
+
 def build(s):
     f, parts = s.get("flags") or {}, []
-    if backend() == "vulkan" and f.get("gpu_layers") in (None, ""):
+    cpu_only = backend() == "vulkan" and device(s) == "cpu"
+    if cpu_only:
+        f = dict(f, gpu_layers=0)   # on the GPU build, a model set to the CPU keeps every layer off the GPU
+    elif backend() == "vulkan" and f.get("gpu_layers") in (None, ""):
         f = dict(f, gpu_layers=999)   # on the GPU, all layers on it unless GPU layers is set on the card
     for sp in SPEC:
         v = f.get(sp["key"])
@@ -137,4 +147,6 @@ def build(s):
             parts += [sp["flag"], f"/opt/models/{v}"]
         else:
             parts += [sp["flag"], str(v)]
+    if cpu_only and "--device" in supported():
+        parts += ["--device", "none"]
     return " ".join(parts)

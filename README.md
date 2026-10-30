@@ -173,14 +173,16 @@ Intel or NVIDIA), the GPU has to be passed into the container. That needs Proxmo
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)" _ --add-gpu <container ID>
   ```
   It asks which GPU, passes it in, restarts the container, and switches its local models to the GPU.
-- **Settings → Hardware** shows whether the models run on the CPU or the GPU and which GPU the container sees, with
-  a button to switch either way. A switch rebuilds llama.cpp (this takes a while), then restarts the model servers;
-  if the build fails, nothing changes. On the GPU each model puts all its layers there unless GPU layers is set under
-  its Advanced server flags, and the GPU's memory is what limits the context.
+- **Settings → Servers** shows this server's hardware: whether the GPU is set up and which GPU the container sees, with
+  a button to set it up (or go back to CPU only). Setting it up rebuilds llama.cpp (this takes a while), then restarts the
+  model servers; if the build fails, nothing changes. After that each model's **Where it runs** offers "Local model on
+  this server CPU" and "Local model on this server GPU". On the GPU a model puts all its layers there unless GPU layers is
+  set under its Advanced server flags, and the GPU's memory is what limits the context. A model set to the CPU runs with
+  the GPU switched off, so CPU and GPU models can work at the same time.
 
 ## Optional: a model on another machine (model runner)
-Any of the four models can run on another machine, for example a PC with a GPU. Set **Where it runs** to
-**External server** on its card.
+Any of the four models can run on another machine, for example a PC with a GPU. Add the machine once under
+**Settings → Servers → Add server**, then pick it in **Where it runs** on the model's card.
 
 On its own, the agent only sends that server its calls. llama-server cannot change its model, context or slots
 while it runs, so the card cannot change them either. To set them from the card, run the **model runner** on that
@@ -275,15 +277,17 @@ sudo firewall-cmd --add-port=8090/tcp --permanent && sudo firewall-cmd --reload
 ```
 Keep both ports on your local network.
 
-### 6. Connect the card
-On the model's card in Settings, under **Server and where it runs**:
-- **Where it runs:** External server.
-- **Server address:** `http://<that machine>:8080`, and its **API key** if llama-server has one.
+### 6. Add the server and connect the card
+Under **Settings → Servers → Add server**:
+- **Name:** anything, for example Gaming PC.
+- **Address:** `http://<that machine>:8080`, and its **API key** if llama-server has one.
 - **Runner address:** `http://<that machine>:8090`. Type it in full: the grey text in an empty box is only an
   example.
 - **Runner token:** the token from step 3.
+- **Models that may work on it at the same time:** 1 unless that machine can serve more (see Model groups).
 
-Press **Apply all**. A **Runner:** line appears under the token, and should say "llama-server ready". The note
+Press **Add**. Then, on the model's card under **Server and where it runs**, set **Where it runs** to that server and
+press **Apply all**. A **Runner:** line appears under the token, and should say "llama-server ready". The note
 above Context changes to "Managed through the runner on that machine".
 
 ### 7. Change settings and check them
@@ -295,12 +299,11 @@ above Context changes to "Managed through the runner on that machine".
 To check it worked: the server line at the top of the card no longer says "running with … tokens of context, not
 the … you set", and the Thinking tab shows the new context. llama.cpp rounds the context up to a multiple of 256.
 
-### Use the same server for other models (presets)
-On a card with an external server, type a **Preset name** and press **Save as preset**. The preset keeps the
-address, server type, model, API key, runner address and runner token (keys stored root-only, never shown). It then
-appears in **Where it runs** on every model's card as "Preset: <name>": pick it and press Apply all, with no need to
-type the keys again. Saving with a preset selected updates it, so a new name renames it. **Delete preset** removes
-it; models that use it keep their settings.
+### Use the same server for other models
+Pick the same server in **Where it runs** on any model's card; the address, keys and runner are kept once, on the server.
+Changing the server on the Servers card updates every model that uses it. A server's number says how many of those
+models may work on it at the same time (1: they take turns). **Remove** deletes a server; models that used it keep
+their settings.
 
 Two models on the same runner share one llama-server. Give them the same model, context and slots, or each Apply
 all restarts it with the other's settings; Apply all warns about this.
@@ -343,5 +346,5 @@ To turn it on, inside the container (`pct enter CTID`):
 4. `systemctl enable --now memory-publish`.
 
 ## Optional: host CPU speed control
-The Settings page can change the host's CPU power state through a small helper on the Proxmox host. The helper
+The Servers card on the Settings page can change the host's CPU power state through a small helper on the Proxmox host. The helper
 is not part of this install yet. Without it the card says no helper is set up.

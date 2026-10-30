@@ -161,9 +161,11 @@ def norm_url(u):
     return urllib.parse.urlunparse((p.scheme, p.netloc, path, "", "", "")).rstrip("/")
 
 
-# ---------- presets: saved external servers any model's card can pick ----------
-PRESETS = agent.STATE / "server_presets.json"
-PRESET_ID = re.compile(r"[a-f0-9]{8}")
+# ---------- servers: the one list of external servers; any model's card can pick one ----------
+SERVERS = agent.STATE / "servers.json"
+OLD_PRESETS = agent.STATE / "server_presets.json"   # before the server list: merged into it once, then kept as .bak
+NOTICE = agent.STATE / "servers_merge_notice.json"
+SERVER_ID = re.compile(r"[a-f0-9]{8}")
 
 
 def _secret(path, text):
@@ -172,88 +174,171 @@ def _secret(path, text):
         f.write(text)
 
 
-def _presets():
+def _servers():
     try:
-        d = json.loads(PRESETS.read_text())
+        d = json.loads(SERVERS.read_text())
         return d if isinstance(d, list) else []
     except (OSError, ValueError):
         return []
 
 
-def _preset_key(pid, kind):
+def _server_key(sid, kind):
     try:
-        return (KEYDIR / f"preset-{pid}-{kind}.key").read_text().strip()
+        return (KEYDIR / f"server-{sid}-{kind}.key").read_text().strip()
     except OSError:
         return ""
 
 
-def presets():
-    """For the page: the presets without their keys, only whether each has one."""
-    return [dict(p, key_set=bool(_preset_key(p["id"], "api")), runner_key_set=bool(_preset_key(p["id"], "runner")))
-            for p in _presets()]
+def servers():
+    """For the page: the servers without their keys, only whether each has one."""
+    return [dict(p, limit=server_limit(p["id"]), key_set=bool(_server_key(p["id"], "api")),
+                 runner_key_set=bool(_server_key(p["id"], "runner"))) for p in _servers()]
 
 
-def save_preset(model, d):
-    """Save the external server typed on this model's card as a preset. Keys: the typed ones, else this model's saved
-    ones, stored root-only like every key. -> the preset (without keys)."""
+def get_server(sid):
+    return next((p for p in _servers() if p["id"] == sid), None)
+
+
+def server_limit(sid):
+    """How many models may work at the same time on this server (default 1)."""
+    try:
+        return max(1, int(get_server(sid).get("limit", 1)))
+    except (AttributeError, TypeError, ValueError):
+        return 1
+
+
+def save_server(d):
+    """Add a server, or update the one with d["id"]. Keys: the typed ones, else the ones saved. Models that use it
+    are updated to match. -> the server (without keys)."""
     name = " ".join(str(d.get("name") or "").split())[:60]
     if not name:
-        raise ValueError("give the preset a name")
-    items = _presets()
-    cur = str(d.get("preset") or "")   # the preset chosen on the card: saving updates it (a new name renames it)
+        raise ValueError("give the server a name")
+    items = _servers()
+    cur = str(d.get("id") or "")
     same = next((p for p in items if p["name"].lower() == name.lower()), None)
-    if same and same["id"] != cur and any(p["id"] == cur for p in items):
-        raise ValueError(f"there is already a preset called {same['name']}")
-    pid = cur if any(p["id"] == cur for p in items) else same["id"] if same else secrets.token_hex(4)
+    if same and same["id"] != cur:
+        raise ValueError(f"there is already a server called {same['name']}")
+    sid = cur if any(p["id"] == cur for p in items) else secrets.token_hex(4)
     api = d.get("api") if d.get("api") in ("llamacpp", "openai") else "llamacpp"
-    mname = str(d.get("model") or "").strip()
-    if mname and not NAME.fullmatch(mname):
-        raise ValueError("the model name has odd characters")
-    p = {"id": pid, "name": name, "url": norm_url(d.get("url")), "api": api, "model": mname, "ack": bool(d.get("ack")),
+    try:
+        limit = max(1, int(float(d.get("limit", 1))))
+    except (TypeError, ValueError):
+        raise ValueError("how many models may work at the same time must be a number")
+    p = {"id": sid, "name": name, "url": norm_url(d.get("url")), "api": api, "ack": bool(d.get("ack")), "limit": limit,
          "runner": norm_url(d["runner"]) if str(d.get("runner") or "").strip() else ""}
-    key = str(d.get("key") or "").strip() or (_preset_key(d.get("preset"), "api") if d.get("preset") else "") or saved_key(model)
-    rkey = (str(d.get("runner_key") or "").strip() or (_preset_key(d.get("preset"), "runner") if d.get("preset") else "")
-            or runner_key(model))
     KEYDIR.mkdir(parents=True, exist_ok=True)
-    for kind, val in (("api", key), ("runner", rkey)):
-        f = KEYDIR / f"preset-{pid}-{kind}.key"
-        if val:
-            _secret(f, val)
-        else:
+    for kind, typed, clear in (("api", d.get("key"), d.get("clear_key")), ("runner", d.get("runner_key"), d.get("runner_clear"))):
+        f = KEYDIR / f"server-{sid}-{kind}.key"
+        if str(typed or "").strip():
+            _secret(f, str(typed).strip())
+        elif clear:
             f.unlink(missing_ok=True)
-    _store_presets([x for x in items if x["id"] != pid] + [p])
-    agent.log(f"settings: server preset {name} saved")
-    return dict(p, key_set=bool(key), runner_key_set=bool(rkey))
+    _store_servers([x for x in items if x["id"] != sid] + [p])
+    agent.log(f"settings: server {name} saved")
+    sync_models(sid)
+    return dict(p, key_set=bool(_server_key(sid, "api")), runner_key_set=bool(_server_key(sid, "runner")))
 
 
-def _store_presets(items):
-    tmp = PRESETS.with_suffix(".tmp")
+def _store_servers(items):
+    tmp = SERVERS.with_suffix(".tmp")
     tmp.write_text(json.dumps(items, indent=1))
-    os.replace(tmp, PRESETS)
+    os.replace(tmp, SERVERS)
 
 
-def delete_preset(pid):
-    """Remove a preset and its keys. Models that use it keep their settings and keys."""
-    if not PRESET_ID.fullmatch(str(pid)):
-        raise ValueError("unknown preset")
-    _store_presets([p for p in _presets() if p["id"] != pid])
+def delete_server(sid):
+    """Remove a server and its keys. Models that use it keep their settings and keys but no longer point at the list."""
+    if not SERVER_ID.fullmatch(str(sid)):
+        raise ValueError("unknown server")
+    _store_servers([p for p in _servers() if p["id"] != sid])
     for kind in ("api", "runner"):
-        (KEYDIR / f"preset-{pid}-{kind}.key").unlink(missing_ok=True)
+        (KEYDIR / f"server-{sid}-{kind}.key").unlink(missing_ok=True)
+    s = settings.load()
+    for m in PORT:
+        if (s[m].get("remote") or {}).get("server") == sid:
+            s[m]["remote"].pop("server", None)
+    settings.save(s)
+    _cache.clear()
 
 
-def with_preset(d):
-    """The card's remote settings with a chosen preset's keys filled in where none was typed, so check() and save()
-    use them as if typed: save() then stores them for that model, like every key."""
+def with_server(d):
+    """The card's remote settings with the chosen server's address, type, runner and keys filled in: check() and save()
+    then use them as if typed, and save() stores them for that model like every key. The model name stays the card's."""
     d = dict(d or {})
-    pid = str(d.get("preset") or "")
-    if not PRESET_ID.fullmatch(pid) or not any(p["id"] == pid for p in _presets()):
-        d.pop("preset", None)
+    sid = str(d.get("server") or "")
+    p = get_server(sid) if SERVER_ID.fullmatch(sid) else None
+    if not p:
+        d.pop("server", None)
         return d
-    if not str(d.get("key") or "").strip() and not d.get("clear_key"):
-        d["key"] = _preset_key(pid, "api")
-    if not str(d.get("runner_key") or "").strip() and not d.get("runner_clear"):
-        d["runner_key"] = _preset_key(pid, "runner")
+    d.update(url=p["url"], api=p["api"], ack=p["ack"], runner=p["runner"], clear_key=False, runner_clear=False,
+             key=_server_key(sid, "api"), runner_key=_server_key(sid, "runner"))
     return d
+
+
+def sync_models(sid):
+    """After a server changed: every model that uses it gets the new address, type, runner and keys."""
+    s = settings.load()
+    for m in PORT:
+        r = s[m].get("remote") or {}
+        if r.get("server") == sid and r.get("enabled"):
+            try:
+                save(m, dict(r, **{"enabled": True, "server": sid}))
+            except ValueError as e:
+                agent.log(f"settings: {NICE[m]} could not follow the changed server {sid}: {e}")
+
+
+def merge_presets():
+    """Once, after the update that brings the server list: the old presets and every external server typed on a model's
+    card become servers in the list, and each model points at its server. The old preset file is kept as a backup.
+    -> a short account of what was moved, or None when there was nothing to do."""
+    if SERVERS.exists():
+        return None
+    old = []
+    try:
+        d = json.loads(OLD_PRESETS.read_text())
+        old = d if isinstance(d, list) else []
+    except (OSError, ValueError):
+        pass
+    out, notes = [], []
+    for p in old:
+        out.append({"id": p["id"], "name": p["name"], "url": p["url"], "api": p.get("api", "llamacpp"), "ack": bool(p.get("ack")),
+                    "runner": p.get("runner", ""), "limit": 1})
+        for kind in ("api", "runner"):
+            src = KEYDIR / f"preset-{p['id']}-{kind}.key"
+            if src.exists():
+                _secret(KEYDIR / f"server-{p['id']}-{kind}.key", src.read_text())
+        notes.append(f"The preset {p['name']} is now a server.")
+    s = settings.load()
+    for m in PORT:
+        r = s[m].get("remote") or {}
+        if not (r.get("enabled") and r.get("url")):
+            continue
+        pid = str(r.pop("preset", "") or "")
+        hit = next((x for x in out if x["id"] == pid), None) or next((x for x in out if x["url"] == r["url"] and x["runner"] == r.get("runner", "")), None)
+        if not hit:
+            host = urllib.parse.urlparse(r["url"]).netloc
+            name, n = host, 2
+            while any(x["name"].lower() == name.lower() for x in out):
+                name, n = f"{host} ({n})", n + 1
+            hit = {"id": secrets.token_hex(4), "name": name, "url": r["url"], "api": r.get("api", "llamacpp"), "ack": bool(r.get("ack")),
+                   "runner": r.get("runner", ""), "limit": 1}
+            for kind, src in (("api", KEYDIR / f"remote-{m}.key"), ("runner", KEYDIR / f"runner-{m}.key")):
+                if src.exists():
+                    _secret(KEYDIR / f"server-{hit['id']}-{kind}.key", src.read_text())
+            out.append(hit)
+            notes.append(f"The {NICE[m]}'s external server {r['url']} was saved as the server {name}.")
+        r["server"] = hit["id"]
+        s[m]["remote"] = r
+        notes.append(f"The {NICE[m]} now uses the server {hit['name']}.")
+    for m in PORT:   # a model that is back on its local model: drop the old preset pointer
+        (s[m].get("remote") or {}).pop("preset", None)
+    settings.save(s)
+    _store_servers(out)
+    if old and OLD_PRESETS.exists():
+        OLD_PRESETS.rename(OLD_PRESETS.with_name(OLD_PRESETS.name + ".bak"))
+    if notes:
+        NOTICE.write_text(json.dumps(notes))
+        agent.log("settings: external server presets merged into the server list")
+    return notes
 
 
 def check(model, d, warn=None):
@@ -261,7 +346,7 @@ def check(model, d, warn=None):
     rejected key or a server that does not answer are warnings (added to warn): you can apply anyway, for example to
     set up a server that is not running yet. Only text that cannot be used (address, model name) is refused."""
     warn = [] if warn is None else warn
-    d = with_preset(d)
+    d = with_server(d)
     if model not in PORT:
         raise ValueError("unknown server")
     d = d or {}
@@ -293,11 +378,11 @@ def check(model, d, warn=None):
             runner(model, "GET", "/status", url=run_url, key=run_key, timeout=10)
         except ValueError as e:
             warn.append(f"{NICE[model]}: {e}; its settings cannot be changed from here until it answers.")
-    return {"enabled": True, "url": url, "api": api, "model": name, "ack": ack, "runner": run_url, "preset": d.get("preset", "")}
+    return {"enabled": True, "url": url, "api": api, "model": name, "ack": ack, "runner": run_url, "server": d.get("server", "")}
 
 
 def save(model, d):
-    d = with_preset(d)          # a chosen preset's keys count as typed: stored for this model below
+    d = with_server(d)          # a chosen server's address and keys count as typed: stored for this model below
     cfg = check(model, d, [])   # warnings were shown and accepted on the page before saving
     was = enabled(model)
     typed = str(d.get("key") or "").strip()
@@ -340,38 +425,51 @@ def public(model):
     return {"enabled": enabled(model), "url": c.get("url", ""), "api": c.get("api", "llamacpp"),
             "model": c.get("model", ""), "ack": bool(c.get("ack")), "key_set": (KEYDIR / f"remote-{model}.key").exists(),
             "runner": c.get("runner", ""), "runner_key_set": (KEYDIR / f"runner-{model}.key").exists(),
-            "preset": c.get("preset", "")}
+            "server": c.get("server", "")}
 
 
 def register(app, authed):
     router = APIRouter()
+    try:
+        merge_presets()   # once, after the update that brings the server list
+    except Exception as e:
+        agent.log(f"settings: merging the server presets failed ({type(e).__name__}: {str(e)[:100]})")
 
-    @router.get("/api/remote/presets")
-    def preset_list(request: Request):
+    @router.get("/api/servers")
+    def server_list(request: Request):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
-        return {"presets": presets()}
+        try:
+            notice = json.loads(NOTICE.read_text())
+        except (OSError, ValueError):
+            notice = []
+        return {"servers": servers(), "notice": notice}
 
-    @router.post("/api/remote/presets/save")
-    async def preset_save(request: Request):
+    @router.post("/api/servers/save")
+    async def server_save(request: Request):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
         d = await request.json()
         try:
-            if str(d.get("model_key", "")) not in PORT:
-                raise ValueError("unknown server")
-            return {"ok": True, "preset": save_preset(d["model_key"], d)}
+            return {"ok": True, "server": await asyncio.to_thread(save_server, d)}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    @router.post("/api/remote/presets/delete")
-    async def preset_delete(request: Request):
+    @router.post("/api/servers/delete")
+    async def server_delete(request: Request):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
         try:
-            delete_preset((await request.json()).get("id"))
+            delete_server((await request.json()).get("id"))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
+    @router.post("/api/servers/notice/dismiss")
+    async def notice_dismiss(request: Request):
+        if not authed(request):
+            raise HTTPException(status_code=401, detail="login required")
+        NOTICE.unlink(missing_ok=True)
         return {"ok": True}
 
     @router.post("/api/remote/test")
@@ -380,12 +478,9 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         d = await request.json()
         try:
-            m = str(d.get("model_key", ""))
-            if m not in PORT:
-                raise ValueError("unknown server")
             url = norm_url(d.get("url"))
             api = d.get("api") if d.get("api") in ("llamacpp", "openai") else "llamacpp"
-            keyv = str(d.get("key") or "").strip() or saved_key(m)
+            keyv = str(d.get("key") or "").strip() or (_server_key(d["id"], "api") if SERVER_ID.fullmatch(str(d.get("id") or "")) else "")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         state, names = await asyncio.to_thread(probe, url, api, keyv)

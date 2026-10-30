@@ -73,7 +73,7 @@ run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recomm
     python3 python3-venv ca-certificates curl git cmake build-essential libcurl4-openssl-dev
 
 say "llama.cpp"
-# CPU or a GPU through Vulkan: --gpu vulkan from the installer, else what was chosen before (Settings > Hardware).
+# CPU or a GPU through Vulkan: --gpu vulkan from the installer, else what was chosen before (Settings > Servers).
 if [[ "$GPU" == vulkan ]]; then
     if (( DRY )); then echo "+ write /etc/memory-agent/backend: vulkan"; else install -d -m 700 /etc/memory-agent; echo vulkan > /etc/memory-agent/backend; fi
 fi

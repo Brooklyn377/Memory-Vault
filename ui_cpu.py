@@ -1,4 +1,4 @@
-"""Settings page, CPU speed: asks a small helper on the Proxmox host (the container cannot touch host CPU settings)."""
+"""This server's CPU speed (shown on the Servers card): asks a small helper on the Proxmox host (the container cannot touch host CPU settings)."""
 import json
 import urllib.error
 import urllib.request
@@ -66,45 +66,3 @@ def register(app, authed):
 
     app.include_router(router)
 
-
-HTML = r"""
-<style>
-#cp input[type=radio]{width:20px;height:20px;padding:0;margin:0 8px 0 0;vertical-align:middle}
-</style>
-<div id="cp"></div>
-<script>
-(function(){
-const GL={performance:"Performance (full speed)",powersave:"Power saver (lowest speed)",ondemand:"On demand (speeds up under load)",conservative:"Conservative (ramps up gently)",schedutil:"Scheduler-driven",userspace:"Manual (userspace)"};
-const ghz=k=>(k/1e6).toFixed(2)+" GHz";
-const rs=h("input",{type:"radio",name:"cpumode"}),rf=h("input",{type:"radio",name:"cpumode"});
-const sg=h("select",{}),sf=h("select",{});
-const go=h("button",{class:"pri"},"Apply CPU setting");
-const st=h("div",{class:"mut"}),msg=h("div",{class:"mut"});
-let built=false;
-function sync(){sg.disabled=!rs.checked;sf.disabled=!rf.checked}
-rs.onchange=sync;rf.onchange=sync;
-go.onclick=async()=>{msg.textContent="";
- const mode=rf.checked?"speed":"state";
- const value=mode==="speed"?Number(sf.value):sg.value;
- const r=await fetch("/api/cpu/set",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:mode,value:value})});
- const j=await r.json().catch(()=>({}));
- msg.textContent=r.ok?"Applied.":(j.detail||"Could not apply");load()};
-async function load(){
- const d=await api("/api/cpu");
- if(!d.ok){built=false;st.textContent=d.why||"Not available";[rs,rf,sg,sf,go].forEach(e=>e.disabled=true);return}
- st.textContent="Now: "+(GL[d.gov]||d.gov)+", average "+ghz(d.avg_khz)+" across "+d.cores+" cores, allowed "+ghz(d.min_khz)+" to "+ghz(d.max_khz);
- if(built)return;
- built=true;rs.disabled=false;rf.disabled=false;go.disabled=false;
- sg.replaceChildren(...d.governors.map(g=>h("option",{value:g},GL[g]||g)));
- const n=d.freqs.length,turbo=n>1&&d.freqs[n-1]-d.freqs[n-2]<20000;
- sf.replaceChildren(...d.freqs.map((k,i)=>h("option",{value:k},ghz(k)+(turbo&&i===n-1?" + Turbo":turbo&&i===n-2?" (no Turbo)":""))));
- sg.value=d.gov;
- if(d.mode==="speed")sf.value=d.max_khz;
- rs.checked=d.mode==="state";rf.checked=d.mode==="speed";sync()}
-$("#cp").replaceChildren(h("div",{class:"card"},h("h3",{},"CPU speed (host)"),st,
- h("div",{class:"fld"},h("label",{},rs,"Power state"),sg),
- h("div",{class:"fld"},h("label",{},rf,"Fixed speed"),sf),go,msg));
-load();setInterval(load,5000);
-})();
-</script>
-"""
