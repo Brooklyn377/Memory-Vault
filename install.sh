@@ -15,7 +15,7 @@ DEF_CURATOR="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF/resolve/main/LF
 
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
 BRIDGE=""; IP=""; GW=""; DNS=""; LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; SMALL=0; NOMODELS=0; PLAIN=0
-GPU=""; ADDGPU=""
+ADDGPU=""; BACKEND=""; GPUS=""; ENGINE=""
 SWEEPER_URL=""; REVIEWER_URL=""; CURATOR_URL=""
 
 usage() {
@@ -51,6 +51,9 @@ Other
   --update CTID         update the code in an existing container; config, login and data are kept
   --add-gpu CTID        pass GPUs of this host into an existing container and switch its local models to them
                         (asks which cards; --gpus LIST to say it)
+  --backend B           vulkan, cuda or rocm: the software llama.cpp runs on for the cards you picked. Without it you are
+                        asked (Vulkan is the default; the scan adds "(recommended)" to the one it expects to be fastest).
+                        CUDA and ROCm are best effort and need the host's driver; the container installs the matching libraries.
   --llama-ref REF       llama.cpp branch or tag to build (default: its newest code)
   --repo OWNER/NAME     where to download the code (default: $REPO)
   --ref REF             branch or tag of the code (default: $REF)
@@ -73,7 +76,8 @@ while [[ $# -gt 0 ]]; do
         --ip) IP="$2"; shift ;;
         --gw) GW="$2"; shift ;;
         --dns) DNS="$2"; shift ;;
-        --gpus|--gpu) GPU="$2"; shift ;;
+        --gpus|--gpu) GPUS="$2"; shift ;;
+        --backend) BACKEND="$2"; shift ;;
         --add-gpu) ADDGPU="$2"; shift ;;
         --sweeper-url) SWEEPER_URL="$2"; shift ;;
         --reviewer-url) REVIEWER_URL="$2"; shift ;;
@@ -242,73 +246,99 @@ remote_size() {
     n="$(curl -fsIL --max-time 20 "$1" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="content-length:"{n=$2} END{print n}')"
     if [[ -n "$n" ]]; then awk -v n="$n" 'BEGIN{printf "%.1f GB", n/1e9}'; else echo "? GB"; fi
 }
-# gpu_choices: name, description pairs for choose: cpu, then each GPU render device of this host with its PCI name.
-gpu_choices() {
-    local n dev pci
-    printf '%s\n%s\n' cpu "CPU only"
-    for n in /dev/dri/renderD*; do
-        [[ -e "$n" ]] || continue
-        pci="$(basename "$(readlink -f "/sys/class/drm/$(basename "$n")/device")" 2>/dev/null)"
-        dev="$(have lspci && lspci -s "$pci" 2>/dev/null | cut -d' ' -f2- | cut -c1-50)"
-        printf '%s\n%s\n' "$n" "GPU: ${dev:-$pci}"
-    done
-}
-# scan_cards: GPUCARDS (render devices) and GPUDESC (their names), the cards of this host.
-scan_cards() {
-    local gc i; GPUCARDS=(); GPUDESC=()
-    mapfile -t gc < <(gpu_choices)
-    for (( i = 2; i < ${#gc[@]}; i += 2 )); do GPUCARDS+=("${gc[i]}"); GPUDESC+=("${gc[i+1]}"); done
-}
-# norm_gpus VALUE: prints "cpu" or the render devices (space separated) VALUE stands for: none, all, numbers from the list,
-# or render devices (renderD128 or /dev/dri/renderD128), separated by commas or spaces. Prints what is wrong and fails otherwise.
-norm_gpus() {
-    local t d found out=()
-    for t in ${1//,/ }; do
-        case "${t,,}" in
-            none|cpu|0) ;;
-            all) out+=("${GPUCARDS[@]}") ;;
-            *)  found=""
-                if [[ "$t" =~ ^[0-9]+$ ]] && (( t >= 1 && t <= ${#GPUCARDS[@]} )); then found="${GPUCARDS[t-1]}"
-                else for d in "${GPUCARDS[@]}"; do [[ "$t" == "$d" || "/dev/dri/$t" == "$d" ]] && found="$d"; done; fi
-                [[ -n "$found" ]] || { echo "'$t' is not one of this host's cards (a number from 1 to ${#GPUCARDS[@]}, a render device, all or none)"; return 1; }
-                out+=("$found") ;;
-        esac
-    done
-    if (( ${#out[@]} )); then printf '%s\n' "${out[@]}" | awk '!seen[$0]++' | paste -sd' '; else echo cpu; fi
-}
-# pick_gpus "question": sets GPU to cpu or the render devices that go into the container. --gpus answers it. With a terminal it
-# always asks which cards (none is allowed). With no terminal or --yes it only goes on by itself when there is one card.
+# The graphics-card scan and the software choice are shared with the GPU-server scripts (scripts/runner-gpu.sh, next to this
+# script or from the repository).
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "$(dirname "${BASH_SOURCE[0]}")/scripts/runner-gpu.sh" ]]; then source "$(dirname "${BASH_SOURCE[0]}")/scripts/runner-gpu.sh"
+else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/runner-gpu.sh") || die "could not download the graphics-card scan"; fi
+
+# pick_gpus "question": sets SEL, the cards that go into the container (none, one or several). --gpus answers it. With a terminal it
+# always asks. With no terminal or --yes it only goes on by itself when the host has a single card.
 pick_gpus() {
-    local i ans="" out items=()
-    scan_cards
-    if [[ -n "$GPU" ]]; then ans="$GPU"
-    elif (( ${#GPUCARDS[@]} == 0 )); then GPU=cpu; return 0
+    local i ans="" out words=() items=() n
+    gpu_scan
+    n=${#GPU_NAME[@]}; SEL=()
+    if (( n == 0 )); then
+        [[ -z "$GPUS" || "${GPUS,,}" == none ]] || die "--gpus $GPUS: no graphics card was found on this host"
+        return 0
+    fi
+    if [[ -n "$GPUS" ]]; then ans="$GPUS"
     elif (( INTERACTIVE )); then
         if [[ $UI == dialog ]]; then
-            for (( i = 0; i < ${#GPUCARDS[@]}; i++ )); do items+=("${GPUCARDS[i]}" "${GPUDESC[i]}" OFF); done
+            for (( i = 0; i < n; i++ )); do items+=("$((i + 1))" "$(gpu_label "$i")" OFF); done
             ans="$(wt --title "Memory agent" --checklist "$1"$'\n'"Space marks a card. Nothing marked: the CPU only." 18 76 8 "${items[@]}")" || exit 1
-            ans="${ans//\"/}"
         else
-            for (( i = 0; i < ${#GPUCARDS[@]}; i++ )); do echo "  $((i + 1))) ${GPUDESC[i]} (${GPUCARDS[i]})" >/dev/tty; done
+            for (( i = 0; i < n; i++ )); do echo "  $((i + 1))) $(gpu_label "$i")" >/dev/tty; done
             ans="$(prompt "$1 Numbers, all or none" none "")"
         fi
-    elif (( ${#GPUCARDS[@]} == 1 )); then
+    elif (( n == 1 )); then
         echo "Only one graphics card here and nobody to ask: using it. Pass --gpus none to run on the CPU."
-        ans="${GPUCARDS[0]}"
+        ans=1
     else
         die "several graphics cards found and nobody to ask: say which go into the container with --gpus (for example --gpus 1, --gpus 1,2 or --gpus none)"
     fi
-    while ! out="$(norm_gpus "$ans")"; do
+    while :; do
+        read -ra words <<<"${ans//[,\"]/ }"
+        out="$(_pick_tokens "${words[@]}")" && break
         (( INTERACTIVE )) || die "--gpus: $out"
         ans="$(prompt "$1" none "$out")" || exit 1
     done
-    GPU="$out"
+    _pick_tokens "${words[@]}"
+}
+
+# pick_software: BACKEND (cpu, vulkan, cuda or rocm) for the cards in SEL, then PASS_* and DEVICES. Vulkan is the default; the
+# scan only adds "(recommended)". --backend answers it.
+pick_software() {
+    local ans=""
+    if (( ${#SEL[@]} == 0 )); then
+        [[ -z "$BACKEND" || "$BACKEND" == cpu ]] || echo "No card was picked, so --backend $BACKEND does not apply: the CPU is used." >&2
+        BACKEND=cpu; PASS_RENDER=(); PASS_NVIDX=(); PASS_KFD=0; DEVICES=(); return 0
+    fi
+    backend_notes
+    if [[ -n "$BACKEND" ]]; then
+        [[ "$BACKEND" == vulkan || "$BACKEND" == cuda || "$BACKEND" == rocm ]] || die "--backend must be vulkan, cuda or rocm"
+    elif (( INTERACTIVE )); then
+        if [[ $UI == dialog ]]; then
+            BACKEND="$(wt --title "Memory agent" --default-item vulkan --menu "Software llama.cpp runs on, for the cards you picked. This decides the token speed. Vulkan works on AMD, Intel and NVIDIA.
+CUDA: $NOTE_C
+ROCm: $NOTE_R" 20 76 3 \
+                vulkan "Vulkan ($TAG_V)" cuda "CUDA$TAG_C" rocm "ROCm$TAG_R")" || exit 1
+        else
+            echo "  1) Vulkan ($TAG_V)   works on AMD, Intel and NVIDIA" >/dev/tty
+            echo "  2) CUDA$TAG_C   $NOTE_C" >/dev/tty
+            echo "  3) ROCm$TAG_R   $NOTE_R" >/dev/tty
+            ans="$(prompt "Software llama.cpp runs on. Enter 1, 2 or 3" 1 "")"
+            case "$ans" in 2|cuda) BACKEND=cuda ;; 3|rocm) BACKEND=rocm ;; *) BACKEND=vulkan ;; esac
+        fi
+    else
+        BACKEND=vulkan
+        echo "Not asking (no terminal, or --yes): using Vulkan. Pass --backend cuda or --backend rocm to change it."
+    fi
+    case "$BACKEND" in
+        cuda) [[ -z "$CMISS" ]] || _warn_missing CUDA "$CMISS" ;;
+        rocm) [[ -z "$RMISS" ]] || _warn_missing ROCm "$RMISS" ;;
+    esac
+    backend_pass
+    lxc_devices
+    [[ "$BACKEND" != cuda ]] || host_nvidia
+}
+# the picked cards and software as one line for the summary
+gpu_summary() {
+    local i out=""
+    (( ${#SEL[@]} )) || { echo CPU; return; }
+    for i in "${SEL[@]}"; do out+="${out:+, }$(gpu_label "$i")"; done
+    echo "GPU $out, ${BACKEND^}"
 }
 # pass_gpu CTID DEVICE: the device into the container at the next free devN, readable by its services.
 pass_gpu() {
     local i=0
     while (( ! DRY )) && pct config "$1" | grep -q "^dev$i:"; do i=$((i + 1)); done
     run pct set "$1" --"dev$i" "$2,mode=0666"
+}
+# gpu_args: the options that tell the code inside the container which software to build llama.cpp for
+gpu_args() {
+    [[ "$BACKEND" != cpu ]] || return 0
+    printf '%s\n' --gpu "$BACKEND"
+    [[ "$BACKEND" != cuda ]] || printf '%s\n' --nv-driver "$HOST_NV_DRIVER" --cuda-pkg "$CUDA_PKG"
 }
 
 [[ $EUID -eq 0 ]] || (( DRY )) || die "run as root on the Proxmox host"
@@ -319,21 +349,21 @@ have curl || die "curl is needed"
 
 # --- --add-gpu: an existing container gets a GPU and its local models move to it ----------------------------------
 if [[ -n "$ADDGPU" ]]; then
-    scan_cards
-    (( ${#GPUCARDS[@]} )) || die "this host has no GPU render device (/dev/dri/renderD*)"
     pick_gpus "Which graphics cards go into container $ADDGPU?"
+    (( ${#SEL[@]} )) || { restore_screen; die "no card was picked, so there is nothing to pass in"; }
+    pick_software
     restore_screen
-    [[ "$GPU" != cpu ]] || die "no card was picked, so there is nothing to pass in"
-    say "Passing $GPU into container $ADDGPU"
-    for d in $GPU; do pass_gpu "$ADDGPU" "$d"; done
+    say "Passing ${DEVICES[*]} into container $ADDGPU"
+    for d in "${DEVICES[@]}"; do pass_gpu "$ADDGPU" "$d"; done
     run pct reboot "$ADDGPU"
     if ! (( DRY )); then
         for _ in $(seq 60); do pct exec "$ADDGPU" -- true >/dev/null 2>&1 && break; sleep 2; done
         pct exec "$ADDGPU" -- test -x /usr/local/bin/memory-agent-backend \
             || die "the container's code is too old for this: update it first (Settings > Updates), then run this again"
     fi
-    say "Switching its local models to the GPU (building llama.cpp for Vulkan takes a while)"
-    run pct exec "$ADDGPU" -- /usr/local/bin/memory-agent-backend vulkan
+    say "Switching its local models to the GPU (building llama.cpp for ${BACKEND^} takes a while)"
+    extra=(); [[ "$BACKEND" != cuda ]] || extra=(--nv-driver "$HOST_NV_DRIVER" --cuda-pkg "$CUDA_PKG")
+    run pct exec "$ADDGPU" -- /usr/local/bin/memory-agent-backend "$BACKEND" "${extra[@]}"
     say "Done: the local models of container $ADDGPU run on the GPU. Settings > Servers shows it."
     exit 0
 fi
@@ -399,6 +429,7 @@ else
     ask DNS "DNS server: an address (several separated by spaces), or host for the Proxmox host's" \
         "${GW:-host}" valid_dns
     pick_gpus "Which graphics cards go into the container, to run the local models on?"
+    pick_software
 
     say "Models"
     if (( SMALL )); then
@@ -433,7 +464,7 @@ else
 Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
 $CORES cores, $MEMORY MB memory, $DISK GB disk
 Bridge $BRIDGE, address $IP${GW:+, gateway $GW}, DNS $DNS
-Local models on: $([[ $GPU == cpu ]] && echo CPU || echo "GPU ${GPU// /, } (Vulkan)")
+Local models on: $(gpu_summary)
 Models:$models" 19 76 >/dev/null
         exec 1>&4 4>&-
         restore_screen
@@ -462,8 +493,8 @@ Models:$models" 19 76 >/dev/null
         --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 --features nesting=1 \
         --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
         --net0 "$net" "${dns[@]}" --onboot 1 --start 1
-    if [[ "$GPU" != cpu ]]; then   # the GPU into the container, then a restart so it appears there
-        for d in $GPU; do pass_gpu "$CTID" "$d"; done
+    if (( ${#DEVICES[@]} )); then   # the GPUs into the container, then a restart so they appear there
+        for d in "${DEVICES[@]}"; do pass_gpu "$CTID" "$d"; done
         run pct reboot "$CTID"
     fi
 fi
@@ -487,7 +518,7 @@ args=(--src /root/memory-agent-src --version "$VERSION" --repo "$REPO" --ref "$R
 [[ -n "$UPDATE" ]] && args+=(--update)
 (( SMALL )) && args+=(--small)
 [[ -n "$LLAMA_REF" ]] && args+=(--llama-ref "$LLAMA_REF")
-[[ -n "$GPU" && "$GPU" != cpu ]] && args+=(--gpu vulkan)
+mapfile -t gargs < <(gpu_args); args+=("${gargs[@]}")
 [[ -n "$SWEEPER_URL" ]] && args+=(--sweeper-url "$SWEEPER_URL")
 [[ -n "$REVIEWER_URL" ]] && args+=(--reviewer-url "$REVIEWER_URL")
 [[ -n "$CURATOR_URL" ]] && args+=(--curator-url "$CURATOR_URL")

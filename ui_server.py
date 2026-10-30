@@ -240,7 +240,7 @@ def register(app, authed):
         need(request)
         s, pend = settings.load(), applier.pending()
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
-                "servers_list": remote.servers(), "gpu": serverflags.backend() == "vulkan",
+                "servers_list": remote.servers(), "gpu": serverflags.backend() != "cpu",
                 "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
                                 "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {},
                                 "remote": remote.public(m), "device": serverflags.device(s[m]), "pending": pend.get(m)} for m in MODELS}}

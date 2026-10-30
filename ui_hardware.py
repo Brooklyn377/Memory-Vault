@@ -29,8 +29,8 @@ def status():
 
 
 def switch(to):
-    if to not in ("vulkan", "cpu"):
-        raise ValueError("vulkan or cpu")
+    if to not in ("vulkan", "cuda", "rocm", "cpu"):
+        raise ValueError("vulkan, cuda, rocm or cpu")
     if running():
         raise ValueError("a switch is already running")
     subprocess.run(["systemctl", "reset-failed", UNIT], capture_output=True, timeout=10)

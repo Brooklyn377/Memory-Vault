@@ -50,6 +50,7 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 | `--bridge NAME`, `--ip CIDR`, `--gw ADDR` | network (default: `vmbr0`, DHCP) |
 | `--dns ADDR` | DNS server, or `host` for the Proxmox host's (default: the gateway with a fixed address) |
 | `--gpus LIST` | which graphics cards of the host go into the container (`none`, `all`, or numbers such as `1,2`); without it the installer asks |
+| `--backend vulkan\|cuda\|rocm` | the software llama.cpp runs on for the cards you picked; without it the installer asks |
 | `--add-gpu CTID` | pass the GPUs you pick into an existing container and switch its models to them |
 | `--sweeper-url`, `--reviewer-url`, `--curator-url` | model download links |
 | `--small` | one tiny test model for all three, small container |
@@ -205,16 +206,23 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   approved on an Ask card, and only to a server marked read and write.
 
 ## Optional: a GPU in the container
-The local models run on the CPU by default. To run them on a GPU of the Proxmox host instead (through Vulkan: AMD,
-Intel or NVIDIA), the GPU has to be passed into the container. That needs Proxmox VE 8.1 or newer.
+The local models run on the CPU by default. To run them on a GPU of the Proxmox host instead, the GPU has to be passed into
+the container. That needs Proxmox VE 8.1 or newer.
 
 - **New install:** when the host has graphics cards, the installer lists them and asks which ones go into the container,
-  none, one or several (or use `--gpus 1`, `--gpus 1,2`, `--gpus none`). Nothing is passed in that you did not pick.
+  none, one or several (or use `--gpus 1`, `--gpus 1,2`, `--gpus none`). Then it asks which software llama.cpp runs on for
+  exactly those cards: **Vulkan** (AMD, Intel, NVIDIA; the default), **CUDA** (NVIDIA) or **ROCm** (AMD), with
+  **(recommended)** next to the one it expects to be fastest (`--backend` answers it). For CUDA it installs the NVIDIA
+  driver libraries matching the host's driver and the CUDA toolkit inside the container; for ROCm, AMD's packages.
+  CUDA and ROCm are best effort; Vulkan is the one that is well tried. Nothing is passed in that you did not pick.
+- **Several containers on one machine:** run the installer once per container and pick different cards each time (for
+  example `--gpus 1` for one container and `--gpus 2` for the next). A container only gets the devices of the cards you picked.
+  ROCm shares one compute device (`/dev/kfd`) between all AMD cards, so with ROCm the render device you pass is what separates them.
 - **Existing container:** on the Proxmox host, run
   ```bash
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)" _ --add-gpu <container ID>
   ```
-  It asks which cards, passes them in, restarts the container, and switches its local models to the GPU.
+  It asks which cards and which software, passes the cards in, restarts the container, and switches its local models to them.
 - **Settings → Servers** shows this server's hardware: whether the GPU is set up and which GPU the container sees, with
   a button to set it up (or go back to CPU only). Setting it up rebuilds llama.cpp (this takes a while), then restarts the
   model servers; if the build fails, nothing changes. After that each model's **Where it runs** offers "Local model on

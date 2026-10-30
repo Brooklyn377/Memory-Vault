@@ -144,12 +144,7 @@ say "Graphics cards and software"
 choose_gpus
 choose_backend
 HOST_NV_DRIVER=""; CUDA_PKG=""
-if [[ "$BACKEND" == cuda ]]; then
-    have nvidia-smi || die "CUDA needs the NVIDIA driver on this host (nvidia-smi was not found)"
-    HOST_NV_DRIVER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)"
-    CUDA_PKG="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1-\2/p' | head -n 1)"
-    [[ -n "$HOST_NV_DRIVER" && -n "$CUDA_PKG" ]] || die "could not read the NVIDIA driver version from nvidia-smi"
-fi
+[[ "$BACKEND" == cuda ]] && host_nvidia
 
 ask BRIDGE "Network bridge" "vmbr0"
 ask IP "Address (dhcp, or a fixed one such as 192.168.1.60/24)" "dhcp"
@@ -181,21 +176,8 @@ run pct create "$CTID" "$TSTORAGE:vztmpl/$TEMPLATE" \
     --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
     --net0 "$net" "${dns[@]}" --onboot 1 --start 1
 # the devices for the cards you picked and the software you chose, each at the next free devN
-want=()
-case "$BACKEND" in
-    vulkan) want=("${PASS_RENDER[@]}") ;;
-    rocm)   want=("$KFD" "${PASS_RENDER[@]}") ;;
-    cuda)   for n in "${PASS_NVIDX[@]}"; do want+=("/dev/nvidia$n"); done
-            want+=(/dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset) ;;
-esac
-devices=()
-for n in "${want[@]}"; do   # the helper devices (uvm, modeset) are not on every host
-    [[ -e "$n" ]] || (( DRY )) || continue
-    devices+=("$n")
-done
-if [[ "$BACKEND" != cpu ]] && (( ${#devices[@]} == 0 )) && ! (( DRY )); then
-    die "none of the devices for the cards you picked exist on this host; is the driver loaded?"
-fi
+lxc_devices
+devices=("${DEVICES[@]}")
 if (( ${#devices[@]} )); then
     say "Passing ${devices[*]} into the container"
 else

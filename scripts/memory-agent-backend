@@ -3,6 +3,7 @@
 # rebuilds llama-server for it, then restarts the model servers that are running.
 #   memory-agent-backend vulkan     GPU through Vulkan (AMD, Intel, NVIDIA): the GPU must be passed into this
 #                                   container first (on the Proxmox host: install.sh --add-gpu CTID)
+#   memory-agent-backend cuda       NVIDIA through CUDA, rocm: AMD through ROCm (best effort; the host's driver has to match)
 #   memory-agent-backend cpu        back to the CPU
 #   memory-agent-backend --status   the backend in use and the GPUs this container can see
 # The new llama-server is built beside the current one and swapped in only if the build works, so a failed build
@@ -11,11 +12,12 @@ set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 LLAMA=/opt/llama.cpp
+nv_driver=""; cuda_pkg=""
 CHOICE=/etc/memory-agent/backend
 UNITS=(llama-server memory-reviewer memory-assistant-llm memory-curator-llm)
 
 die() { echo "error: $*" >&2; exit 1; }
-gpus() { ls /dev/dri/renderD* 2>/dev/null || true; }
+gpus() { ls /dev/dri/renderD* /dev/nvidia[0-9]* 2>/dev/null || true; }   # Vulkan and ROCm use render devices, CUDA /dev/nvidiaN
 
 case "${1:-}" in
     --status)
@@ -23,21 +25,31 @@ case "${1:-}" in
         if [[ -n "$(gpus)" ]]; then echo "GPU devices: $(gpus | tr '\n' ' ')"; else echo "GPU devices: none"; fi
         if command -v vulkaninfo >/dev/null; then vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p'; fi
         exit 0 ;;
-    vulkan|cpu) want="$1" ;;
-    *) echo "usage: memory-agent-backend vulkan|cpu|--status" >&2; exit 2 ;;
+    vulkan|cuda|rocm|cpu) want="$1"; shift ;;
+    *) echo "usage: memory-agent-backend vulkan|cuda|rocm|cpu [--nv-driver V --cuda-pkg MAJOR-MINOR] | --status" >&2; exit 2 ;;
 esac
+while [[ $# -gt 0 ]]; do   # the host's NVIDIA driver version, which the container cannot read itself
+    case "$1" in
+        --nv-driver) nv_driver="$2"; shift ;;
+        --cuda-pkg) cuda_pkg="$2"; shift ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
 [[ $EUID -eq 0 ]] || die "run as root"
 [[ -d "$LLAMA/.git" ]] || die "llama.cpp is not at $LLAMA"
 
 opts=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DBUILD_SHARED_LIBS=OFF)
-if [[ "$want" == vulkan ]]; then
-    [[ -n "$(gpus)" ]] || die "this container sees no GPU (/dev/dri/renderD*). On the Proxmox host, run: install.sh --add-gpu <container ID>"
-    echo "== Vulkan packages"
+if [[ "$want" != cpu ]]; then
+    [[ -n "$(gpus)" ]] || die "this container sees no GPU (/dev/dri/renderD* or /dev/nvidia*). On the Proxmox host, run: install.sh --add-gpu <container ID>"
+    if [[ -n "$nv_driver" ]]; then
+        install -d -m 700 /etc/memory-agent
+        printf 'NV_DRIVER=%s\nCUDA_PKG=%s\n' "$nv_driver" "$cuda_pkg" > /etc/memory-agent/nvidia
+    fi
+    . /usr/local/lib/memory-agent/backend-packages.sh
     apt-get update -q
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-        libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
-    vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
-    opts+=(-DGGML_VULKAN=ON)
+    backend_prepare "$want" || die "could not set up $want"
+    opts+=("${GPUOPTS[@]}")
 fi
 
 echo "== Building llama-server for: $want (this takes a while)"
@@ -63,4 +75,4 @@ if (( ${#running[@]} )); then
     echo "== Restarting ${running[*]}"
     systemctl restart "${running[@]}"
 fi
-echo "done: the local models now run on the $([[ $want == vulkan ]] && echo GPU \(Vulkan\) || echo CPU)"
+echo "done: the local models now run on the $([[ $want == cpu ]] && echo CPU || echo "GPU ($want)")"

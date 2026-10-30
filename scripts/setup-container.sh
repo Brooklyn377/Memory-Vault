@@ -6,7 +6,7 @@
 # config, login, settings, models and the vault are kept.
 set -euo pipefail
 
-SRC=""; UPDATE=0; DRY=0; SMALL=0; LLAMA_REF=""; VERSION=""; REPO=""; REF=""; GPU=""
+SRC=""; UPDATE=0; DRY=0; SMALL=0; LLAMA_REF=""; VERSION=""; REPO=""; REF=""; GPU=""; NV_DRIVER=""; CUDA_PKG=""
 declare -A URL=([qwen]="" [gpt]="" [cur]="")
 
 APP=/opt/memory-agent
@@ -28,7 +28,7 @@ MODEL_UNITS=(llama-server memory-reviewer memory-curator-llm memory-assistant-ll
 usage() {
     cat <<EOF
 setup-container.sh --src DIR [--update] [--small] [--llama-ref REF] [--version SHA] [--repo OWNER/NAME --ref REF]
-                   [--sweeper-url URL] [--reviewer-url URL] [--curator-url URL] [--gpu vulkan] [--dry-run]
+                   [--sweeper-url URL] [--reviewer-url URL] [--curator-url URL] [--gpu vulkan|cuda|rocm [--nv-driver V --cuda-pkg MAJOR-MINOR]] [--dry-run]
 EOF
 }
 
@@ -39,6 +39,8 @@ while [[ $# -gt 0 ]]; do
         --small) SMALL=1 ;;
         --llama-ref) LLAMA_REF="$2"; shift ;;
         --gpu) GPU="$2"; shift ;;
+        --nv-driver) NV_DRIVER="$2"; shift ;;
+        --cuda-pkg) CUDA_PKG="$2"; shift ;;
         --version) VERSION="$2"; shift ;;
         --repo) REPO="$2"; shift ;;
         --ref) REF="$2"; shift ;;
@@ -73,19 +75,20 @@ run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recomm
     python3 python3-venv ca-certificates curl git cmake build-essential libcurl4-openssl-dev
 
 say "llama.cpp"
-# CPU or a GPU through Vulkan: --gpu vulkan from the installer, else what was chosen before (Settings > Servers).
-if [[ "$GPU" == vulkan ]]; then
-    if (( DRY )); then echo "+ write /etc/memory-agent/backend: vulkan"; else install -d -m 700 /etc/memory-agent; echo vulkan > /etc/memory-agent/backend; fi
+# CPU or a GPU (vulkan, cuda or rocm): --gpu from the installer, else what was chosen before (Settings > Servers).
+if [[ -n "$GPU" && "$GPU" != cpu ]]; then
+    [[ "$GPU" == vulkan || "$GPU" == cuda || "$GPU" == rocm ]] || { echo "--gpu must be vulkan, cuda or rocm" >&2; exit 2; }
+    if (( DRY )); then echo "+ write /etc/memory-agent/backend: $GPU"; else install -d -m 700 /etc/memory-agent; echo "$GPU" > /etc/memory-agent/backend; fi
+    if [[ -n "$NV_DRIVER" ]]; then   # the host's driver version, kept for later switches to CUDA
+        printf 'NV_DRIVER=%s\nCUDA_PKG=%s\n' "$NV_DRIVER" "$CUDA_PKG" | write_file /etc/memory-agent/nvidia 600
+    fi
 fi
 BACKEND="$(cat /etc/memory-agent/backend 2>/dev/null || echo cpu)"
-[[ "$GPU" == vulkan ]] && BACKEND=vulkan
-gpuopts=()
-if [[ "$BACKEND" == vulkan ]]; then
-    echo "Backend: GPU through Vulkan"
-    run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-        libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
-    gpuopts=(-DGGML_VULKAN=ON)
-fi
+[[ -n "$GPU" && "$GPU" != cpu ]] && BACKEND="$GPU"
+. "$SRC/scripts/backend-packages.sh"
+[[ "$BACKEND" == cpu ]] || echo "Backend: GPU through $BACKEND"
+backend_prepare "$BACKEND"
+gpuopts=("${GPUOPTS[@]}")
 flags="$(grep -o -w -E 'avx|avx2|avx512f|fma|f16c' /proc/cpuinfo | sort -u | tr '\n' ' ' || true)"
 echo "CPU features: ${flags:-none of avx/avx2/avx512f/fma/f16c}. Building for this CPU (GGML_NATIVE)."
 if [[ -x "$LLAMA/build/bin/llama-server" ]]; then
@@ -116,6 +119,7 @@ run "$APP/venv/bin/pip" install -q --disable-pip-version-check -r "$APP/requirem
 run "$APP/venv/bin/python" -m py_compile "$APP"/*.py
 run install -m 755 "$SRC/scripts/memory-agent-update" /usr/local/bin/memory-agent-update
 run install -m 755 "$SRC/scripts/memory-agent-backend" /usr/local/bin/memory-agent-backend
+run install -D -m 644 "$SRC/scripts/backend-packages.sh" /usr/local/lib/memory-agent/backend-packages.sh
 [[ -n "$VERSION" ]] && printf '%s\n' "$VERSION" | write_file "$APP/VERSION" 644
 # Where memory-agent-update gets new code. Written once; edit it to follow another branch.
 if [[ -n "$REPO" && ! -f "$ETC/source" ]]; then

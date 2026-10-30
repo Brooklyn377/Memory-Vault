@@ -24,12 +24,12 @@ const cpuLimit=h("input",{type:"number",min:"1",style:"width:90px"}),gpuLimit=h(
 const hwMsg=h("div",{class:"mut"}),gpuInfo=h("div",{class:"mut"}),gpuBtn=h("button",{class:"pri"},""),gpuLog=h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:40vh;overflow:auto;display:none"});
 let gpuTarget="";
 const saveLimits=h("button",{class:"pri",onclick:async function(){
- if(!await limitOk(cpuLimit.value))return;if(HW.backend==="vulkan"&&!await limitOk(gpuLimit.value))return;
+ if(!await limitOk(cpuLimit.value))return;if(HW.backend!=="cpu"&&!await limitOk(gpuLimit.value))return;
  let r=await postJ("/api/hardware/limit",{key:"cpu",n:cpuLimit.value});
- if(r.ok&&HW.backend==="vulkan")r=await postJ("/api/hardware/limit",{key:"gpu",n:gpuLimit.value});
+ if(r.ok&&HW.backend!=="cpu")r=await postJ("/api/hardware/limit",{key:"gpu",n:gpuLimit.value});
  hwMsg.textContent=r.ok?"Saved.":r.detail;if(!r.ok)window.warnPop("Could not save",[r.detail])}},"Save");
 function drawHost(){
- const gpu=HW.backend==="vulkan";gpuTarget=gpu?"cpu":"vulkan";
+ const gpu=HW.backend!=="cpu";gpuTarget=gpu?"cpu":"vulkan";
  cpuLimit.value=HW.limits.cpu;gpuLimit.value=HW.limits.gpu;
  gpuInfo.textContent=HW.gpus.length?"GPU in this container: "+(HW.vulkan.length?HW.vulkan.join(", "):HW.gpus.join(", ")):
   "No GPU in this container. To add one, run on the Proxmox host: install.sh --add-gpu <this container's ID>. It passes the GPU in; then set it up here.";

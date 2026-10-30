@@ -111,7 +111,7 @@ def check(flags, model_file="", old=None, warn=None, sup=None, models=None):
     return out
 
 
-BACKEND = Path("/etc/memory-agent/backend")   # cpu or vulkan, written by memory-agent-backend
+BACKEND = Path("/etc/memory-agent/backend")   # cpu, vulkan, cuda or rocm, written by memory-agent-backend
 
 
 def backend():
@@ -123,17 +123,17 @@ def backend():
 
 def device(s):
     """Where a local model runs: "gpu" or "cpu". Not chosen yet: the GPU once this container runs on one, else the CPU."""
-    if backend() != "vulkan":
+    if backend() == "cpu":
         return "cpu"
     return "cpu" if s.get("device") == "cpu" else "gpu"
 
 
 def build(s):
     f, parts = s.get("flags") or {}, []
-    cpu_only = backend() == "vulkan" and device(s) == "cpu"
+    cpu_only = backend() != "cpu" and device(s) == "cpu"
     if cpu_only:
         f = dict(f, gpu_layers=0)   # on the GPU build, a model set to the CPU keeps every layer off the GPU
-    elif backend() == "vulkan" and f.get("gpu_layers") in (None, ""):
+    elif backend() != "cpu" and f.get("gpu_layers") in (None, ""):
         f = dict(f, gpu_layers=999)   # on the GPU, all layers on it unless GPU layers is set on the card
     for sp in SPEC:
         v = f.get(sp["key"])

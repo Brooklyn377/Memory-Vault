@@ -156,29 +156,34 @@ _warn_missing() {   # software, what is missing
 
 # choose_backend: sets BACKEND to vulkan, cuda or rocm for the cards in SEL (cpu when there are none), and PASS_* to what goes into
 # the container. Asks, unless --backend was given, --yes was, or there is no terminal.
+backend_notes() {   # CMISS, RMISS, REC (the recommended software), and the TAG_*/NOTE_* texts of the menu lines
+    CMISS="$(cuda_missing)"; RMISS="$(rocm_missing)"; REC=vulkan
+    [[ -z "$CMISS" ]] && REC=cuda
+    [[ "$REC" == vulkan && -z "$RMISS" ]] && REC=rocm
+    TAG_V="default"; TAG_C=""; TAG_R=""
+    [[ "$REC" == vulkan ]] && TAG_V="default, recommended"
+    [[ "$REC" == cuda ]] && TAG_C=" (recommended)"
+    [[ "$REC" == rocm ]] && TAG_R=" (recommended)"
+    if [[ -z "$CMISS" ]]; then NOTE_C="NVIDIA only. Driver and container support found."
+    elif [[ "$CMISS" == no\ * ]]; then NOTE_C="NVIDIA only. ${CMISS^}."
+    else NOTE_C="NVIDIA only. Missing: $CMISS."; fi
+    if [[ -z "$RMISS" ]]; then NOTE_R="AMD only. ROCm card and compute device found."
+    elif [[ "$RMISS" == no\ * || "$RMISS" == your\ * ]]; then NOTE_R="AMD only. ${RMISS^}."
+    else NOTE_R="AMD only. Missing: $RMISS."; fi
+}
 choose_backend() {
     local cmiss rmiss rec=vulkan i
     if (( ${#SEL[@]} == 0 )); then
         if [[ -n "$BACKEND" && "$BACKEND" != cpu ]]; then echo "No card was picked, so --backend $BACKEND does not apply: running on the CPU."; fi
         BACKEND=cpu; return 0
     fi
-    cmiss="$(cuda_missing)"; rmiss="$(rocm_missing)"
-    [[ -z "$cmiss" ]] && rec=cuda
-    [[ "$rec" == vulkan && -z "$rmiss" ]] && rec=rocm
+    backend_notes
+    cmiss="$CMISS"; rmiss="$RMISS"; rec="$REC"
     if [[ -n "$BACKEND" ]]; then
         [[ "$BACKEND" == vulkan || "$BACKEND" == cuda || "$BACKEND" == rocm ]] || die "--backend must be vulkan, cuda or rocm"
         echo "Software: $BACKEND (from --backend)"
     else
-        local tag_v="default" tag_c="" tag_r="" note_c note_r
-        [[ "$rec" == vulkan ]] && tag_v="default, recommended"
-        [[ "$rec" == cuda ]] && tag_c=" (recommended)"
-        [[ "$rec" == rocm ]] && tag_r=" (recommended)"
-        if [[ -z "$cmiss" ]]; then note_c="NVIDIA only. Driver and container support found."
-        elif [[ "$cmiss" == no\ * ]]; then note_c="NVIDIA only. ${cmiss^}."
-        else note_c="NVIDIA only. Missing: $cmiss."; fi
-        if [[ -z "$rmiss" ]]; then note_r="AMD only. ROCm card and compute device found."
-        elif [[ "$rmiss" == no\ * || "$rmiss" == your\ * ]]; then note_r="AMD only. ${rmiss^}."
-        else note_r="AMD only. Missing: $rmiss."; fi
+        local tag_v="$TAG_V" tag_c="$TAG_C" tag_r="$TAG_R" note_c="$NOTE_C" note_r="$NOTE_R"
         echo "Software llama.cpp runs on, for the cards you picked (this decides the token speed):"
         echo "  1) Vulkan ($tag_v)   works on AMD, Intel and NVIDIA"
         echo "  2) CUDA$tag_c   $note_c"
@@ -196,9 +201,13 @@ choose_backend() {
         cuda) [[ -z "$cmiss" ]] || _warn_missing CUDA "$cmiss" ;;
         rocm) [[ -z "$rmiss" ]] || _warn_missing ROCm "$rmiss" ;;
     esac
-    # what goes into the container: only the picked cards that this software can use
+    backend_pass
+}
+
+# backend_pass: PASS_* = what goes into the container, only the picked cards that the software in BACKEND can use.
+backend_pass() {
+    local i unused=()
     PASS_RENDER=(); PASS_NVIDX=(); PASS_KFD=0
-    local unused=()
     for i in "${SEL[@]}"; do
         case "$BACKEND" in
             vulkan) if [[ -n "${GPU_RENDER[i]}" ]]; then PASS_RENDER+=("${GPU_RENDER[i]}"); else unused+=("$(gpu_label "$i") has no render device"); fi ;;
@@ -210,4 +219,31 @@ choose_backend() {
     done
     if (( ${#unused[@]} )); then printf 'not used by %s: %s\n' "$BACKEND" "$(IFS=';'; echo "${unused[*]}")"; fi
     return 0
+}
+
+# host_nvidia: HOST_NV_DRIVER and CUDA_PKG (for example 12-8), read from this host's driver, for a container that gets CUDA.
+host_nvidia() {
+    have nvidia-smi || die "CUDA needs the NVIDIA driver on this host (nvidia-smi was not found)"
+    HOST_NV_DRIVER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)"
+    CUDA_PKG="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1-\2/p' | head -n 1)"
+    [[ -n "$HOST_NV_DRIVER" && -n "$CUDA_PKG" ]] || die "could not read the NVIDIA driver version from nvidia-smi"
+}
+
+# lxc_devices: DEVICES = the host device files an LXC needs for the cards in SEL and the software in BACKEND (after backend_pass).
+lxc_devices() {
+    local want=() n
+    DEVICES=()
+    case "$BACKEND" in
+        vulkan) want=("${PASS_RENDER[@]}") ;;
+        rocm)   want=("$KFD" "${PASS_RENDER[@]}") ;;
+        cuda)   for n in "${PASS_NVIDX[@]}"; do want+=("$DEVDIR/nvidia$n"); done
+                want+=("$DEVDIR/nvidiactl" "$DEVDIR/nvidia-uvm" "$DEVDIR/nvidia-uvm-tools" "$DEVDIR/nvidia-modeset") ;;
+    esac
+    for n in "${want[@]}"; do   # the helper devices (uvm, modeset) are not on every host
+        [[ -e "$n" ]] || (( DRY )) || continue
+        DEVICES+=("$n")
+    done
+    if [[ "$BACKEND" != cpu ]] && (( ${#DEVICES[@]} == 0 )) && ! (( DRY )); then
+        die "none of the devices for the cards you picked exist on this host; is the driver loaded?"
+    fi
 }
