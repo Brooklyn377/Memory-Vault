@@ -81,6 +81,10 @@ set to 1 still take turns there.
 The same card has the **priority** list: drag the models into the order of the queue. When several wait to work, the
 first in the list goes first. Priority never takes the turn from a model that is working.
 
+- **The power button on each model's card is only on and off.** Hold it to turn a model on: nothing else changes, it does
+  not skip the queue or push anyone out; the manager loads it when it has work and its turn comes, like any other model.
+  Hold it again to turn the model off (also while it is waiting): its server stops and it asks for no turn until you turn
+  it on again.
 - **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page
   (default 10), and always until its running call finishes; then the waiting model that is first in the priority list
   is loaded. A model that has had nothing to do for half a minute gives way at once. A model in the middle of an

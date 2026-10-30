@@ -28,6 +28,9 @@ def take(wait=600):
     """Ask for the Curator's turn and wait until its group is the loaded one. False if the others got busy meanwhile or
     the turn did not come within `wait` seconds."""
     import turns
+    import power
+    if power.off("cur"):   # turned off by you
+        return False
     HOLD.write_text("1")
     if not turns.others_idle("cur"):
         HOLD.unlink(missing_ok=True)

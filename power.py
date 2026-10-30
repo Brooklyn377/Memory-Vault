@@ -67,14 +67,14 @@ def state(m):
     if turns.managed(m) and h != "ready" and not (h == "loading" or applier._active(m)) and not off(m):
         if m in turns.wants():
             held = [turns.NICE[x] for x in turns.active()["group"] if x != m]
-            return {"state": "waiting", "detail": "Waiting for its turn" + (f": {', '.join(held)} {'has' if len(held) == 1 else 'have'} it now." if held else ".")}
-        return {"state": "unloaded", "detail": "Not loaded. It is loaded when something needs it, and the others wait their turn (Settings, Model groups)."}
+            return {"state": "waiting", "detail": "On, waiting for its turn" + (f": {', '.join(held)} {'has' if len(held) == 1 else 'have'} it now." if held else ".")}
+        return {"state": "ready", "detail": "On. It is loaded when it has work and its turn comes (Settings, Model groups). Press the button to turn it off."}
     if m == "pa":
         return {"state": "unloaded", "detail": "Not loaded. To run it here: choose its model file under Server, press "
                 "Apply all, then hold to load. To run it on another machine: set Where it runs to External server, "
                 "fill in the address and press Apply all; no model file is needed."}
-    if m != "cur" and off(m):
-        return {"state": "unloaded", "detail": "Unloaded by you. Its calls wait until you load it."}
+    if off(m):
+        return {"state": "unloaded", "detail": "Off. " + ("It does not run until you turn it on." if m == "cur" else "Its calls wait until you turn it on.")}
     if m != "cur" and swap.holding():
         return {"state": "unloaded", "detail": "Unloaded while the Curator works.", "swapped": True}
     return {"state": "unloaded", "detail": "Loads when the Curator runs." if m == "cur" else "Not answering."}
@@ -92,11 +92,9 @@ def load(m):
     if m == "pa" and not settings.get("pa")["model_file"]:
         raise ValueError("Choose the Assistant's model file under Server and press Apply all first.")
     import turns
-    if turns.managed(m):   # it takes turns: the manager loads it, together with its group, as soon as it can
+    if turns.managed(m):   # on is only on: the manager loads it when it has work and its turn comes, like any other model
         _flag(m, "off").unlink(missing_ok=True)
-        _flag(m, "on").write_text("1")   # a request: it stays until the model is loaded; then it yields like any other
-        turns.want(m)
-        agent.log(f"settings: {NICE[m]} loading requested by you; it is loaded when the models that have the turn are idle")
+        agent.log(f"settings: {NICE[m]} turned on by you")
         return
     if m in ("qwen", "gpt") and swap.holding():
         raise ValueError("The Curator holds the memory right now. Unload the Curator first; the Sweeper and Reviewer load back after that.")
@@ -155,6 +153,10 @@ def unload(m):
         subprocess.run(["systemctl", "disable", UNIT[m]], timeout=30)
     else:
         _flag(m, "off").write_text("1")
+    if m == "cur":
+        _flag(m, "off").write_text("1")   # off is off: it asks for no turn until you turn it on
+    import turns
+    turns.clear_want(m)
     subprocess.run(["systemctl", "stop", "--no-block", UNIT[m]], timeout=30)
     subprocess.run(["systemctl", "kill", "--signal=SIGKILL", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} unloaded by you")
@@ -238,14 +240,14 @@ function powerButton(key,u){
  u.btn=btn;u.txt=txt;return btn}
 async function refresh(){try{
  const d=await api("/api/model/power");
- const L={loaded:"Loaded",loading:"Loading",unloaded:"Unloaded",waiting:"Waiting",external:"External server",stopped:"Stopped"};
+ const L={loaded:"Loaded",loading:"Loading",unloaded:"Off",ready:"On",waiting:"On, waiting",external:"External server",stopped:"Stopped"};
  M.forEach(function(a){const u=UI[a[0]],s=d[a[0]];if(!u||!s)return;
   u.chip.textContent=L[s.state]||s.state;u.chip.className="mc"+(s.state==="loaded"?" on":"");
   u.sub.textContent=s.detail||"";
   if(s.state==="external"){u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to stop"}
   else if(s.state==="stopped"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to start"}
   else if(s.swapped){u.act="";u.btn.disabled=true;u.txt.textContent="Curator working"}
-  else if(s.state==="unloaded"||s.state==="waiting"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
+  else if(s.state==="unloaded"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
   else{u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to unload"}})
 }catch(e){}}
 function ready(){

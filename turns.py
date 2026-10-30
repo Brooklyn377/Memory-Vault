@@ -249,14 +249,6 @@ def wants(now=None):
         import swap
         if swap.holding():
             out.setdefault("cur", {"at": now})
-        loaded = active()["group"]
-        for m in MODELS:
-            if power.manual(m) and m not in loaded:   # your Hold to load is a request until it is loaded; after that it is like any other model
-                try:
-                    at = (power.STATE / f"model_on_{m}").stat().st_mtime
-                except OSError:
-                    at = now
-                out[m] = {"at": at}
     except Exception:
         pass
     return {m: d for m, d in out.items() if not _off(m)}
