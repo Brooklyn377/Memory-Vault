@@ -95,7 +95,7 @@ def load(m):
     if turns.managed(m):   # it takes turns: the manager loads it, together with its group, as soon as it can
         _flag(m, "off").unlink(missing_ok=True)
         _flag(m, "on").write_text("1")   # kept loaded until you unload it
-        turns.want(m, urgent=True)
+        turns.want(m)
         agent.log(f"settings: {NICE[m]} loading requested by you; it is loaded when the models that have the turn are idle")
         return
     if m in ("qwen", "gpt") and swap.holding():

@@ -230,7 +230,7 @@ def chat(model, endpoint, body, label, slot=None):
     def give_up():   # while waiting for its turn: the server was switched or stopped
         if _aborted_since(model, began):
             raise Aborted(f"{model} was switched or stopped")
-    with turns.lease(model, urgent=(label == "chat"), stop=give_up):   # waits for the model's turn (model groups), local or external
+    with turns.lease(model, stop=give_up):   # waits for the model's turn (model groups), local or external
         if external:
             return _chat_remote(model, body, label)
         return _chat_local(model, endpoint, body, label, slot)

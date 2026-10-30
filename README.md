@@ -65,21 +65,24 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
    warning instead of being refused. Only values that cannot work at all (a negative count, a probability above 1)
    are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
-## Model groups: which models work at the same time
-Models that run on the **same hardware** (this machine, or one external server) work **one at a time** by default and
-take turns: a call for a model that is not working waits, and the model gets its turn when the one that has it is
-idle. Models on different machines never wait for each other. The local model servers are therefore not started at
-boot; the turn manager (in the web service) starts and stops them.
+## Model groups and priority: which models work at the same time
+Models that run on the **same hardware** (this machine's CPU, this machine's GPU, or one external server) work **one at a
+time** by default and take turns: a call for a model that is not working waits, and the model gets its turn when the one
+that has it is idle. Models on different hardware never wait for each other. The local model servers are therefore not
+started at boot; the turn manager (in the web service) starts and stops them.
 
-Under **Settings → Model groups**, **Add group** and tick the models that may work at the same time (for example Sweeper
-and Reviewer, if memory holds both). A group is only a list: a model can be in several groups, and the models working at
-the same time on one machine must all be in one group. When several models want the same hardware, the **Assistant goes first, then the
-Reviewer, the Sweeper and the Curator**.
+Each piece of hardware has a number: how many models may work on it at the same time (default 1). Under
+**Settings → Model groups**, a group is a list of models that are allowed to work together: **Add group** and tick them.
+A model can be in several groups. Groups only matter on hardware whose number is 2 or more: then only models that share a
+group work together there, up to that number. Groups never raise the number.
+
+The same card has the **priority** list: drag the models into the order of the queue. When several wait for the same
+hardware, the first in the list goes first. Priority never takes the turn from a model that is working.
 
 - **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page
-  (default 10), and always until its running call finishes; then the waiting model with the highest priority goes. A
-  model that has had nothing to do for half a minute gives way at once. The Assistant, a chat message from you, and a
-  model you load by hand with the power button, do not wait for the minutes.
+  (default 10), and always until its running call finishes; then the waiting model that is first in the priority list
+  is loaded. A model that has had nothing to do for half a minute gives way at once. A model in the middle of an
+  Assistant task (between its tool calls) is not given away.
 - **The Curator** asks for its turn when the other local models have nothing to do, and gives it back when one wants
   to run.
 - **Updating from an earlier version:** the servers that are running are kept as they are until another model needs

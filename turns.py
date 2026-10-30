@@ -1,16 +1,18 @@
 """Which models may work at the same time, and whose turn it is.
 
-Models that run on the same hardware (this machine, or one external server) work one at a time, unless a group lists
-them together: a group is a list of models that may work at the same time, and a model may be in several groups. The
-models working at one time on the same hardware must all be in one group; the rest take turns. Models on different hardware never wait for each other. When several
-want the same hardware, the Assistant goes first, then the Reviewer, the Sweeper and the Curator.
+Models that run on the same hardware (the host's CPU, the host's GPU, or one external server) work as many at a time as
+that hardware's number says (default 1: they take turns). When the number is 2 or more, only models that share a group
+may work together; a group is a list of models, and a model may be in several. Models on different hardware never wait
+for each other. When several want the same hardware, the queue goes by the priority you set (the Assistant, Reviewer,
+Sweeper and Curator at first). A model that is working is never taken over: the next in the queue waits until it is
+idle or its turn minutes are over, and never in the middle of an Assistant task.
 
 How it works. A call that needs a model asks for it (a "want") and holds a "lease" while it runs (thinklog.chat does
 both). The manager, a thread of the web service, looks at the wants and leases every few seconds: when a wanted model may not
 work together with one that is working, it lets that one finish its running call, stops its server if it is on this
 machine, and starts the wanted model. A model that still has work keeps its turn for at least `turn_minutes` before it
-must give way; the Assistant, a message you send in the chat and a model you load by hand do not wait for that. Callers only ever write small files
-in <state>/turns, so any service can use this; only the manager starts and stops model servers.
+must give way. Callers only ever write small files in <state>/turns, so any service can use this; only the manager
+starts and stops model servers.
 
 If the manager is not running (its heartbeat is old), callers do not wait for turns: they behave as before."""
 import fcntl
@@ -28,9 +30,10 @@ DIR = agent.STATE / "turns"
 LEASES = DIR / "leases"
 HOLDS = DIR / "holds"   # a model working through a whole task (several calls with other work between them)
 CONFIG = agent.STATE / "model_groups.json"
+LIMITS = agent.STATE / "hardware_limits.json"   # {hardware: how many may work at once}, set on the servers card
 ACTIVE, BEAT, LOCK = DIR / "active.json", DIR / "beat", DIR / "lock"
 MODELS = ("qwen", "gpt", "cur", "pa")
-PRIORITY = ("pa", "gpt", "qwen", "cur")   # who goes first when models that may not work together both want to
+PRIORITY = ("pa", "gpt", "qwen", "cur")   # the default order of the queue; you can drag it into another order
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 FRESH = 30         # seconds a want counts after it was last made (a waiting call repeats it every few seconds)
 QUIET = 30         # seconds after its last call that a model still counts as busy: its group is not given away between two calls
@@ -58,10 +61,11 @@ def config():
         minutes = max(0, int(float((d or {}).get("turn_minutes", 10))))
     except (TypeError, ValueError):
         minutes = 10
-    return {"groups": groups, "turn_minutes": minutes}
+    order = [m for m in dict.fromkeys((d or {}).get("priority") or []) if m in MODELS] if isinstance(d, dict) else []
+    return {"groups": groups, "turn_minutes": minutes, "priority": order + [m for m in PRIORITY if m not in order]}
 
 
-def save_config(groups, turn_minutes):
+def save_config(groups, turn_minutes, priority=None):
     """Store the groups exactly as given: a model may be in several. -> (config, notes; none now, kept for the page)."""
     out = []
     for g in groups or []:
@@ -74,7 +78,8 @@ def save_config(groups, turn_minutes):
         raise ValueError("minutes must be a number")
     DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"groups": out, "turn_minutes": minutes}, indent=1))
+    order = [m for m in dict.fromkeys(priority if priority is not None else config()["priority"]) if m in MODELS]
+    tmp.write_text(json.dumps({"groups": out, "turn_minutes": minutes, "priority": order + [m for m in PRIORITY if m not in order]}, indent=1))
     os.replace(tmp, CONFIG)
     agent.log("settings: model groups " + (", ".join("+".join(NICE[m] for m in g["models"]) for g in out) or "none (one model at a time on each machine)"))
     return config(), []
@@ -96,24 +101,35 @@ def hardware(model):
     return "server " + (server_of(model) or model)
 
 
+def limit(model):
+    """How many models may work at the same time on this model's hardware (default 1: they take turns)."""
+    try:
+        return max(1, int(json.loads(LIMITS.read_text()).get(hardware(model), 1)))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 1
+
+
 def together(a, b):
     return any(a in g["models"] and b in g["models"] for g in config()["groups"])
 
 
 def blockers(model, loaded):
-    """The loaded models on the same hardware that must finish before this one can work: the models that working
-    together would need a group for. Models working at one time must all be in one group, so the group that this model
-    is in and that holds most of the loaded ones is the one it joins; the rest are in its way. [] means it fits."""
+    """The loaded models on the same hardware that must finish before this one can work. The hardware's number says how
+    many may work at once, and when it is 2 or more only models that share a group may work together. [] means it fits."""
     same = [x for x in loaded if x != model and hardware(x) == hardware(model)]
     if not same:
         return []
+    n = limit(model)
+    if n <= 1:
+        return same
     best = max((g["models"] for g in config()["groups"] if model in g["models"]), key=lambda g: sum(x in g for x in same), default=[])
-    return [x for x in same if x not in best]
+    keep = [x for x in same if x in best][:n - 1]
+    return [x for x in same if x not in keep]
 
 
 def conflict(a, b):
-    """True if the two models may not work at the same time: same hardware and no group has both."""
-    return a != b and hardware(a) == hardware(b) and not together(a, b)
+    """True if the two models may not work at the same time: same hardware, and either one at a time or no group has both."""
+    return a != b and hardware(a) == hardware(b) and (limit(a) <= 1 or not together(a, b))
 
 
 # ---------- what is local, and whether the manager is there ----------
@@ -162,16 +178,16 @@ def _off(model):
 
 
 # ---------- wants, leases and the loaded group ----------
-def want(model, urgent=False):
+def want(model):
     """This model is needed now. Repeat while waiting: a want older than FRESH seconds is forgotten."""
     DIR.mkdir(parents=True, exist_ok=True)
     tmp = DIR / f".want-{model}.{os.getpid()}"
-    tmp.write_text(json.dumps({"at": time.time(), "urgent": bool(urgent)}))
+    tmp.write_text(json.dumps({"at": time.time()}))
     os.replace(tmp, DIR / f"want-{model}")
 
 
 def wants(now=None):
-    """-> {model: {"at", "urgent"}} for models wanted lately, plus the ones held on purpose: the Curator while it holds a
+    """-> {model: {"at"}} for models wanted lately, plus the ones held on purpose: the Curator while it holds a
     turn, and models you loaded by hand."""
     now = now or time.time()
     out = {}
@@ -186,10 +202,10 @@ def wants(now=None):
         import power
         import swap
         if swap.holding():
-            out.setdefault("cur", {"at": now, "urgent": False})
+            out.setdefault("cur", {"at": now})
         for m in MODELS:
             if power.manual(m):
-                out[m] = {"at": now, "urgent": True}
+                out[m] = {"at": now}
     except Exception:
         pass
     return {m: d for m, d in out.items() if not _off(m)}
@@ -271,7 +287,7 @@ def _lock():
 
 
 @contextmanager
-def lease(model, urgent=False, stop=None):
+def lease(model, stop=None):
     """Hold this model's turn while a call runs. Waits (asking for the turn) until the model is loaded in the group that
     has it. stop(): called while waiting; raise from it to give up (a server switch or stop). Does nothing without the manager."""
     import applier
@@ -281,7 +297,7 @@ def lease(model, urgent=False, stop=None):
     _dirs()
     path = None
     while path is None:
-        want(model, urgent)
+        want(model)
         if stop:
             stop()
         with _lock():
@@ -306,8 +322,7 @@ def lease(model, urgent=False, stop=None):
 @contextmanager
 def hold(model):
     """Keep this model's turn for a whole task: between its calls (a tool running, a page loading) nothing takes the turn
-    away, and the minutes of the group do not end it. Only a message you send in the chat or a model you load by hand
-    still goes first. Does nothing without the manager."""
+    away, and the turn minutes do not end it. Does nothing without the manager."""
     if not managed(model):
         yield
         return
@@ -395,8 +410,8 @@ def step(now=None):
         if not loaded and running:   # servers already up (after an update or a restart): they are the ones working now
             loaded, since = list(running), {m: now for m in running}
             did.append("adopt " + "+".join(loaded))
-        # who goes first: you (a chat message, a model loaded by hand), then the Assistant, Reviewer, Sweeper, Curator
-        order = sorted(w, key=lambda m: (not (w[m]["urgent"] or m == "pa"), PRIORITY.index(m), w[m]["at"]))
+        # the queue: by the priority you set (Assistant, Reviewer, Sweeper, Curator at first). A higher one waits for a working one
+        order = sorted(w, key=lambda m: (cfg["priority"].index(m), w[m]["at"]))
         in_the_way = set()
         waiting = []   # wanted models that had to wait: a lower one may not slip in front of them
         for m in order:
@@ -413,14 +428,13 @@ def step(now=None):
                 continue
             waiting.append(m)
             in_the_way |= set(block)
-            first = w[m]["urgent"] or m == "pa"
 
             def can_go(x):
                 inside = x in w or counts.get(x) or held.get(x) or used_lately(x, now)   # it still has work
                 expired = now - since.get(x, now) >= cfg["turn_minutes"] * 60
                 # it answered at least one call (or waited long for a server that never came up) before giving way
                 served = used_after(x, since.get(x, now)) or now - since.get(x, now) > 900
-                return first or not inside or (expired and served and not held.get(x))
+                return not inside or (expired and served and not held.get(x))
             if all(can_go(x) for x in block):
                 drain |= set(block)   # no new calls for them: their running calls finish, then this model comes
                 if not any(counts.get(x) for x in block):
