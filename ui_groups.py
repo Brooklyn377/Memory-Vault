@@ -1,5 +1,5 @@
-"""Settings page, Model groups: lists of models that may work at the same time (on hardware whose number allows more than
-one), and the priority order of the queue. A model may be in several lists."""
+"""Settings page, Model groups: lists of models that are allowed to work at the same time, wherever they run, and the
+priority order of the queue. A model may be in several lists."""
 from fastapi import APIRouter, HTTPException, Request
 
 import applier
@@ -93,7 +93,7 @@ async function save(){
  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
  msg.textContent="Saved."+((j.notes||[]).length?" "+j.notes.join(" "):"");load()}
 $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
- h("div",{class:"mut"},"A group is a list of models that are allowed to work at the same time. A model can be in several groups. Groups only matter on hardware that is set to more than one model at a time (see Servers): then only models that share a group may work together there. On any other hardware models take turns, and the queue goes by the priority below."),
+ h("div",{class:"mut"},"A group is a list of models that are allowed to work at the same time, wherever they run. A model can be in several groups. The models working at one time must all be in one group: models that no group lists together take turns, even on different machines. With no groups, one model works at a time. A server's number (on the Servers card) also caps how many may work on that server; groups never raise it."),
  h("div",{style:"margin:12px 0 4px;font-weight:600"},"Priority (drag to reorder)"),
  h("div",{class:"mut"},"The first goes first when several wait for the same hardware. It never takes the turn from a model that is working."),
  prio,

@@ -66,18 +66,20 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
    are refused. Under Limits and guardrails, -1 turns a limit off; each limit's help line says what that means.
 
 ## Model groups and priority: which models work at the same time
-Models that run on the **same hardware** (this machine's CPU, this machine's GPU, or one external server) work **one at a
-time** by default and take turns: a call for a model that is not working waits, and the model gets its turn when the one
-that has it is idle. Models on different hardware never wait for each other. The local model servers are therefore not
-started at boot; the turn manager (in the web service) starts and stops them.
+By default **one model works at a time** and the others take turns: a call for a model that is not working waits, and the
+model gets its turn when the one that has it is idle. The local model servers are therefore not started at boot; the turn
+manager (in the web service) starts and stops them.
 
-Each piece of hardware has a number: how many models may work on it at the same time (default 1). Under
-**Settings → Model groups**, a group is a list of models that are allowed to work together: **Add group** and tick them.
-A model can be in several groups. Groups only matter on hardware whose number is 2 or more: then only models that share a
-group work together there, up to that number. Groups never raise the number.
+Under **Settings → Model groups**, a group is a list of models that are allowed to work at the same time, wherever they
+run: **Add group** and tick them. A model can be in several groups. The models working at one time must all be in one
+group, so models that no group lists together take turns, even on different machines.
 
-The same card has the **priority** list: drag the models into the order of the queue. When several wait for the same
-hardware, the first in the list goes first. Priority never takes the turn from a model that is working.
+Each piece of hardware (this server's CPU, this server's GPU, each external server on the Servers card) also has a
+number: the most models that may work on it at once (default 1). Groups never raise it: two grouped models on a server
+set to 1 still take turns there.
+
+The same card has the **priority** list: drag the models into the order of the queue. When several wait to work, the
+first in the list goes first. Priority never takes the turn from a model that is working.
 
 - **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page
   (default 10), and always until its running call finishes; then the waiting model that is first in the priority list
@@ -298,6 +300,13 @@ above Context changes to "Managed through the runner on that machine".
 
 To check it worked: the server line at the top of the card no longer says "running with … tokens of context, not
 the … you set", and the Thinking tab shows the new context. llama.cpp rounds the context up to a multiple of 256.
+
+### Download and delete models on that machine
+With a runner, the server's entry on **Settings → Servers** has **Models on that machine**: the model files there with
+their sizes, a box to paste a `.gguf` link, and a delete button for each file. The download happens on that machine,
+straight from the link (Hugging Face links start at once; any other host asks for your OK first). Deleting a model that
+a card still uses warns you first. Download a model, then pick it under **Model on that server** on a card and press
+Apply all.
 
 ### Use the same server for other models
 Pick the same server in **Where it runs** on any model's card; the address, keys and runner are kept once, on the server.

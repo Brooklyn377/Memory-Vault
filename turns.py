@@ -1,11 +1,12 @@
 """Which models may work at the same time, and whose turn it is.
 
-Models that run on the same hardware (the host's CPU, the host's GPU, or one external server) work as many at a time as
-that hardware's number says (default 1: they take turns). When the number is 2 or more, only models that share a group
-may work together; a group is a list of models, and a model may be in several. Models on different hardware never wait
-for each other. When several want the same hardware, the queue goes by the priority you set (the Assistant, Reviewer,
-Sweeper and Curator at first). A model that is working is never taken over: the next in the queue waits until it is
-idle or its turn minutes are over, and never in the middle of an Assistant task.
+A group is a list of models that are allowed to work at the same time, wherever they run; a model may be in several.
+The models working at one time must all be in one group, so models that no group lists together take turns, even on
+different machines. With no groups, one model works at a time. Each piece of hardware (the host's CPU, the host's GPU,
+or one external server) also has a number: the most models that may work on it at once (default 1), which groups never
+raise. When several want to work, the queue goes by the priority you set (the Assistant, Reviewer, Sweeper and Curator
+at first). A model that is working is never taken over: the next in the queue waits until it is idle or its turn
+minutes are over, and never in the middle of an Assistant task.
 
 How it works. A call that needs a model asks for it (a "want") and holds a "lease" while it runs (thinklog.chat does
 both). The manager, a thread of the web service, looks at the wants and leases every few seconds: when a wanted model may not
@@ -154,22 +155,25 @@ def together(a, b):
 
 
 def blockers(model, loaded):
-    """The loaded models on the same hardware that must finish before this one can work. The hardware's number says how
-    many may work at once, and when it is 2 or more only models that share a group may work together. [] means it fits."""
-    same = [x for x in loaded if x != model and hardware(x) == hardware(model)]
-    if not same:
+    """The loaded models that must finish before this one can work. The models working at one time must all be in one
+    group (wherever they run), and no hardware may have more working than its number says. [] means it fits."""
+    others = [x for x in loaded if x != model]
+    if not others:
         return []
-    n = limit(model)
-    if n <= 1:
-        return same
-    best = max((g["models"] for g in config()["groups"] if model in g["models"]), key=lambda g: sum(x in g for x in same), default=[])
-    keep = [x for x in same if x in best][:n - 1]
-    return [x for x in same if x not in keep]
+    best = max((g["models"] for g in config()["groups"] if model in g["models"]), key=lambda g: sum(x in g for x in others), default=[])
+    keep, used = [], {hardware(model): 1}
+    for x in others:
+        hw = hardware(x)
+        if x in best and used.get(hw, 0) < limit(x):
+            keep.append(x)
+            used[hw] = used.get(hw, 0) + 1
+    return [x for x in others if x not in keep]
 
 
 def conflict(a, b):
-    """True if the two models may not work at the same time: same hardware, and either one at a time or no group has both."""
-    return a != b and hardware(a) == hardware(b) and (limit(a) <= 1 or not together(a, b))
+    """True if the two models may not work at the same time: no group lists them together, or they share hardware that
+    takes one model at a time."""
+    return a != b and (not together(a, b) or (hardware(a) == hardware(b) and limit(a) <= 1))
 
 
 # ---------- what is local, and whether the manager is there ----------

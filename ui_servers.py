@@ -73,6 +73,35 @@ const cpuSpeed=h("details",{class:"sec"},h("summary",{},"CPU speed (host)"),cs.s
  h("div",{class:"fld"},h("label",{},cs.rs,"Power state"),cs.sg),h("div",{class:"fld"},h("label",{},cs.rf,"Fixed speed"),cs.sf),cs.go,cs.msg);
 // ---------- external servers ----------
 let SERVERS=[];
+// The model files on that machine (through its runner): list, download from a link, delete.
+function modelsBox(p){
+ const list=h("div",{}),msg=h("div",{class:"mut"}),link=h("input",{type:"text",placeholder:"https://huggingface.co/.../model.gguf"});
+ const gb=function(n){return (n/1073741824).toFixed(2)+" GB"};
+ let timer=null;
+ async function refresh(){clearTimeout(timer);
+  try{const d=await api("/api/servers/models?id="+p.id);
+   list.replaceChildren(
+    ...d.downloads.map(function(x){const live=x.status==="running"||x.status==="starting";
+     return h("div",{style:"margin:6px 0"},h("div",{},x.name+" · "+(live?(x.total?Math.round(x.done*100/x.total)+"% of "+gb(x.total):"starting"):x.status+(x.error?": "+x.error:""))),
+      h("button",{onclick:async function(){await postJ("/api/servers/download/cancel",{id:p.id,name:x.name});refresh()}},live?"Cancel":"Clear"))}),
+    ...d.models.map(function(m){return h("div",{style:"margin:6px 0"},h("div",{},m.name+" · "+gb(m.size)+(m.use.length?" · used by "+m.use.join(", "):"")),
+      h("button",{onclick:async function(){
+       const lines=m.use.length?["It is the model of: "+m.use.join(", ")+". They stop working until you pick another model."]:["It is not used by any model here."];
+       if(!await window.warnPop("Delete "+m.name+" on "+p.name+"?",lines.concat(["The file is removed from that machine."]),"Delete","Keep it"))return;
+       const r=await postJ("/api/servers/models/delete",{id:p.id,name:m.name});msg.textContent=r.ok?"Deleted.":r.detail;refresh()}},"Delete"))}),
+    ...(d.models.length||d.downloads.length?[]:[h("div",{class:"mut"},"No model files on that machine yet.")]));
+   if(d.downloads.some(function(x){return x.status==="running"||x.status==="starting"}))timer=setTimeout(refresh,2000)}
+  catch(e){list.textContent=e.message}}
+ async function download(confirmed){
+  const r=await postJ("/api/servers/download",{id:p.id,url:link.value,confirmed:confirmed});
+  if(r.ok){msg.textContent="Downloading on "+p.name+".";link.value="";refresh();return}
+  if(r.detail.indexOf("third_party:")===0){
+   if(await window.warnPop("This link is not on Hugging Face",["The file would be downloaded from "+r.detail.slice(12)+" onto "+p.name+". Only go on if you trust it."],"Download anyway","Cancel"))download(true);return}
+  msg.textContent=r.detail;window.warnPop("Could not start the download",[r.detail])}
+ const d=h("details",{class:"sec"},h("summary",{},"Models on that machine"),list,
+  h("div",{class:"fld"},h("label",{},"Download from a link (a .gguf file; it downloads on that machine)"),link),
+  h("button",{class:"pri",onclick:function(){download(false)}},"Download"),msg);
+ d.ontoggle=function(){if(d.open)refresh()};return d}
 function field(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
 function serverForm(p,isNew){
  const name=h("input",{type:"text",maxlength:"60",placeholder:"a name, e.g. Gaming PC"});name.value=p.name||"";
@@ -104,6 +133,7 @@ function serverForm(p,isNew){
   h("div",{class:"mut",style:"margin-top:10px"},"Model runner (optional): run model_runner.py on that machine, and each model's card sets its model, context, slots and flags (see the README)."),
   field("Runner address",run),field("Runner token",rk),field("Clear the saved token",rc),
   field("Models that may work on it at the same time",lim),
+  isNew||!p.runner?null:modelsBox(p),
   test,save,isNew?null:del,msg);
  d.open=isNew;return d}
 async function loadServers(){try{const d=await api("/api/servers");SERVERS=d.servers;

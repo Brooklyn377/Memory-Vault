@@ -286,6 +286,25 @@ def sync_models(sid):
                 agent.log(f"settings: {NICE[m]} could not follow the changed server {sid}: {e}")
 
 
+def server_runner(sid, method, path, body=None, timeout=30):
+    """Call the runner of a server in the list. Raises ValueError with a plain reason."""
+    p = get_server(sid)
+    if not p or not p.get("runner"):
+        raise ValueError("this server has no runner: add its runner address on the Servers card")
+    return runner("qwen", method, path, body, timeout, url=p["runner"], key=_server_key(sid, "runner"))
+
+
+def models_using(sid, name):
+    """The models that run this model file on this server (their saved model name on it)."""
+    s = settings.load()
+    out = []
+    for m in PORT:
+        r = s[m].get("remote") or {}
+        if r.get("enabled") and r.get("server") == sid and str(r.get("model") or "").replace("\\", "/").rsplit("/", 1)[-1] == name:
+            out.append(NICE[m])
+    return out
+
+
 def merge_presets():
     """Once, after the update that brings the server list: the old presets and every external server typed on a model's
     card become servers in the list, and each model points at its server. The old preset file is kept as a backup.
@@ -463,6 +482,47 @@ def register(app, authed):
             delete_server((await request.json()).get("id"))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
+    def need(request):
+        if not authed(request):
+            raise HTTPException(status_code=401, detail="login required")
+
+    async def to_runner(sid, method, path, body=None):
+        try:
+            return await asyncio.to_thread(server_runner, sid, method, path, body)
+        except ValueError as e:
+            if "third_party:" in str(e):
+                raise HTTPException(status_code=409, detail="third_party:" + str(e).split("third_party:")[1])
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @router.get("/api/servers/models")
+    async def server_models(request: Request, id: str = ""):
+        need(request)
+        st = await to_runner(id, "GET", "/status")
+        return {"models": [dict(m, use=models_using(id, m["name"])) for m in st.get("models") or []], "downloads": st.get("downloads") or []}
+
+    @router.post("/api/servers/download")
+    async def server_download(request: Request):
+        need(request)
+        d = await request.json()
+        await to_runner(str(d.get("id", "")), "POST", "/download", {"url": str(d.get("url", "")), "confirmed": bool(d.get("confirmed"))})
+        return {"ok": True}
+
+    @router.post("/api/servers/download/cancel")
+    async def server_download_cancel(request: Request):
+        need(request)
+        d = await request.json()
+        await to_runner(str(d.get("id", "")), "POST", "/download/cancel", {"name": str(d.get("name", ""))})
+        return {"ok": True}
+
+    @router.post("/api/servers/models/delete")
+    async def server_model_delete(request: Request):
+        need(request)
+        d = await request.json()
+        sid, name = str(d.get("id", "")), str(d.get("name", ""))
+        await to_runner(sid, "POST", "/models/delete", {"name": name, "force": True})   # the page warned about models that use it
+        agent.log(f"settings: deleted the model file {name} on the server {sid}")
         return {"ok": True}
 
     @router.post("/api/servers/notice/dismiss")
