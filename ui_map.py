@@ -25,7 +25,7 @@ def register(app, authed):
     @router.get("/map", response_class=HTMLResponse)
     def map_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/")
+            return RedirectResponse("/login")
         return ui_extra.PAGE.replace("__BODY__", MAP_HTML).replace("__ACTIVE__", "map")
 
     app.include_router(router)

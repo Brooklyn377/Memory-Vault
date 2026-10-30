@@ -21,7 +21,7 @@ def register(app, authed):
     @router.get("/history", response_class=HTMLResponse)
     def page(request: Request):
         if not authed(request):
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/login", status_code=303)
         return ui_extra.PAGE.replace("__BODY__", HTML).replace("__ACTIVE__", "history")
 
     app.include_router(router)

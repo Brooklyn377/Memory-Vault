@@ -83,13 +83,13 @@ def register(app, authed):
     @router.get("/queue", response_class=HTMLResponse)
     def queue_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/login", status_code=303)
         return ui_extra.PAGE.replace("__ACTIVE__", "queue").replace("__BODY__", HTML)
 
     @router.get("/file", response_class=HTMLResponse)
     def file_page(request: Request, path: str = ""):
         if not authed(request):
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/login", status_code=303)
         return ui_extra.PAGE.replace("__ACTIVE__", "file").replace("__BODY__", view(path))
 
     app.include_router(router)

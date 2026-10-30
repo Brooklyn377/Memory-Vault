@@ -180,13 +180,13 @@ def register(app, authed):
     @router.get("/graph", response_class=HTMLResponse)
     def graph_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/")
+            return RedirectResponse("/login")
         return PAGE.replace("__BODY__", GRAPH_HTML).replace("__ACTIVE__", "graph")
 
     @router.get("/ask", response_class=HTMLResponse)
     def ask_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/")
+            return RedirectResponse("/login")
         return PAGE.replace("__BODY__", ASK_HTML).replace("__ACTIVE__", "ask")
 
     app.include_router(router)
@@ -230,7 +230,7 @@ __DRAWER__
 const $=s=>document.querySelector(s);
 function h(t,a,...k){const e=document.createElement(t);for(const[x,y]of Object.entries(a||{})){if(typeof y==="function")e.addEventListener(x.slice(2),y);else if(x==="class")e.className=y;else e.setAttribute(x,y)}
  for(const c of k.flat())if(c!=null)e.append(c.nodeType?c:document.createTextNode(c));return e}
-async function api(p,o){const r=await fetch(p,o);if(r.status===401){location="/";throw 0}
+async function api(p,o){const r=await fetch(p,o);if(r.status===401){location="/login?next="+encodeURIComponent(location.pathname);throw 0}
  if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail}catch(e){}throw new Error(m)}return r.json()}
 async function badge(){try{const c=(await api("/api/questions/count")).open,b=$("#qn");b.hidden=!c;b.textContent=c}catch(e){}
  try{const c=(await api("/api/todo/count")).open,b=$("#tn");b.hidden=!c;b.textContent=c}catch(e){}}

@@ -51,7 +51,7 @@ def register(app, authed):
     @router.get("/todo", response_class=HTMLResponse)
     def todo_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/")
+            return RedirectResponse("/login")
         return ui_extra.PAGE.replace("__BODY__", TODO_HTML).replace("__ACTIVE__", "todo")
 
     app.include_router(router)

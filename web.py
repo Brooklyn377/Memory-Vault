@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import config
 from scrub import scrub
@@ -46,6 +46,63 @@ def login(response: Response, username: str = Form(...), password: str = Form(..
                         httponly=True, samesite="strict")
     log("login ok")
     return {"ok": True}
+
+LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Memory vault login</title>
+<style>
+body{margin:0;font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px;box-sizing:border-box}
+form{background:#1b1b1b;border-radius:14px;padding:20px;width:100%;max-width:340px}
+label{display:block;margin:12px 0 4px;font-size:14px;color:#bbb}
+input[type=text],input[type=password]{width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #444;border-radius:10px;padding:12px;font-size:16px}
+button{background:#6d3fe0;color:#fff;border:0;border-radius:10px;padding:14px;font-size:16px;width:100%;margin-top:16px}
+.err{color:#f66;min-height:1.2em;margin:10px 0 0}
+</style></head><body>
+<form method="post" action="/login" autocomplete="on">
+<h3 style="margin-top:0">Memory vault login</h3>
+<input type="hidden" name="next" value="__NEXT__">
+<label for="username">Username</label>
+<input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+<label for="password">Password</label>
+<input type="password" id="password" name="password" autocomplete="current-password" required>
+<p class="err">__ERR__</p>
+<button type="submit">Log in</button>
+</form></body></html>"""
+
+
+def _next(n):
+    """Where to go after logging in: a path on this site, never another address."""
+    n = str(n or "")
+    return n if n.startswith("/") and not n.startswith("//") and "\\" not in n and "\n" not in n and "\r" not in n else "/"
+
+
+def _login_page(next_url, err="", code=200):
+    import html
+    return HTMLResponse(LOGIN_PAGE.replace("__NEXT__", html.escape(_next(next_url), quote=True)).replace("__ERR__", html.escape(err)), status_code=code)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/"):
+    if _authed(request):
+        return RedirectResponse(_next(next), status_code=303)
+    return _login_page(next)
+
+
+@app.post("/login")
+def login_form(username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+    """The login page's form: an ordinary form post and redirect, which is what password managers look for."""
+    import accounts
+    ok_user, ok_pass = accounts.verify(username, password, UI_USER, UI_PASSWORD)
+    if not (ok_user and ok_pass):
+        time.sleep(1)
+        log("failed login attempt")
+        return _login_page(next, "Wrong username or password", 401)
+    tok = secrets.token_urlsafe(32)
+    SESSIONS[tok] = time.time() + SESSION_SECONDS
+    resp = RedirectResponse(_next(next), status_code=303)
+    resp.set_cookie("session", tok, max_age=SESSION_SECONDS, httponly=True, samesite="strict")
+    log("login ok")
+    return resp
 
 @app.get("/api/me")
 def me(request: Request):
@@ -117,18 +174,7 @@ nav button{border-radius:0;background:#1b1b1b;flex:1}nav button.on{background:#6
 .idx a{display:block;background:#1b1b1b;border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:10px;color:inherit;text-decoration:none}
 .idx b{display:block;font-size:17px}.idx span{color:#aaa;font-size:14px}
 pre{white-space:pre-wrap;font-size:13px;color:#bbb}
-#login{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.88);
- display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
-#login form{background:#1b1b1b;border-radius:14px;padding:20px;width:100%;max-width:340px}
-#lmsg{color:#f66;min-height:1.2em}
 </style></head><body>
-<div id="login"><form id="lf" autocomplete="on">
-<h3>Memory Agent login</h3>
-<input type="text" id="u" name="username" placeholder="Username" autocomplete="username">
-<input type="password" id="p" name="password" placeholder="Password" autocomplete="current-password">
-<p id="lmsg"></p>
-<button type="submit">Log in</button>
-</form></div>
 <div id="hm" class="tab on"><h3>Memory vault</h3>
 <div class="idx">
 <a href="#up"><b>Upload</b><span>Add a chat export</span></a>
@@ -149,18 +195,11 @@ pre{white-space:pre-wrap;font-size:13px;color:#bbb}
 __DRAWER__
 <script>
 const $=i=>document.getElementById(i);
-function showLogin(){$("login").style.display="flex";}
+function showLogin(){location="/login?next="+encodeURIComponent(location.pathname+location.hash);}
 async function api(url,opts){
  const r=await fetch(url,opts);
  if(r.status==401)showLogin();
  return r;}
-$("lf").onsubmit=async e=>{
- e.preventDefault();
- const fd=new FormData();
- fd.append("username",$("u").value);fd.append("password",$("p").value);
- const r=await fetch("/api/login",{method:"POST",body:fd});
- if(r.ok){$("login").style.display="none";$("p").value="";$("lmsg").textContent="";}
- else{$("lmsg").textContent="Wrong username or password";}};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
  document.querySelectorAll(".tab,nav button").forEach(e=>e.classList.remove("on"));
  b.classList.add("on");$(b.dataset.t).classList.add("on");

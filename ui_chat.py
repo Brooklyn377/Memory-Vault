@@ -468,7 +468,7 @@ def register(app, authed):
     @router.get("/chat", response_class=HTMLResponse)
     def chat_page(request: Request):
         if not authed(request):
-            return RedirectResponse("/")
+            return RedirectResponse("/login")
         return ui_extra.PAGE.replace("__BODY__", CHAT_HTML).replace("__ACTIVE__", "chat")
 
     app.include_router(router)
