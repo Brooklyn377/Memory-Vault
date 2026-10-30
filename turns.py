@@ -242,10 +242,14 @@ def active():
         d = json.loads(ACTIVE.read_text())
     except (OSError, ValueError):
         d = {}
-    since = d.get("since") if isinstance(d.get("since"), dict) else {}
-    models = [m for m in (d.get("group") or []) if m in MODELS]
+    if not isinstance(d, dict):
+        d = {}
+    since = d.get("since") if isinstance(d.get("since"), dict) else {}   # an older version stored one time here
+    groupd = d.get("group") if isinstance(d.get("group"), list) else []
+    draining = d.get("draining") if isinstance(d.get("draining"), list) else []   # and true or false here
+    models = [m for m in groupd if m in MODELS]
     return {"group": models, "since": {m: float(since.get(m, 0)) for m in models},
-            "draining": [m for m in (d.get("draining") or []) if m in models]}
+            "draining": [m for m in draining if m in models]}
 
 
 def _set_active(st):
