@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GPU model server for the memory agent, on a Proxmox host. Run as root in the Proxmox shell:
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
-# It creates a Debian 12 LXC, passes one GPU of this host into it, builds llama.cpp for Vulkan inside, installs the
+# It creates a Debian 12 LXC, passes the GPUs you pick (none, one or several) into it, builds llama.cpp inside, installs the
 # model runner there as a service, and prints the server address, API key and runner token for Settings > Servers.
 # Anything not given as an option is asked. The disk, memory and cores have no defaults: they are always asked.
 # Options go after the command: bash -c "$(curl ...)" _ --disk 200 --memory 16384 --cores 8
@@ -10,7 +10,7 @@ set -euo pipefail
 REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is downloaded from
 REF="${MA_REF:-main}"                        # branch or tag
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
-BRIDGE=""; IP=""; GW=""; DNS=""; GPU=""; MODELS="/opt/models"; LLAMA_PORT=8080; RUNNER_PORT=8090; BACKEND=""; ENGINE=""
+BRIDGE=""; IP=""; GW=""; DNS=""; GPUS=""; MODELS="/opt/models"; LLAMA_PORT=8080; RUNNER_PORT=8090; BACKEND=""; ENGINE=""
 LLAMA_REF=""; UPDATE=""; YES=0; DRY=0
 
 usage() {
@@ -29,7 +29,9 @@ Container
   --ip dhcp|CIDR        address, e.g. 192.168.1.60/24 (default: dhcp)
   --gw ADDRESS          gateway, needed with a fixed address
   --dns ADDRESS         DNS server, or "host" for the Proxmox host's (default: the gateway with a fixed address, else host)
-  --gpu DEVICE          the GPU to pass in, e.g. /dev/dri/renderD128 (asked when this host has more than one)
+  --gpus LIST           the GPUs to pass in: none, all, or numbers from the scan, render devices (renderD128) or PCI addresses,
+                        separated by commas, e.g. 1,2. Without it the script lists the cards and asks which ones (none is
+                        allowed); with no terminal or --yes it only goes on by itself when the host has a single card.
   --backend B           vulkan, cuda or rocm: the software llama.cpp runs on. Without it the script looks at your graphics
                         cards and asks; Vulkan is the default and the scan marks the one it thinks is fastest (recommended).
                         CUDA and ROCm are installed inside the container from NVIDIA's and AMD's repositories and need the
@@ -68,7 +70,7 @@ while (( $# )); do
         --ip) IP="$2"; shift ;;
         --gw) GW="$2"; shift ;;
         --dns) DNS="$2"; shift ;;
-        --gpu) GPU="$2"; shift ;;
+        --gpus|--gpu) GPUS="$2"; shift ;;
         --backend) BACKEND="$2"; shift ;;
         --models) MODELS="$2"; shift ;;
         --llama-port) LLAMA_PORT="$2"; shift ;;
@@ -139,6 +141,7 @@ have pvesm && defstore="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 
 ask STORAGE "Storage for the container disk" "${defstore:-local-lvm}"
 
 say "Graphics cards and software"
+choose_gpus
 choose_backend
 HOST_NV_DRIVER=""; CUDA_PKG=""
 if [[ "$BACKEND" == cuda ]]; then
@@ -147,28 +150,6 @@ if [[ "$BACKEND" == cuda ]]; then
     CUDA_PKG="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1-\2/p' | head -n 1)"
     [[ -n "$HOST_NV_DRIVER" && -n "$CUDA_PKG" ]] || die "could not read the NVIDIA driver version from nvidia-smi"
 fi
-
-# the GPU: this host's render devices, with their names
-gpus=()
-for n in /dev/dri/renderD*; do [[ -e "$n" ]] && gpus+=("$n"); done
-if [[ -z "$GPU" ]]; then
-    (( ${#gpus[@]} )) || (( DRY )) || [[ "$BACKEND" == cuda ]] || die "this host has no GPU render device (/dev/dri/renderD*)"
-    if (( ${#gpus[@]} == 1 )); then
-        GPU="${gpus[0]}"
-    elif (( ${#gpus[@]} > 1 )); then
-        echo "GPUs on this host:"
-        for n in "${gpus[@]}"; do
-            pci="$(basename "$(readlink -f "/sys/class/drm/$(basename "$n")/device")" 2>/dev/null)"
-            name="$(have lspci && lspci -s "$pci" 2>/dev/null | cut -d' ' -f2- | cut -c1-60 || true)"
-            echo "  $n  ${name:-$pci}"
-        done
-        ask GPU "GPU to pass in" "${gpus[0]}"
-    else
-        GPU="/dev/dri/renderD128"
-    fi
-fi
-[[ "$GPU" =~ ^/dev/dri/renderD[0-9]+$ ]] || die "--gpu must be a device such as /dev/dri/renderD128"
-(( DRY )) || [[ -e "$GPU" ]] || [[ "$BACKEND" == cuda ]] || die "$GPU does not exist on this host"
 
 ask BRIDGE "Network bridge" "vmbr0"
 ask IP "Address (dhcp, or a fixed one such as 192.168.1.60/24)" "dhcp"
@@ -199,15 +180,27 @@ run pct create "$CTID" "$TSTORAGE:vztmpl/$TEMPLATE" \
     --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 \
     --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
     --net0 "$net" "${dns[@]}" --onboot 1 --start 1
-# the devices the chosen software needs, each at the next free devN
+# the devices for the cards you picked and the software you chose, each at the next free devN
+want=()
 case "$BACKEND" in
-    vulkan) devices=("$GPU") ;;
-    rocm)   devices=("/dev/kfd" "$GPU") ;;
-    cuda)   devices=(); for n in /dev/nvidia[0-9]* /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset; do [[ -e "$n" ]] && devices+=("$n"); done
-            (( ${#devices[@]} )) || (( DRY )) || die "no /dev/nvidia* devices on this host; is the NVIDIA driver loaded?"
-            (( ${#devices[@]} )) || devices=(/dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm) ;;   # a dry run on a host without the card
+    vulkan) want=("${PASS_RENDER[@]}") ;;
+    rocm)   want=("$KFD" "${PASS_RENDER[@]}") ;;
+    cuda)   for n in "${PASS_NVIDX[@]}"; do want+=("/dev/nvidia$n"); done
+            want+=(/dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset) ;;
 esac
-say "Passing ${devices[*]} into the container"
+devices=()
+for n in "${want[@]}"; do   # the helper devices (uvm, modeset) are not on every host
+    [[ -e "$n" ]] || (( DRY )) || continue
+    devices+=("$n")
+done
+if [[ "$BACKEND" != cpu ]] && (( ${#devices[@]} == 0 )) && ! (( DRY )); then
+    die "none of the devices for the cards you picked exist on this host; is the driver loaded?"
+fi
+if (( ${#devices[@]} )); then
+    say "Passing ${devices[*]} into the container"
+else
+    say "No GPU device goes into the container: llama.cpp will run on the CPU"
+fi
 i=0
 for dev in "${devices[@]}"; do
     run pct set "$CTID" "--dev$i" "$dev,mode=0666"
@@ -225,7 +218,7 @@ if ! (( DRY )); then
     pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || die "the container cannot look up deb.debian.org; check --bridge, --ip, --gw and --dns"
 fi
 
-# --- inside the container: llama.cpp for Vulkan, then the runner ---------------------------------------------------
+# --- inside the container: llama.cpp for the chosen software, then the runner ---------------------------------------------------
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cat > "$WORK/inside.sh" <<'INSIDE'
@@ -241,6 +234,7 @@ apt-get update -q
 apt-get install -y -q --no-install-recommends python3 ca-certificates curl git cmake build-essential libcurl4-openssl-dev gnupg
 cmake_opts=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON)
 case "$BACKEND" in
+cpu) ;;   # no GPU software
 vulkan)
     apt-get install -y -q --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
     vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
@@ -284,9 +278,10 @@ echo "== Runner"
 install -d -m 755 "$APP" "$MODELS"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/model_runner.py" -o "$APP/model_runner.py"
 chmod 755 "$APP/model_runner.py"
+gpu_args=(--base-arg=--n-gpu-layers --base-arg=999); [[ "$BACKEND" == cpu ]] && gpu_args=()
 key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
 out="$(python3 "$APP/model_runner.py" --setup --llama "$LLAMA/build/bin/llama-server" --models "$MODELS" \
-    --api-key "$key" --jinja --base-arg=--n-gpu-layers --base-arg=999 --llama-port "$LLAMA_PORT" --port "$RUNNER_PORT")"
+    --api-key "$key" --jinja "${gpu_args[@]}" --llama-port "$LLAMA_PORT" --port "$RUNNER_PORT")"
 token="$(printf '%s\n' "$out" | sed -n 's/^Token for the Settings page (shown once): //p')"
 [[ -n "$token" ]] || { echo "the runner did not print a token: $out" >&2; exit 1; }
 cat > /etc/systemd/system/memory-agent-runner.service <<UNIT

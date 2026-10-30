@@ -157,7 +157,8 @@ def _git_target(target, model="gpt"):
         raise ValueError("a Git file looks like git/<Git server name>/<file path>")
     e = gitrepos.by_name(parts[1])
     if not e:
-        raise ValueError(f"there is no Git server called {parts[1]}; the repos tool lists them")
+        names = ", ".join(x["name"] for x in gitrepos.entries()) or "none added yet"
+        raise ValueError(f"there is no Git server called {parts[1]}. The names are: {names}. Use one exactly as written, as git/<name>/<file path>")
     if not gitrepos.has_token(e["id"], model):
         raise ValueError(f"the {gitrepos.MODELS[model]} has no token for {e['name']}; add one under Git servers on the Settings page")
     if ".." in Path(parts[2]).parts:

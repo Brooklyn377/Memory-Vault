@@ -49,8 +49,8 @@ Options go after the `_`. All of them are listed with `--help`; the main ones:
 | `--cores N`, `--memory MB` | container size |
 | `--bridge NAME`, `--ip CIDR`, `--gw ADDR` | network (default: `vmbr0`, DHCP) |
 | `--dns ADDR` | DNS server, or `host` for the Proxmox host's (default: the gateway with a fixed address) |
-| `--gpu cpu\|DEVICE` | run the local models on the CPU (default) or on a host GPU through Vulkan |
-| `--add-gpu CTID` | pass a GPU into an existing container and switch its models to it |
+| `--gpus LIST` | which graphics cards of the host go into the container (`none`, `all`, or numbers such as `1,2`); without it the installer asks |
+| `--add-gpu CTID` | pass the GPUs you pick into an existing container and switch its models to them |
 | `--sweeper-url`, `--reviewer-url`, `--curator-url` | model download links |
 | `--small` | one tiny test model for all three, small container |
 | `--no-models` | install without models |
@@ -208,13 +208,13 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
 The local models run on the CPU by default. To run them on a GPU of the Proxmox host instead (through Vulkan: AMD,
 Intel or NVIDIA), the GPU has to be passed into the container. That needs Proxmox VE 8.1 or newer.
 
-- **New install:** the installer asks "Run the local models on" when the host has a GPU (or use `--gpu
-  /dev/dri/renderD128`). CPU stays the default.
+- **New install:** when the host has graphics cards, the installer lists them and asks which ones go into the container,
+  none, one or several (or use `--gpus 1`, `--gpus 1,2`, `--gpus none`). Nothing is passed in that you did not pick.
 - **Existing container:** on the Proxmox host, run
   ```bash
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/install.sh)" _ --add-gpu <container ID>
   ```
-  It asks which GPU, passes it in, restarts the container, and switches its local models to the GPU.
+  It asks which cards, passes them in, restarts the container, and switches its local models to the GPU.
 - **Settings → Servers** shows this server's hardware: whether the GPU is set up and which GPU the container sees, with
   a button to set it up (or go back to CPU only). Setting it up rebuilds llama.cpp (this takes a while), then restarts the
   model servers; if the build fails, nothing changes. After that each model's **Where it runs** offers "Local model on
@@ -237,7 +237,7 @@ the software llama.cpp runs on, downloads the runner, sets llama.cpp up for it, 
 the **address**, the **API key** and the **runner token** to type into **Settings → Servers → Add server** (step 6).
 Run it as root:
 
-- **Proxmox** (creates a Debian container, passes one GPU of the host into it, builds llama.cpp inside; it asks for
+- **Proxmox** (creates a Debian container, passes the GPUs you pick into it, builds llama.cpp inside; it asks for
   anything you do not give as an option, and always asks the disk, memory and cores):
   ```bash
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
@@ -251,7 +251,13 @@ Run it as root:
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-docker.sh)"
   ```
 
-**The software choice.** The script lists the cards it finds and offers **Vulkan** (works on AMD, Intel and NVIDIA; it is the
+**Which cards go in.** The script first lists the cards it finds and asks which of them go into the container: none, one or
+several (`1`, `1 2`, `all`, `none`). Nothing is passed in that you did not pick, and the software question below is about
+exactly the cards you picked. `--gpus 1,2` (or `--gpus none`) answers it. With a terminal the script always asks. Without a
+terminal, or with `--yes`, it carries on by itself only when the machine has exactly one card; with several it stops and asks
+you to pass `--gpus`.
+
+**The software choice.** For those cards the script offers **Vulkan** (works on AMD, Intel and NVIDIA; it is the
 default, so pressing Enter takes it), **CUDA** (NVIDIA) and **ROCm** (AMD). It puts **(recommended)** next to the one it
 expects to be fastest here: CUDA for an NVIDIA card whose driver and container support are in place, ROCm for an AMD card
 ROCm supports (RX 6000 and newer, Instinct) when its compute device is there, otherwise Vulkan. Each line says what is

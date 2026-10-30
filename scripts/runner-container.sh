@@ -13,7 +13,7 @@ REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is 
 REF="${MA_REF:-main}"                        # branch or tag
 IMAGE=""   # chosen from the software you pick: ghcr.io/ggml-org/llama.cpp:server-vulkan, -cuda or -rocm
 ENGINE=""; MODELS="/srv/llama-models"; DIR="/opt/memory-agent-runner"; NAME="llama-server"
-LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0; UPDATE=0; YES=0; BACKEND=""
+LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0; UPDATE=0; YES=0; BACKEND=""; GPUS=""
 
 usage() {
     cat <<EOF
@@ -23,10 +23,13 @@ Usage: runner-container.sh --engine podman|docker [options]
   --models DIR      where the model files are kept (default: $MODELS)
   --llama-port N    llama-server's port on this machine (default: $LLAMA_PORT)
   --runner-port N   the runner's port (default: $RUNNER_PORT)
-  --backend B       vulkan, cuda or rocm: the software llama.cpp runs on. Without it the script looks at your graphics
-                    cards and asks; Vulkan is the default and the scan marks the one it thinks is fastest (recommended)
+  --gpus LIST       which graphics cards go into the container: none, all, or numbers from the list the script prints
+                    (also a render device or PCI address), separated by commas, for example --gpus 1,2. Without it the
+                    script lists the cards and asks; nothing is passed in that you did not pick
+  --backend B       vulkan, cuda or rocm: the software llama.cpp runs on, for the cards you picked. Without it the script
+                    asks; Vulkan is the default and the scan marks the one it thinks is fastest (recommended)
   --image IMAGE     the llama.cpp server image (default: the one for the software you pick)
-  --yes             do not ask: use Vulkan unless --backend says otherwise
+  --yes             do not ask: with a single card use it (Vulkan unless --backend says otherwise); with several, --gpus is needed
   --name NAME       the llama-server container's name (default: $NAME)
   --dir DIR         where the runner is installed (default: $DIR)
   --repo OWNER/NAME where the runner is downloaded from (default: $REPO)
@@ -49,6 +52,7 @@ while (( $# )); do
         --runner-port) RUNNER_PORT="$2"; shift ;;
         --image) IMAGE="$2"; shift ;;
         --backend) BACKEND="$2"; shift ;;
+        --gpus|--gpu) GPUS="$2"; shift ;;
         --yes) YES=1 ;;
         --name) NAME="$2"; shift ;;
         --dir) DIR="$2"; shift ;;
@@ -95,31 +99,36 @@ if [[ -f "$HERE/runner-gpu.sh" ]]; then source "$HERE/runner-gpu.sh"
 else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/runner-gpu.sh") || die "could not download the graphics-card scan"; fi
 
 say "GPU"
+choose_gpus
 choose_backend
-[[ -n "$IMAGE" ]] || IMAGE="ghcr.io/ggml-org/llama.cpp:server-$BACKEND"
-setup=(--base-arg=--n-gpu-layers --base-arg=999)   # every layer on the GPU; a model's card can set GPU layers to change it
-render="$(ls /dev/dri/renderD* 2>/dev/null | head -n 1 || true)"
-case "$BACKEND" in
-    vulkan)
-        if [[ -d /dev/dri ]]; then setup+=(--device /dev/dri); else echo "warning: no /dev/dri on this machine, so llama-server would run on the CPU only." >&2; fi
-        [[ -n "$render" ]] && setup+=(--group-add "$(stat -c %g "$render")") ;;   # the group that may open the GPU, joined by the container
-    rocm)
-        [[ -e "$KFD" ]] && setup+=(--device "$KFD") ; [[ -d /dev/dri ]] && setup+=(--device /dev/dri)
-        [[ -e "$KFD" ]] && setup+=(--group-add "$(stat -c %g "$KFD")")
-        [[ -n "$render" ]] && setup+=(--group-add "$(stat -c %g "$render")")
-        setup+=(--security-opt seccomp=unconfined) ;;
-    cuda)
-        if [[ "$ENGINE" == podman ]]; then
-            if [[ ! -e /etc/cdi/nvidia.yaml && ! -e /var/run/cdi/nvidia.yaml ]] && have nvidia-ctk; then
-                echo "writing the NVIDIA device list Podman needs (/etc/cdi/nvidia.yaml)"
-                run mkdir -p /etc/cdi
-                run nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
-            fi
-            setup+=(--device nvidia.com/gpu=all)
-        else
-            setup+=(--run-arg=--gpus --run-arg=all)
-        fi ;;
-esac
+if [[ -z "$IMAGE" ]]; then
+    if [[ "$BACKEND" == cpu ]]; then IMAGE="ghcr.io/ggml-org/llama.cpp:server"; else IMAGE="ghcr.io/ggml-org/llama.cpp:server-$BACKEND"; fi
+fi
+setup=()
+[[ "$BACKEND" == cpu ]] || setup+=(--base-arg=--n-gpu-layers --base-arg=999)   # every layer on the GPU; a model's card can set GPU layers to change it
+groups=()
+for dev in "${PASS_RENDER[@]}"; do   # only the cards you picked: each render device, and the group that may open it
+    setup+=(--device "$dev")
+    g="$(stat -c %g "$dev" 2>/dev/null || true)"; [[ -n "$g" && " ${groups[*]} " != *" $g "* ]] && groups+=("$g")
+done
+if (( PASS_KFD )) && [[ -e "$KFD" ]]; then
+    setup+=(--device "$KFD" --security-opt seccomp=unconfined)
+    g="$(stat -c %g "$KFD" 2>/dev/null || true)"; [[ -n "$g" && " ${groups[*]} " != *" $g "* ]] && groups+=("$g")
+fi
+for g in "${groups[@]}"; do setup+=(--group-add "$g"); done
+if [[ "$BACKEND" == cuda ]]; then
+    if [[ "$ENGINE" == podman ]]; then
+        if [[ ! -e /etc/cdi/nvidia.yaml && ! -e /var/run/cdi/nvidia.yaml ]] && have nvidia-ctk; then
+            echo "writing the NVIDIA device list Podman needs (/etc/cdi/nvidia.yaml)"
+            run mkdir -p /etc/cdi
+            run nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+        fi
+        for idx in "${PASS_NVIDX[@]}"; do setup+=(--device "nvidia.com/gpu=$idx"); done
+    else   # Docker: only the cards you picked, by their NVIDIA index
+        list="$(IFS=,; echo "${PASS_NVIDX[*]}")"
+        if (( ${#PASS_NVIDX[@]} > 1 )); then setup+=(--run-arg=--gpus "--run-arg=\"device=$list\""); else setup+=(--run-arg=--gpus "--run-arg=device=$list"); fi
+    fi
+fi
 echo "Image: $IMAGE"
 
 say "Runner"

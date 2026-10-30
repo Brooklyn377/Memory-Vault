@@ -240,6 +240,22 @@ def cited(reply):
     return reply
 
 
+def _find_call(text):
+    """The first JSON object in the reply that is a tool call or an answer. Braces in the text around it are skipped."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    dec, i = json.JSONDecoder(), text.find("{")
+    while i >= 0:
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict) and ("tool" in obj or "answer" in obj):
+            return obj
+        i = text.find("{", end)
+    return None
+
+
 def assistant_answer(m, context):
     """The tool loop: the Assistant looks things up until it answers, at most the look-up limit, then must answer.
     Returns (reply, files it opened)."""
@@ -247,15 +263,20 @@ def assistant_answer(m, context):
     assistant_tools.start_message(m["id"])
     budget = __import__("tuning").get("assistant.tool_calls")
     msgs = earlier_turns(m) + [{"role": "user", "content": f"{context}\n\nQUESTION: {m['text']}"}]
-    opened, used = [], 0
+    opened, used, repairs = [], 0, 0
     while True:
         last = used >= budget
         if last:
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
-        data = agent.parse_json(text)   # the JSON may follow some text the model wrote first
-        if isinstance(data, dict) and "tool" not in data and "answer" not in data:
-            data = None                 # some other JSON inside a plain answer
+        data = _find_call(text)         # the JSON may sit among text the model wrote around it
+        if data is None and re.search(r'"tool"\s*:', re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)):
+            if repairs >= 2:            # a tool call that will not parse is never shown as the answer
+                raise RuntimeError("the Assistant's tool call was not valid JSON")
+            repairs += 1
+            msgs += [{"role": "assistant", "content": text},
+                     {"role": "user", "content": 'That tool call was not valid JSON. Reply with exactly one JSON object, e.g. {"tool": "search", "text": "..."} or {"answer": "..."}.'}]
+            continue
         if not isinstance(data, dict) or "tool" not in data or last:
             if isinstance(data, dict) and data.get("answer"):
                 return cited(str(data["answer"]).strip()), opened

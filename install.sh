@@ -35,8 +35,10 @@ Container
   --gw ADDRESS          gateway, needed with a fixed address
   --dns ADDRESS         DNS server, or "host" for the Proxmox host's (default: the gateway with a fixed
                         address, otherwise host)
-  --gpu cpu|DEVICE      run the local models on the CPU (default) or on this host's GPU through Vulkan, e.g.
-                        --gpu /dev/dri/renderD128; the device is passed into the container (Proxmox VE 8.1+)
+  --gpus LIST           which of this host's graphics cards go into the container (Vulkan runs the local models on
+                        them): none, all, or numbers / render devices separated by commas, e.g. 1,2 or renderD128
+                        (Proxmox VE 8.1+). Without it a terminal always asks (none is allowed); with no terminal or
+                        --yes it goes on by itself only when the host has a single card.
 
 Models (.gguf download links, e.g. Hugging Face "resolve" links)
   --sweeper-url URL     main model, reads chats (default: Qwen3.5-9B Q4_K_M)
@@ -47,8 +49,8 @@ Models (.gguf download links, e.g. Hugging Face "resolve" links)
 
 Other
   --update CTID         update the code in an existing container; config, login and data are kept
-  --add-gpu CTID        pass a GPU of this host into an existing container and switch its local models to it
-                        (asks which GPU; --gpu DEVICE to say it)
+  --add-gpu CTID        pass GPUs of this host into an existing container and switch its local models to them
+                        (asks which cards; --gpus LIST to say it)
   --llama-ref REF       llama.cpp branch or tag to build (default: its newest code)
   --repo OWNER/NAME     where to download the code (default: $REPO)
   --ref REF             branch or tag of the code (default: $REF)
@@ -71,7 +73,7 @@ while [[ $# -gt 0 ]]; do
         --ip) IP="$2"; shift ;;
         --gw) GW="$2"; shift ;;
         --dns) DNS="$2"; shift ;;
-        --gpu) GPU="$2"; shift ;;
+        --gpus|--gpu) GPU="$2"; shift ;;
         --add-gpu) ADDGPU="$2"; shift ;;
         --sweeper-url) SWEEPER_URL="$2"; shift ;;
         --reviewer-url) REVIEWER_URL="$2"; shift ;;
@@ -251,7 +253,57 @@ gpu_choices() {
         printf '%s\n%s\n' "$n" "GPU: ${dev:-$pci}"
     done
 }
-valid_gpu() { [[ "$1" == cpu || ( "$1" =~ ^/dev/dri/renderD[0-9]+$ && -e "$1" ) ]] && return 0; echo "cpu, or a GPU device such as /dev/dri/renderD128"; return 1; }
+# scan_cards: GPUCARDS (render devices) and GPUDESC (their names), the cards of this host.
+scan_cards() {
+    local gc i; GPUCARDS=(); GPUDESC=()
+    mapfile -t gc < <(gpu_choices)
+    for (( i = 2; i < ${#gc[@]}; i += 2 )); do GPUCARDS+=("${gc[i]}"); GPUDESC+=("${gc[i+1]}"); done
+}
+# norm_gpus VALUE: prints "cpu" or the render devices (space separated) VALUE stands for: none, all, numbers from the list,
+# or render devices (renderD128 or /dev/dri/renderD128), separated by commas or spaces. Prints what is wrong and fails otherwise.
+norm_gpus() {
+    local t d found out=()
+    for t in ${1//,/ }; do
+        case "${t,,}" in
+            none|cpu|0) ;;
+            all) out+=("${GPUCARDS[@]}") ;;
+            *)  found=""
+                if [[ "$t" =~ ^[0-9]+$ ]] && (( t >= 1 && t <= ${#GPUCARDS[@]} )); then found="${GPUCARDS[t-1]}"
+                else for d in "${GPUCARDS[@]}"; do [[ "$t" == "$d" || "/dev/dri/$t" == "$d" ]] && found="$d"; done; fi
+                [[ -n "$found" ]] || { echo "'$t' is not one of this host's cards (a number from 1 to ${#GPUCARDS[@]}, a render device, all or none)"; return 1; }
+                out+=("$found") ;;
+        esac
+    done
+    if (( ${#out[@]} )); then printf '%s\n' "${out[@]}" | awk '!seen[$0]++' | paste -sd' '; else echo cpu; fi
+}
+# pick_gpus "question": sets GPU to cpu or the render devices that go into the container. --gpus answers it. With a terminal it
+# always asks which cards (none is allowed). With no terminal or --yes it only goes on by itself when there is one card.
+pick_gpus() {
+    local i ans="" out items=()
+    scan_cards
+    if [[ -n "$GPU" ]]; then ans="$GPU"
+    elif (( ${#GPUCARDS[@]} == 0 )); then GPU=cpu; return 0
+    elif (( INTERACTIVE )); then
+        if [[ $UI == dialog ]]; then
+            for (( i = 0; i < ${#GPUCARDS[@]}; i++ )); do items+=("${GPUCARDS[i]}" "${GPUDESC[i]}" OFF); done
+            ans="$(wt --title "Memory agent" --checklist "$1"$'\n'"Space marks a card. Nothing marked: the CPU only." 18 76 8 "${items[@]}")" || exit 1
+            ans="${ans//\"/}"
+        else
+            for (( i = 0; i < ${#GPUCARDS[@]}; i++ )); do echo "  $((i + 1))) ${GPUDESC[i]} (${GPUCARDS[i]})" >/dev/tty; done
+            ans="$(prompt "$1 Numbers, all or none" none "")"
+        fi
+    elif (( ${#GPUCARDS[@]} == 1 )); then
+        echo "Only one graphics card here and nobody to ask: using it. Pass --gpus none to run on the CPU."
+        ans="${GPUCARDS[0]}"
+    else
+        die "several graphics cards found and nobody to ask: say which go into the container with --gpus (for example --gpus 1, --gpus 1,2 or --gpus none)"
+    fi
+    while ! out="$(norm_gpus "$ans")"; do
+        (( INTERACTIVE )) || die "--gpus: $out"
+        ans="$(prompt "$1" none "$out")" || exit 1
+    done
+    GPU="$out"
+}
 # pass_gpu CTID DEVICE: the device into the container at the next free devN, readable by its services.
 pass_gpu() {
     local i=0
@@ -267,13 +319,13 @@ have curl || die "curl is needed"
 
 # --- --add-gpu: an existing container gets a GPU and its local models move to it ----------------------------------
 if [[ -n "$ADDGPU" ]]; then
-    mapfile -t gc < <(gpu_choices)
-    (( ${#gc[@]} > 2 )) || die "this host has no GPU render device (/dev/dri/renderD*)"
-    [[ "$GPU" == cpu ]] && GPU=""
-    choose GPU "GPU to pass into container $ADDGPU" "${gc[2]}" "${gc[@]:2}"
+    scan_cards
+    (( ${#GPUCARDS[@]} )) || die "this host has no GPU render device (/dev/dri/renderD*)"
+    pick_gpus "Which graphics cards go into container $ADDGPU?"
     restore_screen
+    [[ "$GPU" != cpu ]] || die "no card was picked, so there is nothing to pass in"
     say "Passing $GPU into container $ADDGPU"
-    pass_gpu "$ADDGPU" "$GPU"
+    for d in $GPU; do pass_gpu "$ADDGPU" "$d"; done
     run pct reboot "$ADDGPU"
     if ! (( DRY )); then
         for _ in $(seq 60); do pct exec "$ADDGPU" -- true >/dev/null 2>&1 && break; sleep 2; done
@@ -346,12 +398,7 @@ else
     [[ "$IP" != dhcp ]] && ask GW "Gateway for $IP" "" valid_gw
     ask DNS "DNS server: an address (several separated by spaces), or host for the Proxmox host's" \
         "${GW:-host}" valid_dns
-    mapfile -t gc < <(gpu_choices)
-    if (( ${#gc[@]} > 2 )); then   # this host has a GPU: CPU stays the default
-        choose GPU "Run the local models on" cpu "${gc[@]}"
-    else
-        ask GPU "Run the local models on" cpu valid_gpu
-    fi
+    pick_gpus "Which graphics cards go into the container, to run the local models on?"
 
     say "Models"
     if (( SMALL )); then
@@ -386,7 +433,7 @@ else
 Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
 $CORES cores, $MEMORY MB memory, $DISK GB disk
 Bridge $BRIDGE, address $IP${GW:+, gateway $GW}, DNS $DNS
-Local models on: $([[ $GPU == cpu ]] && echo CPU || echo "GPU $GPU (Vulkan)")
+Local models on: $([[ $GPU == cpu ]] && echo CPU || echo "GPU ${GPU// /, } (Vulkan)")
 Models:$models" 19 76 >/dev/null
         exec 1>&4 4>&-
         restore_screen
@@ -416,7 +463,7 @@ Models:$models" 19 76 >/dev/null
         --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
         --net0 "$net" "${dns[@]}" --onboot 1 --start 1
     if [[ "$GPU" != cpu ]]; then   # the GPU into the container, then a restart so it appears there
-        pass_gpu "$CTID" "$GPU"
+        for d in $GPU; do pass_gpu "$CTID" "$d"; done
         run pct reboot "$CTID"
     fi
 fi
