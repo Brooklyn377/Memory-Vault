@@ -76,6 +76,14 @@ if (( UPDATE )); then
     exit 0
 fi
 
+if ! (( DRY )) && have ss; then   # a runner or llama-server from before would answer in place of the new one
+    for port in "$LLAMA_PORT" "$RUNNER_PORT"; do
+        if ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":$port\$"; then
+            die "port $port is already in use on this machine; stop what uses it first (see: sudo ss -ltnp | grep :$port), or pass another port with --llama-port or --runner-port"
+        fi
+    done
+fi
+
 say "GPU"
 setup=()
 if [[ -d /dev/dri ]]; then
@@ -92,7 +100,8 @@ if [[ -n "$render" ]]; then
 fi
 
 say "Runner"
-run install -d -m 755 "$DIR" "$MODELS"
+run install -d -m 755 "$DIR"
+[[ -d "$MODELS" ]] || run install -d -m 755 "$MODELS"   # an existing folder is left as it is
 run curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/model_runner.py" -o "$DIR/model_runner.py"
 run chmod 755 "$DIR/model_runner.py"
 
