@@ -351,25 +351,11 @@ def retry(mid):
 
 
 def remove(mid):
-    """Delete one message and its reply from the chat, so the Assistant no longer sees it as an earlier turn. One that is
-    queued or being answered is left alone. A copy already added to raw/conversations stays there."""
-    m = _load(mid)
-    if not m:
+    """Delete one message and its reply from the chat, so the Assistant no longer sees it as an earlier turn. A copy already
+    added to raw/conversations stays there."""
+    if not _load(mid):
         raise ValueError("there is no such message")
-    if m["status"] in ("queued", "working"):
-        raise ValueError("this message is still being answered; remove it once it has replied or failed")
     _path(mid).unlink()
-    return m
-
-
-def clear():
-    """Delete every message that is finished (replied, failed or skipped). Returns how many."""
-    n = 0
-    for m in _all():
-        if m["status"] not in ("queued", "working"):
-            _path(m["id"]).unlink(missing_ok=True)
-            n += 1
-    return n
 
 
 CONV = VAULT / "raw" / "conversations"
@@ -513,12 +499,10 @@ def register(app, authed):
         need(request)
         data = await request.json()
         try:
-            if data.get("all"):
-                return {"ok": True, "removed": clear()}
             remove(str(data.get("id", "")))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"ok": True, "removed": 1}
+        return {"ok": True}
 
     @router.get("/chat", response_class=HTMLResponse)
     def chat_page(request: Request):
@@ -537,7 +521,6 @@ CHAT_HTML = r"""
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
 </style>
 <div id="thread"></div>
-<div class="mut" style="text-align:right"><button id="cclear">Remove all finished messages</button></div>
 <div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
 <button class="pri" id="cs">Send</button><span id="ce" class="mut"></span></div>
 <script>
@@ -563,7 +546,7 @@ function notesList(src){
 function bubble(m){
  const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];
  if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
- if(m.status!=="queued"&&m.status!=="working")out.push(h("button",{onclick:()=>removeOne(m.id)},"Remove this message"));
+ out.push(h("button",{onclick:()=>removeOne(m.id)},"Remove this message"));
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
@@ -579,8 +562,6 @@ async function load(){try{const d=await api("/api/chat");
 async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
-$("#cclear").onclick=async()=>{if(!confirm("Remove every finished message and reply from the chat? The Assistant will start with a clean slate."))return;
- try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({all:true})});seen=-1;load()}catch(e){$("#ce").textContent=e.message}};
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
 $("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
  try{await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});$("#ct").value="";await load()}
