@@ -256,6 +256,24 @@ def _find_call(text):
     return None
 
 
+def _json_problem(text):
+    """What is wrong with a tool call that did not parse, in words the model can act on (where, and what was there)."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    hit = re.search(r'"tool"\s*:', text)
+    start = text.rfind("{", 0, hit.start()) if hit else -1
+    why = ""
+    if start >= 0:
+        try:
+            json.JSONDecoder().raw_decode(text, start)
+        except ValueError as e:
+            pos = getattr(e, "pos", start)
+            near = text[max(start, pos - 25):pos] + "<<HERE>>" + text[pos:pos + 15]
+            why = f" The problem: {e.msg}, at the place marked here: {near}"
+    return ("That tool call is NOT valid JSON, so it did not run, and sending it again unchanged will fail the same way." + why +
+            ' Every key and every text value needs double quotes, e.g. {"tool": "search", "text": "Bazzite", "where": "all"}. '
+            'Send one corrected JSON object, or {"answer": "..."} if you can answer without a look-up.')
+
+
 def assistant_answer(m, context):
     """The tool loop: the Assistant looks things up until it answers, at most the look-up limit, then must answer.
     Returns (reply, files it opened)."""
@@ -275,7 +293,7 @@ def assistant_answer(m, context):
                 raise RuntimeError("the Assistant's tool call was not valid JSON")
             repairs += 1
             msgs += [{"role": "assistant", "content": text},
-                     {"role": "user", "content": 'That tool call was not valid JSON. Reply with exactly one JSON object, e.g. {"tool": "search", "text": "..."} or {"answer": "..."}.'}]
+                     {"role": "user", "content": _json_problem(text)}]
             continue
         if not isinstance(data, dict) or "tool" not in data or last:
             if isinstance(data, dict) and data.get("answer"):
