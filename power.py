@@ -212,7 +212,6 @@ details.sec>summary{cursor:pointer;font-weight:600;padding:6px 0}
 (function(){
 const M=[["qwen","Sweeper","#4c9aff"],["gpt","Reviewer","#f5a623"],["cur","Curator","#34d399"],["pa","Assistant","#e879f9"]];
 const UI={};
-let done=false;
 function find(sel,pre){const cs=document.querySelectorAll(sel);for(let i=0;i<cs.length;i++){const t=cs[i].querySelector("h3");if(t&&t.textContent.indexOf(pre)===0)return cs[i]}return null}
 function parts(card){const out=[];Array.from(card.children).forEach(function(ch,i){
  if(ch.tagName==="H3")return;
@@ -253,30 +252,34 @@ async function refresh(){try{
   else if(s.state==="unloaded"){u.act="load";u.btn.disabled=false;u.txt.textContent="Hold to load"}
   else{u.act="unload";u.btn.disabled=false;u.txt.textContent="Hold to unload"}})
 }catch(e){}}
-function ready(){
- for(let i=0;i<M.length;i++){const n=M[i][1];
-  if(!find("#sp .card",n+": ")||!find("#sv .card",n+" server")||!find("#pp .card",n+" prompts"))return false}
- return !!find("#cu .card","Curator (swaps")}
+// The one-card-per-model layout is drawn at once, with its sections empty. Each section is filled as the card that
+// belongs in it arrives (each card loads its own data), so nothing waits for the slowest one.
+function fillOne(secEl,sel,pre){if(secEl.dataset.filled)return;const c=find(sel,pre);if(!c)return;
+ parts(c).forEach(function(n){secEl.append(n)});c.remove();secEl.dataset.filled="1"}
+function fill(){let all=true;
+ M.forEach(function(a){const key=a[0],name=a[1],u=UI[key];
+  fillOne(u.secGen,"#sp .card",name+": ");fillOne(u.secSrv,"#sv .card",name+" server");fillOne(u.secPr,"#pp .card",name+" prompts");
+  if(key==="cur")fillOne(u.secCur,"#cu .card","Curator (swaps");
+  if(!(u.secGen.dataset.filled&&u.secSrv.dataset.filled&&u.secPr.dataset.filled&&(key!=="cur"||u.secCur.dataset.filled)))all=false});
+ if(all)mo.disconnect()}
 function merge(){
- const mm=$("#mm"),sp=$("#sp"),cu=find("#cu .card","Curator (swaps");
+ const mm=$("#mm"),sp=$("#sp");
  sp.parentNode.insertBefore(mm,sp);
  M.forEach(function(a){
   const key=a[0],name=a[1],col=a[2];
-  const gen=find("#sp .card",name+": "),srv=find("#sv .card",name+" server"),pr=find("#pp .card",name+" prompts");
   const u=UI[key]={act:""};
   u.chip=h("span",{class:"mc"},"...");u.sub=h("div",{class:"mut"});u.msg=h("div",{class:"mut"});
+  u.secSrv=sec("Server and where it runs",[],false);u.secGen=sec("Generation settings",[],false);u.secPr=sec("Prompts",[],false);
+  if(key==="cur")u.secCur=sec("Curator behaviour",[],false);
   const card=h("div",{class:"card"},h("div",{class:"mh"},h("i",{style:"background:"+col}),h("b",{},name),u.chip,powerButton(key,u)),u.sub,u.msg);
-  card.append(sec("Server and where it runs",parts(srv),false));
-  card.append(sec("Generation settings",parts(gen),false));
-  if(key==="cur"&&cu)card.append(sec("Curator behaviour",parts(cu),false));
-  card.append(sec("Prompts",parts(pr),false));
+  card.append(u.secSrv,u.secGen);
+  if(key==="cur")card.append(u.secCur);
+  card.append(u.secPr);
   card.append(h("button",{class:"pri",style:"margin-top:10px",onclick:function(){window.applyAll()}},"Apply all models"));
-  gen.remove();srv.remove();pr.remove();mm.append(card)});
- if(cu)cu.remove();
+  mm.append(card)});
  refresh();setInterval(function(){if(!document.hidden)refresh()},3000)}
-const mo=new MutationObserver(function(){if(!done&&ready()){done=true;mo.disconnect();merge()}});
-mo.observe(document.body,{childList:true,subtree:true});
-if(ready()){done=true;mo.disconnect();merge()}
+const mo=new MutationObserver(fill);
+merge();fill();mo.observe(document.body,{childList:true,subtree:true});
 })();
 </script>
 """
