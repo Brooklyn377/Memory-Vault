@@ -161,6 +161,12 @@ def _waiting(model):
 def slots(model, whole_server=False):
     d = _state(model, whole_server)
     d["wait"] = _waiting(model)
+    if d["wait"]:
+        try:
+            import turns
+            d["why"] = turns.active()["why"].get(model, "")
+        except Exception:
+            d["why"] = ""
     return d
 
 
@@ -372,6 +378,7 @@ function show(m,s){
   const a=q.w[0],z=q.w[q.w.length-1];
   if(z[0]>a[0]&&z[1]>=a[1])tps=(z[1]-a[1])/((z[0]-a[0])/1000);
   e.nm.innerHTML=(s.calls>1?"combined, "+s.calls+" calls":"this call")+" <b>"+fmt(d)+"</b> · <b>"+(s.busy&&tps!==null?tps.toFixed(2):"–")+"</b> tok/s · context <b>"+fmt(s.used||0)+" / "+fmt(s.ctx)+"</b>"+(s.slots>1?" · <b>"+s.slots+"</b> slots":"");
+  if(!s.busy&&s.wait&&s.why)e.nm.textContent="The "+(M[m]?M[m].name:m)+" "+s.why;
 }
 
 function showTot(t,sl){

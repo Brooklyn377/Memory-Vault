@@ -249,9 +249,14 @@ def wants(now=None):
         import swap
         if swap.holding():
             out.setdefault("cur", {"at": now})
+        loaded = active()["group"]
         for m in MODELS:
-            if power.manual(m):
-                out[m] = {"at": now}
+            if power.manual(m) and m not in loaded:   # your Hold to load is a request until it is loaded; after that it is like any other model
+                try:
+                    at = (power.STATE / f"model_on_{m}").stat().st_mtime
+                except OSError:
+                    at = now
+                out[m] = {"at": at}
     except Exception:
         pass
     return {m: d for m, d in out.items() if not _off(m)}
@@ -310,8 +315,9 @@ def active():
     groupd = d.get("group") if isinstance(d.get("group"), list) else []
     draining = d.get("draining") if isinstance(d.get("draining"), list) else []   # and true or false here
     models = [m for m in groupd if m in MODELS]
+    why = d.get("why") if isinstance(d.get("why"), dict) else {}
     return {"group": models, "since": {m: float(since.get(m, 0)) for m in models},
-            "draining": [m for m in draining if m in models]}
+            "draining": [m for m in draining if m in models], "why": {m: str(t) for m, t in why.items() if m in MODELS}}
 
 
 def _set_active(st):
@@ -460,6 +466,7 @@ def step(now=None):
         order = sorted(w, key=lambda m: (cfg["priority"].index(m), w[m]["at"]))
         in_the_way = set()
         why = {}       # model -> why it has to wait, for the log
+        detail = {}    # the same with what each model in the way is doing now, for the pages
         waiting = []   # wanted models that had to wait: a lower one may not slip in front of them
         for m in order:
             if m in loaded:
@@ -473,10 +480,12 @@ def step(now=None):
                 else:
                     waiting.append(m)
                     why[m] = "waits in the queue behind " + ", ".join(NICE[b] for b in waiting if conflict(m, b) and b != m)
+                    detail[m] = why[m]
                 continue
             waiting.append(m)
             in_the_way |= set(block)
             why[m] = "waits for " + ", ".join(NICE[b] for b in block) + " to finish (no group lists them together, or the hardware takes one at a time)"
+            detail[m] = "waits for " + "; ".join(f"{NICE[b]} ({_doing(b, w, counts, held, since, now, cfg)})" for b in block)
 
             def can_go(x):
                 inside = x in w or counts.get(x) or held.get(x) or used_lately(x, now)   # it still has work
@@ -504,7 +513,7 @@ def step(now=None):
                 _WAIT[m] = r
                 agent.log(f"turns: the {NICE[m]} {r}")
         drain = {x for x in drain if x in loaded and x in in_the_way}
-        _set_active({"group": loaded, "since": since, "draining": sorted(drain)})
+        _set_active({"group": loaded, "since": since, "draining": sorted(drain), "why": detail})
         stop = [m for m in stop if m in running]   # only a server on this machine is stopped
         start = [m for m in order if m in loaded and m not in running and not _external(m)]   # wanted ones that are not up
     for m in stop:   # outside the lock: stopping a server takes a while, and callers only wait meanwhile
@@ -516,6 +525,22 @@ def step(now=None):
     if did:
         agent.log("turns: " + re.sub(r"\b(qwen|gpt|cur|pa)\b", lambda k: NICE[k.group(1)], "; ".join(did)))
     return did
+
+
+def _doing(x, w, counts, held, since, now, cfg):
+    """What a model that is in the way is doing, in words, for the pages."""
+    left = max(0, cfg["turn_minutes"] * 60 - (now - since.get(x, now)))
+    if counts.get(x):
+        what = "running a call"
+    elif held.get(x):
+        what = "in the middle of an Assistant task"
+    elif x in w:
+        what = "asking for work"
+    elif used_lately(x, now):
+        what = "just finished a call"
+    else:
+        what = "idle, so it gives way"
+    return what + (f", its turn lasts {int(left // 60)} more min" if left and (counts.get(x) or x in w) else "")
 
 
 def start():

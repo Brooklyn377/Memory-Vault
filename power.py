@@ -94,7 +94,7 @@ def load(m):
     import turns
     if turns.managed(m):   # it takes turns: the manager loads it, together with its group, as soon as it can
         _flag(m, "off").unlink(missing_ok=True)
-        _flag(m, "on").write_text("1")   # kept loaded until you unload it
+        _flag(m, "on").write_text("1")   # a request: it stays until the model is loaded; then it yields like any other
         turns.want(m)
         agent.log(f"settings: {NICE[m]} loading requested by you; it is loaded when the models that have the turn are idle")
         return

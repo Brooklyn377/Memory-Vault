@@ -22,7 +22,7 @@ def info():
             "models": [{"key": m, "name": turns.NICE[m], "external": _external(m), "has_file": bool(settings.get(m).get("model_file"))}
                        for m in turns.MODELS],
             "loaded": [m for m in turns.MODELS if (applier.health(m) == "ready" if _external(m) else applier._active(m))],
-            "turn": st["group"], "waiting": [m for m in turns.wants() if m not in st["group"]],
+            "turn": st["group"], "waiting": [m for m in turns.wants() if m not in st["group"] or m in st["draining"]], "why": st["why"],
             "manager": turns.alive()}
 
 
@@ -82,10 +82,13 @@ function groupBox(models){
  const del=h("button",{onclick:function(){boxes=boxes.filter(function(b){return b.row!==row});row.remove()}},"Remove group");
  row.append(del);const b={row:row,cb:cb};boxes.push(b);return row}
 function collect(){return boxes.map(function(b){return{models:Object.keys(b.cb).filter(function(k){return b.cb[k].checked})}}).filter(function(g){return g.models.length})}
+function showStatus(d){
+ const nm=function(a){return a.map(function(k){return(MODELS.find(function(m){return m.key===k})||{}).name||k}).join(", ")||"none"};
+ const why=Object.keys(d.why||{}).filter(function(k){return d.waiting.indexOf(k)>=0}).map(function(k){return"The "+nm([k])+" "+d.why[k]+"."});
+ status.replaceChildren(h("div",{},(d.manager?"":"The turn manager is not running yet, so models are not switched. ")+"Loaded now: "+nm(d.loaded)+(d.waiting.length?" · waiting for a turn: "+nm(d.waiting):"")+"."),...why.map(function(t){return h("div",{},t)}))}
 async function load(){try{const d=await api("/api/groups");MODELS=d.models;mins.value=d.turn_minutes;boxes=[];order=d.priority;drawPrio();
  list.replaceChildren(...d.groups.map(function(g){return groupBox(g.models)}));
- const nm=function(a){return a.map(function(k){return(MODELS.find(function(m){return m.key===k})||{}).name||k}).join(", ")||"none"};
- status.textContent=(d.manager?"":"The turn manager is not running yet, so models are not switched. ")+"Loaded now: "+nm(d.loaded)+(d.waiting.length?" · waiting for a turn: "+nm(d.waiting):"")+"."}catch(e){}}
+ showStatus(d)}catch(e){}}
 async function save(){
  const body={groups:collect(),turn_minutes:mins.value,priority:order};
  const r=await fetch("/api/groups/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -101,7 +104,7 @@ $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
  h("button",{onclick:function(){list.append(groupBox([]))}},"Add group"),
  h("div",{class:"fld",style:"margin-top:8px"},h("label",{},"Minutes a model keeps its turn while others wait (0: give way as soon as it is idle)"),mins),
  h("button",{class:"pri",style:"margin-top:8px",onclick:save},"Save groups"),msg));
-load();setInterval(function(){if(!document.hidden)api("/api/groups").then(function(d){const nm=function(a){return a.map(function(k){return(MODELS.find(function(m){return m.key===k})||{}).name||k}).join(", ")||"none"};status.textContent=(d.manager?"":"The turn manager is not running yet, so models are not switched. ")+"Loaded now: "+nm(d.loaded)+(d.waiting.length?" · waiting for a turn: "+nm(d.waiting):"")+"."}).catch(function(){})},5000);
+load();setInterval(function(){if(!document.hidden)api("/api/groups").then(function(d){showStatus(d)}).catch(function(){})},5000);
 })();
 </script>
 """
