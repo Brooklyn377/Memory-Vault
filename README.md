@@ -125,11 +125,12 @@ release made before notes were added only shows its name. A collapsed **Recent r
 (all that GitHub gives), marking the installed one and the ones not applied yet. Each release is one line you tap to open its notes;
 the same goes for the releases not applied yet.
 
-**Roll back** (next to Check now; greyed out with the reason when there is no earlier version to put back) puts the code back to the version from
-before the last update, with one click and a confirmation. It uses the backup the updater takes before every update (the last 3
-are kept), restarts the services, and leaves your settings, login, models and vault alone. Press it again to go one version
-further back while backups last. The newest version is offered again afterwards; Update now applies it. Without the page:
-`pct exec <container ID> -- /usr/local/bin/memory-agent-update --rollback`.
+**Roll back** is on each release in the Recent releases list: open a release older than the one you are running and press **Roll
+back to this version**. After a confirmation it installs that exact release the way an update does (it is downloaded and
+checked, the current code is backed up, the services restart, and the page reloads). Your settings, login, models and vault are
+not touched; a much older version may not understand settings made in newer ones. Only the last 10 releases are listed (all
+that GitHub shows), and Update now brings you back to the newest. From the command line: `memory-agent-update --to <the full
+40 character version>`, or `memory-agent-update --rollback` for the code from before the last update.
 
 Or on the Proxmox host:
 

@@ -3,6 +3,7 @@
 #   memory-agent-update            install the newest code if there is any
 #   memory-agent-update --check    only say whether there is newer code
 #   memory-agent-update --rollback put back the code from before the last update
+#   memory-agent-update --to SHA   install that exact version (the full 40 character one): a release picked on the Settings page
 # The repository and branch are in /etc/memory-agent/source (written by the installer).
 # Config, login, settings, models and the vault are never touched; only code and Python packages change.
 set -euo pipefail
@@ -54,13 +55,17 @@ case "${1:-}" in
         restore "$b"
         rm -f "$b"   # used: the next rollback goes one version further back
         exit 0 ;;
+    --to)
+        target="${2:-}"
+        [[ "$target" =~ ^[0-9a-f]{40}$ ]] || { echo "give the full 40 character version after --to" >&2; exit 2; } ;;
     "") ;;
-    *) echo "usage: memory-agent-update [--check|--rollback]" >&2; exit 2 ;;
+    *) echo "usage: memory-agent-update [--check|--rollback|--to SHA]" >&2; exit 2 ;;
 esac
 
-new="$(latest)"
+new="${target:-$(latest)}"
 [[ -n "$new" ]] || { echo "could not ask GitHub for the newest version of $MA_REPO ($MA_REF)" >&2; exit 1; }
 if [[ "$new" == "$(installed)" ]]; then echo "up to date ($new)"; exit 0; fi
+[[ -z "${target:-}" ]] || echo "installing the chosen version $new"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

@@ -18,7 +18,6 @@ UPDATER = "/usr/local/bin/memory-agent-update"
 STATUS = agent.STATE / "update_check.json"
 LOG = agent.STATE / "update.log"
 UNIT = "update-memory-agent"   # not memory-*: the updater's rollback restarts every running memory-* unit
-BACKUPS = Path("/var/backups/memory-agent")   # the updater's backups of the code from before each update
 SOURCE = Path("/etc/memory-agent/source")   # where the code comes from: MA_REPO=owner/name and MA_REF=branch
 VERSION = Path("/opt/memory-agent/VERSION")   # the code that is installed now (written by the updater)
 
@@ -78,28 +77,6 @@ def recent(latest):
         return []
 
 
-def rollback_info():
-    """The version the last update replaced, which Roll back puts back: {"available", "version", "at"}. The updater keeps
-    a backup of the code from before each update."""
-    import tarfile
-    try:
-        b = sorted(BACKUPS.glob("code-*.tar.gz"))[-1]
-    except IndexError:
-        return {"available": False, "reason": f"Nothing to roll back to: no backup of an earlier version was found in {BACKUPS} "
-                                              "(the updater makes one before each update)."}
-    version = ""
-    try:
-        with tarfile.open(b) as t:
-            version = t.extractfile("opt/memory-agent/VERSION").read().decode().strip()
-    except (OSError, KeyError, tarfile.TarError, AttributeError):
-        pass
-    m = re.match(r"code-(\d{8})-(\d{6})", b.name)
-    at = f"{m.group(1)[:4]}-{m.group(1)[4:6]}-{m.group(1)[6:]}T{m.group(2)[:2]}:{m.group(2)[2:4]}:{m.group(2)[4:]}" if m else ""
-    same = bool(version) and version == status().get("installed")
-    return {"available": not same, "version": version, "at": at,
-            "reason": "Nothing to roll back to: the newest backup is the version you are running." if same else ""}
-
-
 def installed_now():
     try:
         return VERSION.read_text().strip()
@@ -153,19 +130,20 @@ def check():
     return st
 
 
-def rollback():
-    """Put back the code from before the last update, as its own systemd job like an update (the services restart)."""
+def install(sha):
+    """Install one chosen release (a version from the Recent releases list), as its own systemd job like an update: the
+    services restart and the page reloads. Going to an older release is a rollback."""
+    if not re.fullmatch(r"[0-9a-f]{40}", str(sha or "")):
+        raise ValueError("that is not a version")
     if running():
         raise ValueError("an update is already running")
-    if not rollback_info()["available"]:
-        raise ValueError("there is no earlier version to put back")
     subprocess.run(["systemctl", "reset-failed", UNIT], capture_output=True, timeout=10)
     r = subprocess.run(["systemd-run", f"--unit={UNIT}", "--collect", "--quiet",
                         f"--property=StandardOutput=truncate:{LOG}", f"--property=StandardError=append:{LOG}",
-                        UPDATER, "--rollback"], capture_output=True, text=True, timeout=30)
+                        UPDATER, "--to", sha], capture_output=True, text=True, timeout=30)
     if r.returncode:
-        raise ValueError(f"could not start the rollback: {(r.stderr or r.stdout).strip()[:200]}")
-    agent.log("update: rollback started from the Settings page")
+        raise ValueError(f"could not start it: {(r.stderr or r.stdout).strip()[:200]}")
+    agent.log(f"update: installing the chosen version {sha[:10]} from the Settings page")
 
 
 def running():

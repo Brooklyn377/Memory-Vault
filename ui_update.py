@@ -14,7 +14,7 @@ def register(app, authed):
     @router.get("/api/update/status")
     def status(request: Request):
         need(request)
-        return dict(updates.status(), running=updates.running(), rollback=updates.rollback_info())
+        return dict(updates.status(), running=updates.running())
 
     @router.post("/api/update/check")
     def check(request: Request):
@@ -30,11 +30,11 @@ def register(app, authed):
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
 
-    @router.post("/api/update/rollback")
-    def rollback(request: Request):
+    @router.post("/api/update/install")
+    async def install(request: Request):
         need(request)
         try:
-            updates.rollback()
+            updates.install((await request.json()).get("sha"))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
@@ -54,18 +54,24 @@ HTML = r"""
 const short=function(v){return v?String(v).slice(0,10):"unknown"};
 const when=function(t){return t?new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"never"};
 const msg=h("div",{class:"mut"}),log=h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:40vh;overflow:auto;display:none"});
-const info=h("div",{}),changes=h("div",{}),recent=h("div",{}),rbnote=h("div",{class:"mut",style:"margin-top:6px"});
+const info=h("div",{}),changes=h("div",{}),recent=h("div",{});
 let polling=false;
 // One release: a line (date, version, what it was) that you tap to open its notes.
-function release(c,tag){
+function release(c,tag,older){
  const items=c.items||[],plain=items.length===1&&/^Release from /.test(items[0].subject);
  const first=plain?"":items[0]?items[0].subject:"";
  const d=h("details",{style:"border-top:1px solid var(--line);padding:6px 0"},
   h("summary",{style:"cursor:pointer;padding:4px 0"},h("span",{class:"mut"},when(Date.parse(c.date)/1000)+" · "+short(c.sha)+(tag?" · "+tag:"")),
    first?h("div",{},first+(items.length>1?"  (+"+(items.length-1)+" more)":"")):null),
   ...(plain?[h("div",{class:"mut",style:"margin:4px 0"},"No notes were written for this release.")]:
-   items.map(function(i){return h("div",{style:"margin:6px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)})));
+   items.map(function(i){return h("div",{style:"margin:6px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)})),
+  ...(older?[h("button",{style:"margin:6px 0",onclick:function(){back(c)}},"Roll back to this version")]:[]));
  return d}
+// Roll back to a chosen release: it is installed like an update, so the services restart and the page reloads.
+async function back(c){
+ if(!await window.warnPop("Roll back to this version?",["The code goes back to version "+short(c.sha)+" of "+when(Date.parse(c.date)/1000)+". The services restart; any model call running now is cut off and done again afterwards.","Your settings, login, models and vault are not touched. A much older version may not understand settings made in newer ones. You can update again whenever you like."],"Roll back","Keep the current version"))return;
+ const r=await fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sha:c.sha})});const j=await r.json().catch(function(){return{}});
+ if(!r.ok){msg.textContent=j.detail||"Could not start the rollback";return}follow()}
 // What is in the updates you have not applied, newest first: each release, and the changes it brought.
 function showChanges(s){
  if(!s.available){changes.replaceChildren();return}
@@ -74,25 +80,21 @@ function showChanges(s){
  changes.replaceChildren(h("div",{style:"margin-top:12px;font-weight:600"},"Changes not applied yet ("+n+(n===1?" update":" updates")+")"),
   ...(s.changes_note?[h("div",{class:"mut"},s.changes_note)]:[]),
   h("div",{style:"max-height:45vh;overflow:auto;margin-top:6px"},...s.changes.map(function(c){return release(c,"")})))}
-// The last 10 releases with their notes (all GitHub gives), collapsed: the installed one and the ones not applied yet are marked.
+// The last 10 releases (all GitHub gives), collapsed: the installed one and the ones not applied yet are marked, and each older one can be rolled back to.
 function showRecent(s){
  const list=s.recent||[];
  if(!list.length){recent.replaceChildren();return}
+ const at=list.findIndex(function(c){return c.sha===s.installed});   // the releases after it in the list are older
  const seen=s.changes&&s.changes.length?new Set(s.changes.map(function(c){return c.sha})):new Set();
  const d=h("details",{class:"sec"},h("summary",{},"Recent releases (the last "+list.length+")"),
-  ...list.map(function(c){return release(c,c.sha===s.installed?"installed":seen.has(c.sha)?"not applied yet":"")}));
+  ...list.map(function(c,i){return release(c,c.sha===s.installed?"installed":seen.has(c.sha)?"not applied yet":"",at>=0&&i>at)}));
  const was=recent.firstChild&&recent.firstChild.open;d.open=!!was;recent.replaceChildren(d)}
-function showRollback(s){
- const r=s.rollback||{};
- back.disabled=!r.available;rbnote.textContent=r.available?"":(r.reason||"");
- back.title=r.available?"Put back "+(r.version?short(r.version):"the earlier version")+(r.at?", from before the update of "+when(Date.parse(r.at+"Z")/1000):""):"";
- back.dataset.version=r.version||"";back.dataset.at=r.at||""}
-function show(s){showChanges(s);showRecent(s);showRollback(s);info.replaceChildren(
+function show(s){showChanges(s);showRecent(s);info.replaceChildren(
  h("div",{},"Installed: ",h("b",{},short(s.installed)),s.latest?" · newest: ":"",s.latest?h("b",{},short(s.latest)):""),
  h("div",{class:"mut"},s.error?"Last check failed: "+s.error:s.available?"An update is available.":"Up to date."," Checked "+when(s.at)+"; it checks when you open this page."))}
 // Opening the page shows the last answer at once, then asks GitHub for the newest version.
 async function load(){try{const s=await api("/api/update/status");show(s);if(s.running){follow();return}
- msg.textContent="Checking...";const c=await api("/api/update/check",{method:"POST"});show(Object.assign({},s,c,{rollback:s.rollback}));msg.textContent="";if(window.updBadge)window.updBadge()}catch(e){msg.textContent=""}}
+ msg.textContent="Checking...";const c=await api("/api/update/check",{method:"POST"});show(c);msg.textContent="";if(window.updBadge)window.updBadge()}catch(e){msg.textContent=""}}
 async function follow(){if(polling)return;polling=true;log.style.display="";msg.textContent="Updating. The page restarts along the way; it reloads when the update is done.";
  let seenDown=false;
  while(true){await new Promise(function(r){setTimeout(r,2000)});
@@ -103,16 +105,11 @@ async function follow(){if(polling)return;polling=true;log.style.display="";msg.
     polling=false;return}}
   catch(e){seenDown=true;msg.textContent="Updating. The web page is restarting..."}}}
 const check=h("button",{onclick:async function(){msg.textContent="Checking...";try{const s=await api("/api/update/check",{method:"POST"});show(s);msg.textContent="";if(window.updBadge)window.updBadge()}catch(e){msg.textContent=e.message}}},"Check now");
-const back=h("button",{onclick:async function(){
- const v=back.dataset.version,at=back.dataset.at;
- if(!await window.warnPop("Roll back the last update?",["The code goes back to "+(v?"version "+short(v):"the version from before the last update")+(at?" (the one that was running before the update of "+when(Date.parse(at+"Z")/1000)+")":"")+". The services restart; any model call running now is cut off and done again afterwards.","Your settings, login, models and vault are not touched. You can update again whenever you like; the newest version will be offered again."],"Roll back","Keep the current version"))return;
- const r=await fetch("/api/update/rollback",{method:"POST"});const j=await r.json().catch(function(){return{}});
- if(!r.ok){msg.textContent=j.detail||"Could not start the rollback";return}follow()}},"Roll back");
 const go=h("button",{class:"pri",onclick:async function(){
  if(!await window.warnPop("Update now?",["The newest version is downloaded and checked, the current code is backed up, and the services restart. Any model call running now is cut off and done again afterwards.","If the update fails its checks, the previous version is put back by itself."],"Update now","Not now"))return;
  const r=await fetch("/api/update/apply",{method:"POST"});const j=await r.json().catch(function(){return{}});
  if(!r.ok){msg.textContent=j.detail||"Could not start the update";return}follow()}},"Update now");
-$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check,back),rbnote,msg,changes,recent,log));
+$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check),msg,changes,recent,log));
 load();
 })();
 </script>
