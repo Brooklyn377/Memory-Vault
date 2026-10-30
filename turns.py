@@ -495,6 +495,10 @@ def step(now=None):
                 return not inside or (expired and served and not held.get(x))
             if all(can_go(x) for x in block):
                 drain |= set(block)   # no new calls for them: their running calls finish, then this model comes
+                busy = [NICE[y] for y in block if counts.get(y)]
+                for x in block:   # what a model that is being drained is told, since it is not the one waiting
+                    detail.setdefault(x, f"stops taking new calls so the {NICE[m]} can have its turn"
+                                         + (f" (waiting for the {' and '.join(busy)} to finish a call)" if busy else ""))
                 if not any(counts.get(x) for x in block):
                     for x in block:
                         loaded.remove(x)
