@@ -254,8 +254,8 @@ def register(app, authed):
 
 THINK_HTML = r"""
 <style>
-.tk{display:flex;flex-direction:column;height:calc(100vh - 64px);height:calc(100dvh - 64px);padding:10px 12px;gap:10px;min-height:0}
-.chat{flex:1;min-height:180px;min-height:60vh;min-height:60dvh;overflow-y:auto;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+.tk{display:flex;flex-direction:column;padding:10px 12px;gap:10px}
+.chat{flex:none;height:60vh;overflow-y:auto;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
 .chat .more{color:var(--mut);text-align:center;font-size:12px;padding:2px 0 8px}
 .blk{border-left:3px solid var(--c);padding:2px 0 2px 10px;margin:0 0 14px}
 .bh{font:700 12px sans-serif;color:var(--c);margin-bottom:3px}
