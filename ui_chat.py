@@ -228,7 +228,24 @@ def _ask_assistant_once(system, messages, label="chat"):
         body["chat_template_kwargs"] = {"enable_thinking": bool(s.get("thinking", True))}
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
-    return (thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label).get("content") or "").strip()
+    r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label)
+    if r.get("finish_reason") == "length":   # it stopped at a limit: not something to hand back to the model
+        raise HitLimit(_limit_text(r.get("tokens") or 0, s["max_tokens"]["chat"], bool((r.get("content") or "").strip())))
+    return (r.get("content") or "").strip()
+
+
+class HitLimit(RuntimeError):
+    """The Assistant stopped at a limit instead of finishing. The message says which one and where to change it."""
+
+
+def _limit_text(tokens, cap, has_text):
+    what = "its reply was cut off" if has_text else "it was still thinking and never got to the answer"
+    if cap and tokens >= cap * 0.95:
+        return (f"the Assistant hit its limit of {cap:,} tokens for a chat reply ({what}). Raise \"chat max tokens\" under "
+                "the Assistant on the Settings page.")
+    return (f"the Assistant hit the context window of its server after {tokens:,} tokens ({what}): the question, notes, earlier "
+            "messages and its reply did not fit together. Raise the Context of the Assistant's server on the Settings page, or "
+            "lower \"Earlier messages it sees\" or \"Characters per look-up result\" under the Assistant.")
 
 
 def cited(reply):
@@ -287,6 +304,13 @@ def assistant_answer(m, context):
         if last:
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
+        if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():   # blank, and no limit was hit: send it back
+            if repairs >= __import__("tuning").get("assistant.call_fixes"):
+                raise RuntimeError("the Assistant sent an empty reply again after being told so")
+            repairs += 1
+            msgs += [{"role": "assistant", "content": "(empty reply)"},
+                     {"role": "user", "content": 'Your last reply was empty. Reply with one JSON object: a tool call such as {"tool": "search", "text": "..."}, or {"answer": "..."}.'}]
+            continue
         data = _find_call(text)         # the JSON may sit among text the model wrote around it
         if data is None and re.search(r'"tool"\s*:', re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)):
             if repairs >= __import__("tuning").get("assistant.call_fixes"):   # a tool call that will not parse is never shown as the answer
@@ -446,7 +470,7 @@ def watch():
             except Exception as ae:
                 agent.log(f"chat: could not save {m['id']} as a conversation ({type(ae).__name__}: {str(ae)[:80]})")
         except Exception as e:
-            why = f"{type(e).__name__}: {str(e)[:120]}"
+            why = f"{type(e).__name__}: {str(e)[:400]}"
             import thinklog
             if isinstance(e, thinklog.Aborted):   # you switched or stopped the server: answer it again with what is current
                 m["status"], m["reply"] = "queued", ""

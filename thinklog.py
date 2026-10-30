@@ -237,7 +237,7 @@ def chat(model, endpoint, body, label, slot=None):
 
 
 def _chat_local(model, endpoint, body, label, slot=None):
-    """Same job as the old urlopen block, but streamed. Returns {"content": ..., "reasoning_content": ...}."""
+    """Same job as the old urlopen block, but streamed. Returns {"content": ..., "reasoning_content": ..., "finish_reason": ..., "tokens": ...}."""
     call = str(time.time_ns())
     body = _with_sampling(model, label, body)
     body, pnote = _with_prompt(label, body)
@@ -256,7 +256,7 @@ def _chat_local(model, endpoint, body, label, slot=None):
                                  data=json.dumps(dict(body, stream=True, cache_prompt=True, **({"id_slot": slot} if slot is not None and slot < _slots(model) else {}))).encode(),
                                  headers={"Content-Type": "application/json"})
     out = {"content": [], "reasoning_content": []}
-    total, started = 0, time.time()
+    total, started, finish = 0, time.time(), ""
     if _aborted_since(model, started):
         raise Aborted(f"{model} was switched or stopped")
     _write({"t": time.time_ns(), "m": model, "c": call, "k": "start", "s": label, "n": 0, "p": os.getpid(), "w": describe(label, body) + pnote})
@@ -269,9 +269,11 @@ def _chat_local(model, endpoint, body, label, slot=None):
                 if not line.startswith("data:") or line.endswith("[DONE]"):
                     continue
                 try:
-                    delta = json.loads(line[5:])["choices"][0]["delta"]
+                    choice = json.loads(line[5:])["choices"][0]
+                    delta = choice["delta"]
                 except (ValueError, KeyError, IndexError):
                     continue
+                finish = choice.get("finish_reason") or finish   # "length": the model stopped at a limit
                 for field, k in (("reasoning_content", "r"), ("content", "o")):
                     piece = delta.get(field) or ""
                     if not piece:
@@ -305,4 +307,5 @@ def _chat_local(model, endpoint, body, label, slot=None):
         prune()
     if cut.is_set():
         raise Aborted(f"{model} was switched or stopped")
-    return {"content": "".join(out["content"]), "reasoning_content": "".join(out["reasoning_content"])}
+    return {"content": "".join(out["content"]), "reasoning_content": "".join(out["reasoning_content"]),
+            "finish_reason": finish, "tokens": total}
