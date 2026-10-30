@@ -1,5 +1,9 @@
 # Memory agent
 
+> **Work in progress.** This project is under active development. Things may break, features may change or be removed
+> between updates, and settings or saved data may need to be redone. Keep backups of anything you care about (your vault
+> and the agent's state folder), and read what an update changes before you apply it. Use it at your own risk.
+
 A documentation agent that runs on your own hardware. It reads exported chats, writes a markdown vault of
 summaries, timelines and notes, and checks every fact against a quote from the chat before anything is written.
 The models run locally through llama.cpp. Everything is in one Proxmox container with a web page.
