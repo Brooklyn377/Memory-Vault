@@ -2,6 +2,7 @@
 Unloading is immediate and overrides everything. A model you unload stays off: its calls wait until you load it again."""
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -171,7 +172,8 @@ def register(app, authed):
     def get(request: Request):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
-        return {m: state(m) for m in UNIT}
+        with ThreadPoolExecutor(max_workers=len(UNIT)) as pool:   # each model's server is asked at once
+            return dict(zip(UNIT, pool.map(state, UNIT)))
 
     @router.post("/api/model/power")
     async def post(request: Request):

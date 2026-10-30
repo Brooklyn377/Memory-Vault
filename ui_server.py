@@ -3,6 +3,7 @@ import json
 import os
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -237,13 +238,15 @@ def register(app, authed):
     def info(request: Request):
         need(request)
         s, pend = settings.load(), applier.pending()
+
+        with ThreadPoolExecutor(max_workers=3 * len(MODELS)) as pool:   # everything asked of the servers runs at once
+            asked = {m: (pool.submit(applier.health, m), pool.submit(_running_ctx, m), pool.submit(_runner_info, m)) for m in MODELS}
+            servers = {m: {"file": s[m]["model_file"], "context": s[m]["context"],
+                           "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {},
+                           "remote": remote.public(m), "device": serverflags.device(s[m]), "pending": pend.get(m),
+                           "health": asked[m][0].result(), "running": asked[m][1].result(), "runner": asked[m][2].result()} for m in MODELS}
         return {"models": _models(), "max_threads": _threads_max(), "last": applier.last(), "flagspec": serverflags.spec(),
-                "servers_list": remote.servers(), "gpu": serverflags.backend() == "vulkan",
-                "servers": {m: {"file": s[m]["model_file"], "context": s[m]["context"],
-                                "threads": s[m]["threads"], "parallel": s[m]["parallel"], "flags": s[m].get("flags") or {}, "remote": remote.public(m),
-                                "device": serverflags.device(s[m]),
-                                "health": applier.health(m), "pending": pend.get(m), "running": _running_ctx(m),
-                                "runner": _runner_info(m)} for m in MODELS}}
+                "servers_list": remote.servers(), "gpu": serverflags.backend() == "vulkan", "servers": servers}
 
     @router.post("/api/server/cancel")
     async def cancel(request: Request):
