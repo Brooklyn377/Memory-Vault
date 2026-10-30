@@ -85,7 +85,8 @@ def rollback_info():
     try:
         b = sorted(BACKUPS.glob("code-*.tar.gz"))[-1]
     except IndexError:
-        return {"available": False}
+        return {"available": False, "reason": f"Nothing to roll back to: no backup of an earlier version was found in {BACKUPS} "
+                                              "(the updater makes one before each update)."}
     version = ""
     try:
         with tarfile.open(b) as t:
@@ -94,7 +95,9 @@ def rollback_info():
         pass
     m = re.match(r"code-(\d{8})-(\d{6})", b.name)
     at = f"{m.group(1)[:4]}-{m.group(1)[4:6]}-{m.group(1)[6:]}T{m.group(2)[:2]}:{m.group(2)[2:4]}:{m.group(2)[4:]}" if m else ""
-    return {"available": version != status().get("installed") or not version, "version": version, "at": at}
+    same = bool(version) and version == status().get("installed")
+    return {"available": not same, "version": version, "at": at,
+            "reason": "Nothing to roll back to: the newest backup is the version you are running." if same else ""}
 
 
 def installed_now():

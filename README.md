@@ -122,9 +122,10 @@ and a **1** appears next to Settings in the menu when the last check found one. 
 its progress; the page reloads when it is done. When an update is waiting, a list under the buttons shows what each release
 you have not applied yet changed, newest first. It comes from the release notes each release is published with, so a
 release made before notes were added only shows its name. A collapsed **Recent releases** section lists the last 10 releases
-with their notes (all that GitHub gives), marking the installed one and the ones not applied yet.
+(all that GitHub gives), marking the installed one and the ones not applied yet. Each release is one line you tap to open its notes;
+the same goes for the releases not applied yet.
 
-**Roll back** (next to Check now, shown when there is an earlier version to put back) puts the code back to the version from
+**Roll back** (next to Check now; greyed out with the reason when there is no earlier version to put back) puts the code back to the version from
 before the last update, with one click and a confirmation. It uses the backup the updater takes before every update (the last 3
 are kept), restarts the services, and leaves your settings, login, models and vault alone. Press it again to go one version
 further back while backups last. The newest version is offered again afterwards; Update now applies it. Without the page:

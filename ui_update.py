@@ -54,8 +54,18 @@ HTML = r"""
 const short=function(v){return v?String(v).slice(0,10):"unknown"};
 const when=function(t){return t?new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"never"};
 const msg=h("div",{class:"mut"}),log=h("pre",{style:"white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;max-height:40vh;overflow:auto;display:none"});
-const info=h("div",{}),changes=h("div",{}),recent=h("div",{});
+const info=h("div",{}),changes=h("div",{}),recent=h("div",{}),rbnote=h("div",{class:"mut",style:"margin-top:6px"});
 let polling=false;
+// One release: a line (date, version, what it was) that you tap to open its notes.
+function release(c,tag){
+ const items=c.items||[],plain=items.length===1&&/^Release from /.test(items[0].subject);
+ const first=plain?"":items[0]?items[0].subject:"";
+ const d=h("details",{style:"border-top:1px solid var(--line);padding:6px 0"},
+  h("summary",{style:"cursor:pointer;padding:4px 0"},h("span",{class:"mut"},when(Date.parse(c.date)/1000)+" · "+short(c.sha)+(tag?" · "+tag:"")),
+   first?h("div",{},first+(items.length>1?"  (+"+(items.length-1)+" more)":"")):null),
+  ...(plain?[h("div",{class:"mut",style:"margin:4px 0"},"No notes were written for this release.")]:
+   items.map(function(i){return h("div",{style:"margin:6px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)})));
+ return d}
 // What is in the updates you have not applied, newest first: each release, and the changes it brought.
 function showChanges(s){
  if(!s.available){changes.replaceChildren();return}
@@ -63,25 +73,18 @@ function showChanges(s){
  const n=s.changes.length;
  changes.replaceChildren(h("div",{style:"margin-top:12px;font-weight:600"},"Changes not applied yet ("+n+(n===1?" update":" updates")+")"),
   ...(s.changes_note?[h("div",{class:"mut"},s.changes_note)]:[]),
-  h("div",{style:"max-height:45vh;overflow:auto;margin-top:6px"},...s.changes.map(function(c){
-   return h("div",{style:"border-top:1px solid var(--line);padding:8px 0"},
-    h("div",{class:"mut"},when(Date.parse(c.date)/1000)+" · "+short(c.sha)),
-    ...c.items.map(function(i){return h("div",{style:"margin:4px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)}))})))}
+  h("div",{style:"max-height:45vh;overflow:auto;margin-top:6px"},...s.changes.map(function(c){return release(c,"")})))}
 // The last 10 releases with their notes (all GitHub gives), collapsed: the installed one and the ones not applied yet are marked.
 function showRecent(s){
  const list=s.recent||[];
  if(!list.length){recent.replaceChildren();return}
  const seen=s.changes&&s.changes.length?new Set(s.changes.map(function(c){return c.sha})):new Set();
  const d=h("details",{class:"sec"},h("summary",{},"Recent releases (the last "+list.length+")"),
-  ...list.map(function(c){
-   const tag=c.sha===s.installed?"installed":seen.has(c.sha)?"not applied yet":"";
-   return h("div",{style:"border-top:1px solid var(--line);padding:8px 0"},
-    h("div",{class:"mut"},when(Date.parse(c.date)/1000)+" · "+short(c.sha)+(tag?" · "+tag:"")),
-    ...c.items.map(function(i){return h("div",{style:"margin:4px 0"},h("div",{},i.subject),i.detail?h("div",{class:"mut"},i.detail):null)}))}));
+  ...list.map(function(c){return release(c,c.sha===s.installed?"installed":seen.has(c.sha)?"not applied yet":"")}));
  const was=recent.firstChild&&recent.firstChild.open;d.open=!!was;recent.replaceChildren(d)}
 function showRollback(s){
  const r=s.rollback||{};
- back.style.display=r.available?"":"none";
+ back.disabled=!r.available;rbnote.textContent=r.available?"":(r.reason||"");
  back.title=r.available?"Put back "+(r.version?short(r.version):"the earlier version")+(r.at?", from before the update of "+when(Date.parse(r.at+"Z")/1000):""):"";
  back.dataset.version=r.version||"";back.dataset.at=r.at||""}
 function show(s){showChanges(s);showRecent(s);showRollback(s);info.replaceChildren(
@@ -100,7 +103,7 @@ async function follow(){if(polling)return;polling=true;log.style.display="";msg.
     polling=false;return}}
   catch(e){seenDown=true;msg.textContent="Updating. The web page is restarting..."}}}
 const check=h("button",{onclick:async function(){msg.textContent="Checking...";try{const s=await api("/api/update/check",{method:"POST"});show(s);msg.textContent="";if(window.updBadge)window.updBadge()}catch(e){msg.textContent=e.message}}},"Check now");
-const back=h("button",{style:"display:none",onclick:async function(){
+const back=h("button",{onclick:async function(){
  const v=back.dataset.version,at=back.dataset.at;
  if(!await window.warnPop("Roll back the last update?",["The code goes back to "+(v?"version "+short(v):"the version from before the last update")+(at?" (the one that was running before the update of "+when(Date.parse(at+"Z")/1000)+")":"")+". The services restart; any model call running now is cut off and done again afterwards.","Your settings, login, models and vault are not touched. You can update again whenever you like; the newest version will be offered again."],"Roll back","Keep the current version"))return;
  const r=await fetch("/api/update/rollback",{method:"POST"});const j=await r.json().catch(function(){return{}});
@@ -109,7 +112,7 @@ const go=h("button",{class:"pri",onclick:async function(){
  if(!await window.warnPop("Update now?",["The newest version is downloaded and checked, the current code is backed up, and the services restart. Any model call running now is cut off and done again afterwards.","If the update fails its checks, the previous version is put back by itself."],"Update now","Not now"))return;
  const r=await fetch("/api/update/apply",{method:"POST"});const j=await r.json().catch(function(){return{}});
  if(!r.ok){msg.textContent=j.detail||"Could not start the update";return}follow()}},"Update now");
-$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check,back),msg,changes,recent,log));
+$("#upd").replaceChildren(h("div",{class:"card"},h("h3",{},"Updates"),info,h("div",{style:"margin-top:8px"},go,check,back),rbnote,msg,changes,recent,log));
 load();
 })();
 </script>
