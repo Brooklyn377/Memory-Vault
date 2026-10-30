@@ -82,10 +82,18 @@ def _run(cmd, timeout=120):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def _gpu_args(k):
+    """The GPU part of a container's command: its devices, and the extra arguments a GPU needs (for example --gpus all)."""
+    out = []
+    for d in k.get("devices", []):
+        out += ["--device", d]
+    return out + list(k.get("run_args", []))
+
+
 def flags_supported(c):
     if state["help"] is None:
         k = c.get("container")
-        cmd = [k["engine"], "run", "--rm", k["image"], "--help"] if k else [c["llama"], "--help"]
+        cmd = [k["engine"], "run", "--rm", *_gpu_args(k), k["image"], "--help"] if k else [c["llama"], "--help"]
         try:
             r = _run(cmd, 300)
             state["help"] = sorted(set(re.findall(r"--[a-z0-9][a-z0-9-]*", r.stdout + r.stderr)))
@@ -277,8 +285,7 @@ def _start(c, args):
             cmd += ["--volume", v]
         for p in k.get("ports", []):
             cmd += ["--publish", p]
-        for d in k.get("devices", []):
-            cmd += ["--device", d]
+        cmd += _gpu_args(k)
         for o in k.get("security_opt", []):
             cmd += ["--security-opt", o]
         for g in k.get("group_add", []):
@@ -526,6 +533,9 @@ def main():
     ap.add_argument("--name", default="llama-server", help="with --create: the container's name (default llama-server)")
     ap.add_argument("--group-add", action="append", default=[], metavar="GROUP",
                     help="with --create: a group the container joins (the GPU device's group id, or keep-groups with rootless Podman)")
+    ap.add_argument("--security-opt", action="append", default=[], metavar="OPT", help="with --create: another --security-opt for the container (ROCm wants seccomp=unconfined)")
+    ap.add_argument("--run-arg", action="append", default=[], metavar="ARG", help="with --create: another argument for the container engine's run, written --run-arg=--gpus --run-arg=all (Docker with an NVIDIA GPU)")
+    ap.add_argument("--base-arg", action="append", default=[], metavar="ARG", help="with --create or --llama: another argument for llama-server itself, written --base-arg=--n-gpu-layers --base-arg=999")
     ap.add_argument("--api-key", help="with --create or --llama: the key llama-server asks for (not shown in the runner's log)")
     ap.add_argument("--jinja", action="store_true", help="with --llama: always start llama-server with --jinja (a container made by --create has it)")
     ap.add_argument("--llama", help="path to llama-server (without a container)")
@@ -549,17 +559,17 @@ def main():
                 sys.exit("--create needs --image and --models")
             models = Path(a.models).resolve()
             models.mkdir(parents=True, exist_ok=True)
-            dev = [d if ":" in d else f"{d}:{d}" for d in a.device]
+            dev = [d if ":" in d or "=" in d else f"{d}:{d}" for d in a.device]   # nvidia.com/gpu=all is a CDI name, kept as it is
             k = {"engine": a.engine, "name": a.name, "image": a.image, "binds": [f"{models}:/models:ro"],
-                 "ports": [f"{a.llama_port}:8080"], "devices": dev, "security_opt": ["label=disable"], "group_add": a.group_add,
-                 "restart": "unless-stopped", "models_in": "/models",
-                 "base_args": ["--host", "0.0.0.0", "--port", "8080", "--jinja"] + (["--api-key", a.api_key] if a.api_key else [])}
+                 "ports": [f"{a.llama_port}:8080"], "devices": dev, "security_opt": ["label=disable"] + a.security_opt,
+                 "group_add": a.group_add, "run_args": a.run_arg, "restart": "unless-stopped", "models_in": "/models",
+                 "base_args": ["--host", "0.0.0.0", "--port", "8080", "--jinja"] + a.base_arg + (["--api-key", a.api_key] if a.api_key else [])}
             c = dict(old, container=k, models=str(models), llama_port=a.llama_port)
             c.pop("llama", None)
             c.pop("settings", None)
         elif a.llama and Path(a.llama).exists() and a.models and Path(a.models).is_dir():
             c = dict(old, llama=str(Path(a.llama).resolve()), models=str(Path(a.models).resolve()), llama_port=a.llama_port,
-                     base_args=(["--jinja"] if a.jinja else []) + (["--api-key", a.api_key] if a.api_key else []))
+                     base_args=(["--jinja"] if a.jinja else []) + a.base_arg + (["--api-key", a.api_key] if a.api_key else []))
             c.pop("container", None)
         else:
             sys.exit("--setup needs --adopt CONTAINER, or --llama (the llama-server program) and --models (the model folder)")

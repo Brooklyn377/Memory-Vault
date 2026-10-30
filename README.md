@@ -212,9 +212,10 @@ machine: `model_runner.py` from this repository. It is one file and needs only P
 or macOS). It starts llama-server, and restarts it with new settings when you press Apply all on the card.
 
 ### Quick install for a GPU machine (one line)
-For a new GPU machine, one script does what steps 1 to 5 below do by hand: it downloads the runner, sets up
-llama.cpp for the GPU (Vulkan: AMD, Intel and NVIDIA), starts the runner as a service, and prints the **address**, the
-**API key** and the **runner token** to type into **Settings → Servers → Add server** (step 6). Run it as root:
+For a new GPU machine, one script does what steps 1 to 5 below do by hand: it looks at the graphics cards, lets you pick
+the software llama.cpp runs on, downloads the runner, sets llama.cpp up for it, starts the runner as a service, and prints
+the **address**, the **API key** and the **runner token** to type into **Settings → Servers → Add server** (step 6).
+Run it as root:
 
 - **Proxmox** (creates a Debian container, passes one GPU of the host into it, builds llama.cpp inside; it asks for
   anything you do not give as an option, and always asks the disk, memory and cores):
@@ -229,6 +230,16 @@ llama.cpp for the GPU (Vulkan: AMD, Intel and NVIDIA), starts the runner as a se
   ```bash
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-docker.sh)"
   ```
+
+**The software choice.** The script lists the cards it finds and offers **Vulkan** (works on AMD, Intel and NVIDIA; it is the
+default, so pressing Enter takes it), **CUDA** (NVIDIA) and **ROCm** (AMD). It puts **(recommended)** next to the one it
+expects to be fastest here: CUDA for an NVIDIA card whose driver and container support are in place, ROCm for an AMD card
+ROCm supports (RX 6000 and newer, Instinct) when its compute device is there, otherwise Vulkan. Each line says what is
+missing for it. `--backend vulkan|cuda|rocm` skips the question, and `--yes` takes Vulkan. With CUDA and Podman the script
+writes the NVIDIA device list Podman needs (`/etc/cdi/nvidia.yaml`) when the toolkit is installed but the list is not;
+with Docker the NVIDIA container toolkit has to be set up already. All layers go on the GPU (a model's card can change
+GPU layers). On Proxmox, CUDA and ROCm are installed inside the container from NVIDIA's and AMD's repositories and need the
+host's driver; they are best effort and not as well tried as Vulkan.
 
 Options go after the command, for example `bash -c "$(curl ...)" _ --models /data/models --llama-port 8081`; add
 `--help` to see them all and `--dry-run` to see what a script would do without changing anything. Models are kept in

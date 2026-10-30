@@ -11,9 +11,9 @@ set -euo pipefail
 
 REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is downloaded from
 REF="${MA_REF:-main}"                        # branch or tag
-IMAGE="ghcr.io/ggml-org/llama.cpp:server-vulkan"
+IMAGE=""   # chosen from the software you pick: ghcr.io/ggml-org/llama.cpp:server-vulkan, -cuda or -rocm
 ENGINE=""; MODELS="/srv/llama-models"; DIR="/opt/memory-agent-runner"; NAME="llama-server"
-LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0; UPDATE=0
+LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0; UPDATE=0; YES=0; BACKEND=""
 
 usage() {
     cat <<EOF
@@ -23,7 +23,10 @@ Usage: runner-container.sh --engine podman|docker [options]
   --models DIR      where the model files are kept (default: $MODELS)
   --llama-port N    llama-server's port on this machine (default: $LLAMA_PORT)
   --runner-port N   the runner's port (default: $RUNNER_PORT)
-  --image IMAGE     the llama.cpp server image (default: $IMAGE)
+  --backend B       vulkan, cuda or rocm: the software llama.cpp runs on. Without it the script looks at your graphics
+                    cards and asks; Vulkan is the default and the scan marks the one it thinks is fastest (recommended)
+  --image IMAGE     the llama.cpp server image (default: the one for the software you pick)
+  --yes             do not ask: use Vulkan unless --backend says otherwise
   --name NAME       the llama-server container's name (default: $NAME)
   --dir DIR         where the runner is installed (default: $DIR)
   --repo OWNER/NAME where the runner is downloaded from (default: $REPO)
@@ -45,6 +48,8 @@ while (( $# )); do
         --llama-port) LLAMA_PORT="$2"; shift ;;
         --runner-port) RUNNER_PORT="$2"; shift ;;
         --image) IMAGE="$2"; shift ;;
+        --backend) BACKEND="$2"; shift ;;
+        --yes) YES=1 ;;
         --name) NAME="$2"; shift ;;
         --dir) DIR="$2"; shift ;;
         --repo) REPO="$2"; shift ;;
@@ -84,20 +89,38 @@ if ! (( DRY )) && have ss; then   # a runner or llama-server from before would a
     done
 fi
 
+# the graphics-card scan and the choice of software (scripts/runner-gpu.sh, next to this script or from the repository)
+HERE="$(dirname "${BASH_SOURCE[0]:-.}")"
+if [[ -f "$HERE/runner-gpu.sh" ]]; then source "$HERE/runner-gpu.sh"
+else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/runner-gpu.sh") || die "could not download the graphics-card scan"; fi
+
 say "GPU"
-setup=()
-if [[ -d /dev/dri ]]; then
-    setup+=(--device /dev/dri)
-    echo "found /dev/dri: the model runs on the GPU through Vulkan"
-else
-    echo "warning: no /dev/dri on this machine, so llama-server would run on the CPU only." >&2
-fi
+choose_backend
+[[ -n "$IMAGE" ]] || IMAGE="ghcr.io/ggml-org/llama.cpp:server-$BACKEND"
+setup=(--base-arg=--n-gpu-layers --base-arg=999)   # every layer on the GPU; a model's card can set GPU layers to change it
 render="$(ls /dev/dri/renderD* 2>/dev/null | head -n 1 || true)"
-if [[ -n "$render" ]]; then
-    gid="$(stat -c %g "$render")"
-    setup+=(--group-add "$gid")   # the group that may open the GPU, joined by the container
-    echo "GPU device $render, group $gid"
-fi
+case "$BACKEND" in
+    vulkan)
+        if [[ -d /dev/dri ]]; then setup+=(--device /dev/dri); else echo "warning: no /dev/dri on this machine, so llama-server would run on the CPU only." >&2; fi
+        [[ -n "$render" ]] && setup+=(--group-add "$(stat -c %g "$render")") ;;   # the group that may open the GPU, joined by the container
+    rocm)
+        [[ -e "$KFD" ]] && setup+=(--device "$KFD") ; [[ -d /dev/dri ]] && setup+=(--device /dev/dri)
+        [[ -e "$KFD" ]] && setup+=(--group-add "$(stat -c %g "$KFD")")
+        [[ -n "$render" ]] && setup+=(--group-add "$(stat -c %g "$render")")
+        setup+=(--security-opt seccomp=unconfined) ;;
+    cuda)
+        if [[ "$ENGINE" == podman ]]; then
+            if [[ ! -e /etc/cdi/nvidia.yaml && ! -e /var/run/cdi/nvidia.yaml ]] && have nvidia-ctk; then
+                echo "writing the NVIDIA device list Podman needs (/etc/cdi/nvidia.yaml)"
+                run mkdir -p /etc/cdi
+                run nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+            fi
+            setup+=(--device nvidia.com/gpu=all)
+        else
+            setup+=(--run-arg=--gpus --run-arg=all)
+        fi ;;
+esac
+echo "Image: $IMAGE"
 
 say "Runner"
 run install -d -m 755 "$DIR"

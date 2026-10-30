@@ -10,7 +10,7 @@ set -euo pipefail
 REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is downloaded from
 REF="${MA_REF:-main}"                        # branch or tag
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
-BRIDGE=""; IP=""; GW=""; DNS=""; GPU=""; MODELS="/opt/models"; LLAMA_PORT=8080; RUNNER_PORT=8090
+BRIDGE=""; IP=""; GW=""; DNS=""; GPU=""; MODELS="/opt/models"; LLAMA_PORT=8080; RUNNER_PORT=8090; BACKEND=""; ENGINE=""
 LLAMA_REF=""; UPDATE=""; YES=0; DRY=0
 
 usage() {
@@ -30,6 +30,10 @@ Container
   --gw ADDRESS          gateway, needed with a fixed address
   --dns ADDRESS         DNS server, or "host" for the Proxmox host's (default: the gateway with a fixed address, else host)
   --gpu DEVICE          the GPU to pass in, e.g. /dev/dri/renderD128 (asked when this host has more than one)
+  --backend B           vulkan, cuda or rocm: the software llama.cpp runs on. Without it the script looks at your graphics
+                        cards and asks; Vulkan is the default and the scan marks the one it thinks is fastest (recommended).
+                        CUDA and ROCm are installed inside the container from NVIDIA's and AMD's repositories and need the
+                        host's driver: they are best effort, Vulkan is the one that is well tried
 
 Server
   --models DIR          where model files are kept inside the container (default: $MODELS)
@@ -65,6 +69,7 @@ while (( $# )); do
         --gw) GW="$2"; shift ;;
         --dns) DNS="$2"; shift ;;
         --gpu) GPU="$2"; shift ;;
+        --backend) BACKEND="$2"; shift ;;
         --models) MODELS="$2"; shift ;;
         --llama-port) LLAMA_PORT="$2"; shift ;;
         --runner-port) RUNNER_PORT="$2"; shift ;;
@@ -85,6 +90,11 @@ done
 [[ $EUID -eq 0 ]] || (( DRY )) || die "run as root on the Proxmox host"
 have curl || die "curl is needed"
 (( DRY )) || have pct || die "pct not found: this must run on a Proxmox VE host"
+
+# the graphics-card scan and the choice of software (scripts/runner-gpu.sh, next to this script or from the repository)
+HERE="$(dirname "${BASH_SOURCE[0]:-.}")"
+if [[ -f "$HERE/runner-gpu.sh" ]]; then source "$HERE/runner-gpu.sh"
+else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/runner-gpu.sh") || die "could not download the graphics-card scan"; fi
 
 # ask VAR "question" "default": keeps a value that was given; else asks (a blank answer takes the default), or takes the
 # default with --yes. Questions are read from the terminal, so this also works when the script is piped from curl.
@@ -128,11 +138,21 @@ defstore=""
 have pvesm && defstore="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active"{print $1; exit}')"
 ask STORAGE "Storage for the container disk" "${defstore:-local-lvm}"
 
+say "Graphics cards and software"
+choose_backend
+HOST_NV_DRIVER=""; CUDA_PKG=""
+if [[ "$BACKEND" == cuda ]]; then
+    have nvidia-smi || die "CUDA needs the NVIDIA driver on this host (nvidia-smi was not found)"
+    HOST_NV_DRIVER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)"
+    CUDA_PKG="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1-\2/p' | head -n 1)"
+    [[ -n "$HOST_NV_DRIVER" && -n "$CUDA_PKG" ]] || die "could not read the NVIDIA driver version from nvidia-smi"
+fi
+
 # the GPU: this host's render devices, with their names
 gpus=()
 for n in /dev/dri/renderD*; do [[ -e "$n" ]] && gpus+=("$n"); done
 if [[ -z "$GPU" ]]; then
-    (( ${#gpus[@]} )) || (( DRY )) || die "this host has no GPU render device (/dev/dri/renderD*)"
+    (( ${#gpus[@]} )) || (( DRY )) || [[ "$BACKEND" == cuda ]] || die "this host has no GPU render device (/dev/dri/renderD*)"
     if (( ${#gpus[@]} == 1 )); then
         GPU="${gpus[0]}"
     elif (( ${#gpus[@]} > 1 )); then
@@ -148,7 +168,7 @@ if [[ -z "$GPU" ]]; then
     fi
 fi
 [[ "$GPU" =~ ^/dev/dri/renderD[0-9]+$ ]] || die "--gpu must be a device such as /dev/dri/renderD128"
-(( DRY )) || [[ -e "$GPU" ]] || die "$GPU does not exist on this host"
+(( DRY )) || [[ -e "$GPU" ]] || [[ "$BACKEND" == cuda ]] || die "$GPU does not exist on this host"
 
 ask BRIDGE "Network bridge" "vmbr0"
 ask IP "Address (dhcp, or a fixed one such as 192.168.1.60/24)" "dhcp"
@@ -179,8 +199,20 @@ run pct create "$CTID" "$TSTORAGE:vztmpl/$TEMPLATE" \
     --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 \
     --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
     --net0 "$net" "${dns[@]}" --onboot 1 --start 1
-say "Passing $GPU into the container"
-run pct set "$CTID" --dev0 "$GPU,mode=0666"
+# the devices the chosen software needs, each at the next free devN
+case "$BACKEND" in
+    vulkan) devices=("$GPU") ;;
+    rocm)   devices=("/dev/kfd" "$GPU") ;;
+    cuda)   devices=(); for n in /dev/nvidia[0-9]* /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset; do [[ -e "$n" ]] && devices+=("$n"); done
+            (( ${#devices[@]} )) || (( DRY )) || die "no /dev/nvidia* devices on this host; is the NVIDIA driver loaded?"
+            (( ${#devices[@]} )) || devices=(/dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm) ;;   # a dry run on a host without the card
+esac
+say "Passing ${devices[*]} into the container"
+i=0
+for dev in "${devices[@]}"; do
+    run pct set "$CTID" "--dev$i" "$dev,mode=0666"
+    i=$((i + 1))
+done
 run pct reboot "$CTID"
 
 if ! (( DRY )); then
@@ -201,21 +233,51 @@ cat > "$WORK/inside.sh" <<'INSIDE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 REPO=@REPO@; REF=@REF@; LLAMA_PORT=@LLAMA_PORT@; RUNNER_PORT=@RUNNER_PORT@; LLAMA_REF=@LLAMA_REF@; MODELS=@MODELS@
+BACKEND=@BACKEND@; NV_DRIVER=@NV_DRIVER@; CUDA_PKG=@CUDA_PKG@
 LLAMA=/opt/llama.cpp
 APP=/opt/memory-agent-runner
 echo "== Packages"
 apt-get update -q
-apt-get install -y -q --no-install-recommends python3 ca-certificates curl git cmake build-essential libcurl4-openssl-dev \
-    libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
-vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
-echo "== llama.cpp for Vulkan (this takes a while)"
+apt-get install -y -q --no-install-recommends python3 ca-certificates curl git cmake build-essential libcurl4-openssl-dev gnupg
+cmake_opts=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON)
+case "$BACKEND" in
+vulkan)
+    apt-get install -y -q --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
+    vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
+    cmake_opts+=(-DGGML_VULKAN=ON) ;;
+cuda)   # the host's driver libraries, the same version as the host, then the CUDA toolkit
+    echo "== NVIDIA driver libraries $NV_DRIVER (the same version as the host) and CUDA $CUDA_PKG"
+    curl -fsSL -o /tmp/nvidia.run "https://download.nvidia.com/XFree86/Linux-x86_64/$NV_DRIVER/NVIDIA-Linux-x86_64-$NV_DRIVER.run"
+    sh /tmp/nvidia.run --silent --no-kernel-module --no-nvidia-modprobe --no-drm --no-x-check
+    curl -fsSL -o /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
+    dpkg -i /tmp/cuda-keyring.deb
+    apt-get update -q
+    apt-get install -y -q --no-install-recommends "cuda-toolkit-$CUDA_PKG"
+    export PATH="/usr/local/cuda-${CUDA_PKG/-/.}/bin:$PATH"
+    nvidia-smi -L || { echo "the container cannot see the NVIDIA card: the driver libraries here must match the host's" >&2; exit 1; }
+    cmake_opts+=(-DGGML_CUDA=ON) ;;
+rocm)   # AMD's ROCm packages (built for Ubuntu; they install on Debian 12 in practice)
+    echo "== ROCm"
+    install -d -m 755 /etc/apt/keyrings
+    curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4 jammy main" > /etc/apt/sources.list.d/rocm.list
+    apt-get update -q
+    apt-get install -y -q --no-install-recommends rocm-hip-sdk rocminfo
+    export PATH="/opt/rocm/bin:$PATH"
+    gfx="$(rocminfo 2>/dev/null | grep -o 'gfx[0-9a-f]*' | head -n 1)"
+    [[ -n "$gfx" ]] || { echo "rocminfo found no AMD GPU in the container (/dev/kfd and the driver on the host?)" >&2; exit 1; }
+    echo "AMD GPU target: $gfx"
+    export HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)"
+    cmake_opts+=(-DGGML_HIP=ON "-DAMDGPU_TARGETS=$gfx") ;;
+esac
+echo "== llama.cpp for $BACKEND (this takes a while)"
 if [[ ! -x "$LLAMA/build/bin/llama-server" ]]; then
     if [[ ! -d "$LLAMA/.git" ]]; then
         clone=(git clone --depth 1)
         [[ -n "$LLAMA_REF" ]] && clone+=(--branch "$LLAMA_REF")
         "${clone[@]}" https://github.com/ggml-org/llama.cpp "$LLAMA"
     fi
-    cmake -S "$LLAMA" -B "$LLAMA/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DGGML_VULKAN=ON
+    cmake -S "$LLAMA" -B "$LLAMA/build" "${cmake_opts[@]}"
     cmake --build "$LLAMA/build" --target llama-server -j "$(nproc)"
 fi
 echo "== Runner"
@@ -224,7 +286,7 @@ curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/model_runner.py" -o "$A
 chmod 755 "$APP/model_runner.py"
 key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
 out="$(python3 "$APP/model_runner.py" --setup --llama "$LLAMA/build/bin/llama-server" --models "$MODELS" \
-    --api-key "$key" --jinja --llama-port "$LLAMA_PORT" --port "$RUNNER_PORT")"
+    --api-key "$key" --jinja --base-arg=--n-gpu-layers --base-arg=999 --llama-port "$LLAMA_PORT" --port "$RUNNER_PORT")"
 token="$(printf '%s\n' "$out" | sed -n 's/^Token for the Settings page (shown once): //p')"
 [[ -n "$token" ]] || { echo "the runner did not print a token: $out" >&2; exit 1; }
 cat > /etc/systemd/system/memory-agent-runner.service <<UNIT
@@ -254,7 +316,7 @@ done
 install -m 600 /dev/null /root/runner-info
 printf 'KEY=%s\nTOKEN=%s\n' "$key" "$token" > /root/runner-info
 INSIDE
-sed -i "s|@REPO@|$REPO|; s|@REF@|$REF|; s|@LLAMA_PORT@|$LLAMA_PORT|; s|@RUNNER_PORT@|$RUNNER_PORT|; s|@LLAMA_REF@|'$LLAMA_REF'|; s|@MODELS@|$MODELS|" "$WORK/inside.sh"
+sed -i "s|@REPO@|$REPO|; s|@REF@|$REF|; s|@LLAMA_PORT@|$LLAMA_PORT|; s|@RUNNER_PORT@|$RUNNER_PORT|; s|@LLAMA_REF@|'$LLAMA_REF'|; s|@MODELS@|$MODELS|; s|@BACKEND@|$BACKEND|; s|@NV_DRIVER@|'$HOST_NV_DRIVER'|; s|@CUDA_PKG@|'$CUDA_PKG'|" "$WORK/inside.sh"
 
 say "Installing inside the container (building llama.cpp takes a while)"
 run pct push "$CTID" "$WORK/inside.sh" /root/runner-setup.sh
