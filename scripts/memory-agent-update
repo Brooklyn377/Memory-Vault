@@ -52,6 +52,7 @@ case "${1:-}" in
         b="$(find "$BACKUPS" -maxdepth 1 -name 'code-*.tar.gz' 2>/dev/null | sort | tail -n 1)"
         [[ -n "$b" ]] || { echo "no backup in $BACKUPS" >&2; exit 1; }
         restore "$b"
+        rm -f "$b"   # used: the next rollback goes one version further back
         exit 0 ;;
     "") ;;
     *) echo "usage: memory-agent-update [--check|--rollback]" >&2; exit 2 ;;
