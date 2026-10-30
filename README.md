@@ -191,7 +191,33 @@ while it runs, so the card cannot change them either. To set them from the card,
 machine: `model_runner.py` from this repository. It is one file and needs only Python 3.8 or newer (Linux, Windows
 or macOS). It starts llama-server, and restarts it with new settings when you press Apply all on the card.
 
-Steps 1 to 5 run on the other machine. Steps 6 and 7 are on the Settings page.
+### Quick install for a GPU machine (one line)
+For a new GPU machine, one script does what steps 1 to 5 below do by hand: it downloads the runner, sets up
+llama.cpp for the GPU (Vulkan: AMD, Intel and NVIDIA), starts the runner as a service, and prints the **address**, the
+**API key** and the **runner token** to type into **Settings → Servers → Add server** (step 6). Run it as root:
+
+- **Proxmox** (creates a Debian container, passes one GPU of the host into it, builds llama.cpp inside; it asks for
+  anything you do not give as an option, and always asks the disk, memory and cores):
+  ```bash
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
+  ```
+- **Podman** (the llama.cpp server runs in a container the runner creates when you apply the first settings):
+  ```bash
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-podman.sh)"
+  ```
+- **Docker**:
+  ```bash
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-docker.sh)"
+  ```
+
+Options go after the command, for example `bash -c "$(curl ...)" _ --models /data/models --llama-port 8081`; add
+`--help` to see them all and `--dry-run` to see what a script would do without changing anything. Models are kept in
+`/opt/models` (Proxmox) or `/srv/llama-models` (Podman, Docker), and you download them from the Servers card (see
+"Download and delete models on that machine" below). The runner keeps the key and token in `model_runner.json`, readable
+by root only. To update the runner later on Proxmox, run the Proxmox script with `--update <container ID>`.
+
+Steps 1 to 5 below are the manual way, for a machine the scripts do not cover. They run on the other machine.
+Steps 6 and 7 are on the Settings page.
 
 ### 1. Find out how llama-server runs there
 ```bash
