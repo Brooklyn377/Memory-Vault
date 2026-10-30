@@ -208,10 +208,17 @@ def managed(model):
     return model in MODELS and _has_model(model) and alive()
 
 
-def _manual_hold(model):
+def twin(a, b):
+    """True for two local models that run the same model file with the same settings: both may stay loaded while only one
+    of them works, since swapping them costs nothing and their memory is mostly shared."""
+    if a == b or _external(a) or _external(b):
+        return False
     try:
-        import power
-        return power.manual(model)
+        import serverflags
+        import settings
+        sa, sb = settings.get(a), settings.get(b)
+        return bool(sa.get("model_file")) and all(sa.get(k) == sb.get(k) for k in ("model_file", "context", "threads", "parallel", "flags")) \
+            and serverflags.device(sa) == serverflags.device(sb)
     except Exception:
         return False
 
@@ -441,7 +448,7 @@ def step(now=None):
         return did
     stop, start = [], []
     for m in MODELS:   # a local server of a model that runs on another machine only uses memory: stop it
-        if _external(m) and _running(m) and not _manual_hold(m):
+        if _external(m) and _running(m) and not _off(m):
             _stop_unit(m)
             did.append("stop " + m + " (it runs on another machine)")
     with _lock():
@@ -452,8 +459,12 @@ def step(now=None):
         counts = lease_counts()
         held = lease_counts(HOLDS)
         running = [m for m in MODELS if not _external(m) and _running(m)]
-        if not loaded and running:   # servers already up (after an update or a restart): they are the ones working now
-            loaded, since = list(running), {m: now for m in running}
+        mine = [m for m in running if not _off(m)]   # a model you turned off is not the manager's to adopt, start or stop
+        if not loaded and mine:   # servers already up (after an update or a restart): the ones that may work together are adopted
+            for m in sorted(mine, key=cfg["priority"].index):   # by priority, and only while the groups and hardware numbers allow it
+                if not blockers(m, loaded):
+                    loaded.append(m)
+            since = {m: now for m in loaded}
             did.append("adopt " + "+".join(loaded))
         # the queue: by the priority you set (Assistant, Reviewer, Sweeper, Curator at first). A higher one waits for a working one
         order = sorted(w, key=lambda m: (cfg["priority"].index(m), w[m]["at"]))
@@ -510,8 +521,16 @@ def step(now=None):
                 _WAIT[m] = r
                 agent.log(f"turns: the {NICE[m]} {r}")
         drain = {x for x in drain if x in loaded and x in in_the_way}
+        # Memory: a model waiting for its turn is unloaded, and so is any server that does not belong with the ones working,
+        # whenever a turn changes hands. A model that runs the same file with the same settings as a working one stays.
+        acted = any(d.startswith(("adopt", "load", "switch")) for d in did)
+        for x in mine:
+            if x in loaded or counts.get(x) or x in stop or any(twin(x, y) for y in loaded):
+                continue
+            if acted or x in waiting:
+                stop.append(x)
         _set_active({"group": loaded, "since": since, "draining": sorted(drain), "why": detail})
-        stop = [m for m in stop if m in running]   # only a server on this machine is stopped
+        stop = [m for m in stop if m in running and not _off(m)]   # only a server on this machine is stopped
         start = [m for m in order if m in loaded and m not in running and not _external(m)]   # wanted ones that are not up
     for m in stop:   # outside the lock: stopping a server takes a while, and callers only wait meanwhile
         _stop_unit(m)

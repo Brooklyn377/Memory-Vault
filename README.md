@@ -85,10 +85,15 @@ set to 1 still take turns there.
 The same card has the **priority** list: drag the models into the order of the queue. When several wait to work, the
 first in the list goes first. Priority never takes the turn from a model that is working.
 
-- **The power button on each model's card is only on and off.** Hold it to turn a model on: nothing else changes, it does
-  not skip the queue or push anyone out; the manager loads it when it has work and its turn comes, like any other model.
-  Hold it again to turn the model off (also while it is waiting): its server stops and it asks for no turn until you turn
-  it on again.
+- **Each model's card has two separate controls.** The **slider** (on or off) says whether the model takes part in the
+  turns: off stops its server and it takes no turns, its calls wait until you turn it on; on lets the manager load it when it has
+  work and its turn comes. **Hold to load / Hold to unload** starts or stops that server right now, ignoring every rule, and
+  does not change the slider. With the slider on, the manager may undo a hand load or unload the next time it has a load or
+  unload to do for a turn; with the slider off it never touches that model, so a model you turned off is yours to load and
+  unload by hand for testing.
+- **Memory.** Models that take turns on the same hardware are not all kept loaded: a model waiting for its turn is unloaded,
+  and so is any server that does not belong with the ones working, whenever a turn changes hands. The one exception is two
+  local models that run the same model file with the same settings: both stay loaded and swap turns, which costs nothing.
 - **How a turn passes:** a model that still has work keeps its turn for at least the minutes set on that page
   (default 10), and always until its running call finishes; then the waiting model that is first in the priority list
   is loaded. A model that has had nothing to do for half a minute gives way at once. A model in the middle of an
