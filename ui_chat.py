@@ -178,7 +178,45 @@ def assistant_on():
         return False
 
 
-def _ask_assistant(system, messages, label="chat"):
+def _transient(e):
+    """A failure that trying again can fix: the server dropped or refused the connection, timed out, or answered with a
+    server error (5xx, or 429). A refused request (400, 401, 404 ...) is not: the same request would fail again."""
+    import http.client
+    if isinstance(e, (OSError, http.client.HTTPException)):
+        return True
+    code = re.search(r"refused the call \((\d{3})", str(e))
+    return bool(code and (code.group(1)[0] == "5" or code.group(1) == "429"))
+
+
+def _ask_assistant(system, messages, label="chat", m=None):
+    """One call to the Assistant. When its server drops the connection, is unreachable or answers with a server error,
+    it tries again after a pause that grows to a minute, as long as its switch is on: a long answer is not thrown away,
+    and what is happening is shown under the message."""
+    import power
+    import thinklog
+    tries = 0
+    while True:
+        try:
+            return _ask_assistant_once(system, messages, label)
+        except thinklog.Aborted:
+            raise
+        except Exception as e:
+            on = bool(settings.get("pa").get("enabled")) and not power.off("pa")
+            if not (on and _transient(e)):
+                raise
+            tries += 1
+            wait = min(60, 5 * 2 ** min(tries - 1, 4))
+            agent.log(f"chat: the Assistant's server did not answer ({type(e).__name__}: {str(e)[:100]}); trying again in {wait}s (try {tries + 1})")
+            if m is not None:
+                m["note"] = f"The Assistant's server did not answer ({type(e).__name__}). Trying again in {wait}s (try {tries + 1}); it keeps trying."
+                _save(m)
+            time.sleep(wait)
+            if m is not None and m.get("note"):
+                m["note"] = ""
+                _save(m)
+
+
+def _ask_assistant_once(system, messages, label="chat"):
     import applier
     import thinklog
     import ui_settings
@@ -214,7 +252,7 @@ def assistant_answer(m, context):
         last = used >= budget
         if last:
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
-        text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist")
+        text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
         data = agent.parse_json(text)   # the JSON may follow some text the model wrote first
         if isinstance(data, dict) and "tool" not in data and "answer" not in data:
             data = None                 # some other JSON inside a plain answer
@@ -469,6 +507,7 @@ function notesList(src){
 function bubble(m){
  const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];
  if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
+ if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
   if(m.web&&m.web.length)box.append(webList(m.web));

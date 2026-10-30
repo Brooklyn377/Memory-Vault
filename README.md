@@ -164,6 +164,10 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   shows you the change in its answer, for you to apply, and says to set the server to read and write if you want it
   pushed. Under its answer, the notes it used show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's history, so it can be
   reverted.
+- **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
+  tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
+  the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses
+  (for example one that is too big) is not repeated; that fails with the server's reason.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,
@@ -226,7 +230,7 @@ Options go after the command, for example `bash -c "$(curl ...)" _ --models /dat
 `--help` to see them all and `--dry-run` to see what a script would do without changing anything. Models are kept in
 `/opt/models` (Proxmox) or `/srv/llama-models` (Podman, Docker), and you download them from the Servers card (see
 "Download and delete models on that machine" below). The runner keeps the key and token in `model_runner.json`, readable
-by root only. To update the runner later on Proxmox, run the Proxmox script with `--update <container ID>`.
+by root only. To update the runner later, run the same script with `--update` (Proxmox: `--update <container ID>`); keys, models and settings stay. The runner starts llama-server again by itself if it dies (waiting longer after each quick death); stopping it from a model's card keeps it stopped.
 
 Steps 1 to 5 below are the manual way, for a machine the scripts do not cover. They run on the other machine.
 Steps 6 and 7 are on the Settings page.

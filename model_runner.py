@@ -14,6 +14,9 @@ macOS. Two ways to run llama-server:
   A container that does not exist yet, which the runner creates when the first settings are applied:
       python3 model_runner.py --setup --create --engine podman --image IMAGE --models DIR [--device /dev/dri]
 
+  If llama-server dies by itself, the runner starts it again (and waits longer after each quick death). Stopping it
+  from the card keeps it stopped.
+
   A llama-server program on this machine:
       python3 model_runner.py --setup --llama /path/to/llama-server --models /path/to/models
 
@@ -353,6 +356,41 @@ def apply(s):
                 "log": why}
 
 
+def _note(text):
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"\n=== {time.ctime()} {text}\n")
+    except OSError:
+        pass
+
+
+def watchdog(interval=15):
+    """Start llama-server again when it died by itself (a crash, the machine ran out of memory), as long as you did not
+    stop it from the card. Each quick death doubles the wait, up to 5 minutes, so a server that cannot run is not
+    started in a tight loop."""
+    wait, started = interval, 0.0
+    while True:
+        time.sleep(wait)
+        try:
+            c = load()
+            if not c.get("settings") or c.get("stopped") or state["lock"].locked() or running(c):
+                if time.time() - started > 600:
+                    wait = interval
+                continue
+            with state["lock"]:
+                if running(load()) or load().get("stopped"):
+                    continue
+                quick = time.time() - started < 120
+                _stop(c)   # an exited container still holds its name
+                _start(c, build(c, c["settings"]))
+                started = time.time()
+                _note("llama-server was not running; the runner started it again" + (" (it died again soon after the last start)" if quick else ""))
+            wait = min(300, wait * 2) if quick else interval
+        except Exception as e:
+            _note(f"could not start llama-server again: {type(e).__name__}: {str(e)[:200]}")
+            wait = min(300, wait * 2)
+
+
 def status():
     c = load()
     return {"running": running(c), "health": health(c), "settings": c.get("settings"), "stopped": bool(c.get("stopped")),
@@ -552,6 +590,7 @@ def main():
             _start(c, build(c, c["settings"]))
         except (ValueError, RuntimeError) as e:
             print("not starting llama-server:", e)
+    threading.Thread(target=watchdog, daemon=True).start()
     srv = ThreadingHTTPServer((c.get("listen", "0.0.0.0"), int(c.get("port", 8090))), H)
     print(f"model runner listening on {c.get('listen')}:{c.get('port')}, llama-server on port {c['llama_port']}")
     # Stopping the runner (Ctrl-C, or a service manager's TERM) also stops a llama-server program it started, so none

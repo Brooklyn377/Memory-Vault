@@ -13,7 +13,7 @@ REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is 
 REF="${MA_REF:-main}"                        # branch or tag
 IMAGE="ghcr.io/ggml-org/llama.cpp:server-vulkan"
 ENGINE=""; MODELS="/srv/llama-models"; DIR="/opt/memory-agent-runner"; NAME="llama-server"
-LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0
+LLAMA_PORT=8080; RUNNER_PORT=8090; DRY=0; UPDATE=0
 
 usage() {
     cat <<EOF
@@ -28,6 +28,7 @@ Usage: runner-container.sh --engine podman|docker [options]
   --dir DIR         where the runner is installed (default: $DIR)
   --repo OWNER/NAME where the runner is downloaded from (default: $REPO)
   --ref REF         branch or tag (default: $REF)
+  --update          only download the newest runner and restart it (keys, models and settings stay)
   --dry-run         print what would be done, change nothing
 EOF
 }
@@ -48,6 +49,7 @@ while (( $# )); do
         --dir) DIR="$2"; shift ;;
         --repo) REPO="$2"; shift ;;
         --ref) REF="$2"; shift ;;
+        --update) UPDATE=1 ;;
         --dry-run) DRY=1 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option $1" ;;
@@ -64,6 +66,15 @@ have python3 || die "python3 is needed (3.8 or newer)"
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' || die "python3 3.8 or newer is needed"
 (( DRY )) || have "$ENGINE" || die "$ENGINE is not installed"
 (( DRY )) || have systemctl || die "this needs systemd (systemctl) to keep the runner running"
+
+if (( UPDATE )); then
+    say "Updating the runner"
+    run curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/model_runner.py" -o "$DIR/model_runner.py"
+    run chmod 755 "$DIR/model_runner.py"
+    run systemctl restart memory-agent-runner
+    say "Done: the runner is up to date; its keys, models and settings were kept"
+    exit 0
+fi
 
 say "GPU"
 setup=()
