@@ -289,7 +289,7 @@ def assistant_answer(m, context):
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
         data = _find_call(text)         # the JSON may sit among text the model wrote around it
         if data is None and re.search(r'"tool"\s*:', re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)):
-            if repairs >= 2:            # a tool call that will not parse is never shown as the answer
+            if repairs >= __import__("tuning").get("assistant.call_fixes"):   # a tool call that will not parse is never shown as the answer
                 raise RuntimeError("the Assistant's tool call was not valid JSON")
             repairs += 1
             msgs += [{"role": "assistant", "content": text},
