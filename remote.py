@@ -124,6 +124,8 @@ def runner(model, method, path, body=None, timeout=30, url=None, key=None):
             why = json.loads(e.read() or b"{}").get("error") or e.reason
         except ValueError:
             why = e.reason
+        if "no settings yet" in str(why):   # the wording of an older runner
+            why = "nothing to start yet: pick a model under Model on that server on a card, and press Apply all"
         raise ValueError("the runner rejected the token" if e.code == 401 else f"the runner says: {why}")
     except (OSError, ValueError) as e:
         raise ValueError(f"cannot reach the runner at {url} ({type(e).__name__})")

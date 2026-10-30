@@ -357,8 +357,18 @@ function mk(m,s,models,maxT){
  // The model's own name on that server (also tells this page which thinking switches apply); its list comes from the server.
  e.rnl=h("datalist",{id:"rn-"+m});
  e.rn=h("input",{type:"text",list:"rn-"+m,placeholder:"pick from the server's list"});e.rn.value=rs.model||"";e.rn0=e.rn.value;
- e.names=function(names){e.rnl.replaceChildren(...(names||[]).map(function(n){return h("option",{value:n})}));
-  if(!e.rn.value&&names&&names.length===1){e.rn.value=names[0];dirty=true;e.rm.textContent+=" Model filled in from the server; press Apply all to save it."}};
+ // The model is picked from a list when the machine tells us its models (its runner's model files, or the server's own
+ // list); a box to type in is only for a server that lists none.
+ e.rsel=h("select",{style:"display:none"});
+ e.rsel.onchange=function(){e.rn.value=e.rsel.value;dirty=true};
+ e.setNames=function(names){names=Array.from(new Set(names||[]));
+  e.rnl.replaceChildren(...names.map(function(n){return h("option",{value:n})}));
+  if(!names.length){e.rsel.style.display="none";e.rn.style.display="";return}
+  if(!e.rn.value&&names.length===1){e.rn.value=names[0];dirty=true;e.rm.textContent+=" Model filled in from the server; press Apply all to save it."}
+  const cur=e.rn.value,base=cur.replace(/\\/g,"/").split("/").pop(),hit=names.find(function(n){return n===cur||n.replace(/\\/g,"/").split("/").pop()===base});
+  e.rsel.replaceChildren(...(cur&&!hit?[h("option",{value:cur},cur+" (not on that machine)")]:[]),...(cur?[]:[h("option",{value:""},"Choose a model")]),...names.map(function(n){return h("option",{value:n},n)}));
+  e.rsel.value=hit||cur||"";e.rsel.style.display="";e.rn.style.display="none"};
+ e.names=function(names){if(e.rst&&(e.rst.models||[]).length)return;e.setNames(names)};
  e.rm=h("div",{class:"mut"});
  e.rtest=h("button",{onclick:async function(){
   const p=e.srv();if(!p)return;e.rm.textContent="Testing...";
@@ -370,7 +380,7 @@ function mk(m,s,models,maxT){
   fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id,url:p.url,api:p.api})})
    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){})};
  e.rrm=h("div",{class:"mut"});
- e.rbox=h("div",{},fld("Model on that server",e.rn),e.rnl,e.rtest,e.rm,e.rrm);
+ e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm);
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
@@ -380,8 +390,7 @@ function mk(m,s,models,maxT){
  // With a runner, "Model on that server" also offers the model files in that machine's models folder: it is the one
  // model setting for an external server, and Apply all has the runner load the one chosen there.
  e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;
-  const names=(st.models||[]).map(function(x){return x.name});if(e.rn.value&&names.indexOf(e.rn.value)<0)names.unshift(e.rn.value);
-  e.rnl.replaceChildren(...names.map(function(n){return h("option",{value:n})}));sync()};
+  e.setNames((st.models||[]).map(function(x){return x.name}));sync()};
  function sync(){const r=e.ext(),mg=r&&!!(e.srv()||{}).runner;
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});

@@ -453,7 +453,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if self.path == "/start":
                 if not c.get("settings"):
-                    raise ValueError("no settings yet: apply some from the Settings page first")
+                    raise ValueError("nothing to start yet: pick a model under Model on that server on a card, and press Apply all")
                 with state["lock"]:
                     if not running(c):
                         _start(c, build(c, c["settings"]))
