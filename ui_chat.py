@@ -535,6 +535,7 @@ CHAT_HTML = r"""
 <style>
 .me{margin-left:auto;width:fit-content;max-width:85%;background:var(--acc);color:#fff;border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 .st{font-size:12px;color:var(--mut);text-align:right;margin:2px 4px 10px}
+.st .del{font:inherit;color:#f87171;background:none;border:0;padding:0 0 0 8px;cursor:pointer}
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
 </style>
@@ -562,9 +563,8 @@ function notesList(src){
  btn.onclick=function(){const open=more.style.display==="none";more.style.display=open?"":"none";btn.textContent=open?"See less":"See more"};
  return h("div",{class:"mut"},line,btn,more)}
 function bubble(m){
- const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:""))];
+ const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:"")+" ",h("button",{class:"del",onclick:()=>removeOne(m.id)},"Delete"))];
  if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
- out.push(h("button",{onclick:()=>removeOne(m.id)},"Remove this message"));
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
