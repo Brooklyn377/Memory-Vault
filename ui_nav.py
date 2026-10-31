@@ -9,6 +9,7 @@ body{padding-top:52px}
 #dtheme option{color:#111;background:#fff}
 #dbar b{font-size:17px;white-space:nowrap;flex:none}
 #dbtn{position:relative;display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:8px;margin:0;line-height:0;cursor:pointer}
+#dbtn svg{background:none;border-radius:0}
 #dscrim{position:fixed;top:52px;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);z-index:34;display:none}
 #dscrim.open{display:block}
 #dwr{position:fixed;top:52px;bottom:0;left:0;width:min(80vw,300px);background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-right:1px solid var(--line,#2b3240);z-index:35;transform:translateX(-102%);transition:transform .2s ease;padding:12px 8px;overflow-y:auto}
