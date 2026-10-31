@@ -210,6 +210,11 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   how many tokens the Assistant's server counted in its last call, next to the estimate and the characters per token the
   server's count implies, to tune **Characters per token**. **Compress the chat memory now**, on the Assistant's card under
   Settings, runs a compression in the Assistant's idle time exactly as if the size had been passed.
+- **Updated files:** when a chat says a file was updated, the Sweeper looks for that file in your Git servers (read only; it needs a Sweeper token under
+  Settings → Git servers), checks the commits made after the chat, and if one makes the update the chat describes and the Reviewer agrees, writes a note of
+  type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up
+  for one chat stops after **File look-up time per chat** (60 s). The Assistant can also propose an updated file, or an edit of one, with its
+  `updated_file` tool; it waits for your approval and writes only to the vault. Nothing here pushes to Git.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,

@@ -65,6 +65,11 @@ ASSIST_SYS = (
     'one change to a note; queue_job {"kind":"doc_draft","target":"git/<Git server name>/<file path>","instructions":"<what '
     'to write>"} has the Reviewer write a whole new document from the notes; queue_job {"kind":"sort_note","target":'
     '"<path, or empty>","instructions":"<the text or what to sort>"} has the Sweeper sort a note or text into the vault. '
+    'To record that a file changed, use updated_file {"name":"<file name, e.g. install.sh>","what":"<one sentence on what changed>",'
+    '"contents":"<the whole file as it is now>","chat":"<path of the chat note that says so, optional>","reference":"<the commit or '
+    'edit command that made the change, optional>","path":"<an existing files/updated note to replace, to edit one>"}. Only do it when you '
+    "have evidence of the change: a commit you opened, or an edit command in a chat. Say where the evidence is in reference and chat. "
+    "It is a local note in the vault, with a diff against the saved original added for you, and it waits for the person's approval. "
     "Every result waits for the person to approve it. Answer only from what the notes and tools show. After each fact, "
     "name its file in square brackets, like [vault/entities/foo.md]. If nothing covers it, say so. Be short and plain. "
     "Never guess, and never say something is changed until the person has approved it.")

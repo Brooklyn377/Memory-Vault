@@ -263,6 +263,16 @@ def edit_file(path, old, new, why):
             "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
 
 
+def updated_file(a):
+    """Propose an updated file (or an edit of one) in the vault. Nothing is written until the person approves it."""
+    import jobs
+    j = jobs.propose_updated_file(a.get("name"), a.get("what"), a.get("contents"), a.get("chat") or "", a.get("reference") or "",
+                                  a.get("path") or "", CHAT["id"])
+    verb = "replace" if j["result"]["editing"] else "add"
+    return (f"Proposed to {verb} {j['result']['path']}. It is waiting for the person's approval on their Ask page, which shows the start of "
+            "the note; approving writes it to their vault only, nothing goes to Git. Tell them it is waiting there.")
+
+
 def job_list():
     import jobs
     rows = jobs.summary()
@@ -278,6 +288,7 @@ TOOLS = {"search": do_search,
          "queue_job": lambda a: queue_job(a.get("kind"), a.get("target"), a.get("instructions")),
          "web_search": lambda a: web_search(a.get("query") or a.get("text")),
          "web_open": lambda a: web_open(a.get("url"), a.get("start", 0)),
+         "updated_file": updated_file,
          "edit_file": lambda a: edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
 
 

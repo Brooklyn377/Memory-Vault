@@ -6,6 +6,9 @@ write is pushed:
                card shows the diff; Approve and commit commits and pushes exactly that file.
   file_edit    (Assistant) the Assistant's own change to one file, made by propose_edit. The same card. On a read only
                server nothing is kept or asked: the Assistant shows the change in its reply.
+  updated_file (Assistant) a note of type updated-file under files/updated: a file as it is now, with a diff against the saved
+               original and links to the chat and where the change is recorded. Made by propose_updated_file, local to
+               the vault (nothing goes to Git); approving writes it, or replaces the one it was asked to edit.
   note_update  (Reviewer) one exact change to a vault note, with a quote that supports it. Approving files it to the
                inbox, where the inbox agent turns it into a proposal as for any note.
   sort_note    (Sweeper)  reads a note or text and says which notes it belongs to, with quoted claims. Approving
@@ -128,6 +131,8 @@ def decide(jid, ok):
         raise ValueError("that job is not waiting for you")
     if ok and j["kind"] in ("note_update", "sort_note"):
         j["result"]["filed"] = _file_to_inbox(j)
+    if ok and j["kind"] == "updated_file":
+        j["result"]["written"] = _write_updated(j)
     if ok and j["kind"] in GIT_CHANGES and j["result"].get("access") == "write":
         try:
             j["result"]["commit"] = _commit(j)
@@ -383,6 +388,72 @@ def propose_edit(target, old, new, why="", chat=""):
           + (" (a new file)" if j["result"]["new_file"] else "") + ". Approve commits exactly this diff and pushes it; nothing else changes.")
     agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; waiting for you")
     return j
+
+
+def propose_updated_file(name, what, contents, chat="", reference="", path="", asked_in=""):
+    """The Assistant's own updated file, or its edit of one, kept in the vault only. Nothing is written until you approve."""
+    import filestore
+    name = filestore.good_name(name)
+    if not name:
+        raise ValueError("name is the file's own name with its extension, for example install.sh")
+    what, contents = " ".join(str(what or "").split())[:400], str(contents or "")
+    if not what or not contents.strip():
+        raise ValueError("say in one sentence what changed, and give the whole file as it is now in contents")
+    vault = Path(agent.VAULT)
+    chat = str(chat or "").strip().removeprefix("vault/").removesuffix(".md")
+    if chat and not (vault / f"{chat}.md").is_file():
+        raise ValueError(f"there is no chat note {chat}; copy its path from a search result, or leave chat empty")
+    path = str(path or "").strip().removeprefix("vault/")
+    if path:
+        if not path.startswith("files/updated/") or not path.endswith(".md") or ".." in path or not (vault / path).is_file():
+            raise ValueError("path must be an existing updated file under files/updated/ (open it from a search first)")
+    else:
+        path = f"files/updated/{name}-{datetime.now():%Y%m%d}-{secrets.token_hex(2)}.md"
+    originals = sorted((filestore.ORIG / name).glob("*")) if (filestore.ORIG / name).is_dir() else []
+    diff = ""
+    if originals:
+        was = originals[-1].read_text(encoding="utf-8", errors="replace")
+        diff = "".join(difflib.unified_diff(was.splitlines(True), contents.splitlines(True), f"a/{name} (saved original)", f"b/{name}"))
+    ext, fence = Path(name).suffix.lstrip("."), "````"
+    lines = [f"---\ntype: updated-file\ntitle: {json.dumps('Updated ' + name)}\nfilename: {json.dumps(name)}\nconfidence: medium\n"
+             f"made_by: Assistant\nupdated: {datetime.now():%Y-%m-%d}\n---\n# Updated {name}\n\n{what}\n"]
+    if chat:
+        lines.append(f"- Chat: [[{chat}]]")
+    if originals:
+        lines.append(f"- Saved original: [[raw/files/{name}/{originals[-1].name}]]")
+    if reference:
+        lines.append(f"- Change reference: {' '.join(str(reference).split())[:300]}")
+    lines.append("- Written by the Assistant and approved by you.")
+    body = "\n".join(lines) + f"\n\n## The file as it is now\n{fence}{ext}\n{contents.rstrip(chr(10))}\n{fence}\n"
+    if diff:
+        body += f"\n## The change against the saved original (diff)\n{fence}diff\n{diff}\n{fence}\n"
+    body = scrub(body)[0]
+    j = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": "updated_file", "worker": "pa", "target": path,
+         "instructions": what, "chat": asked_in, "status": "waiting", "created": datetime.now().isoformat(timespec="seconds"),
+         "error": "", "result": {"path": path, "name": name, "editing": (vault / path).is_file(), "diff_lines": len(diff.splitlines())}}
+    DIR.mkdir(parents=True, exist_ok=True)
+    (DIR / f"{j['id']}.draft").write_text(body, encoding="utf-8")
+    _save(j)
+    import questions
+    questions.ask(f"{'Replace' if j['result']['editing'] else 'Add'} the updated file for {name}? {what}",
+                  why=f"Approving {'replaces' if j['result']['editing'] else 'writes'} {path} in your vault (nothing goes to Git). "
+                      f"It holds {len(contents.splitlines())} lines of the file as it is now"
+                      + (f" and a {j['result']['diff_lines']}-line diff against the saved original" if diff else ", with no saved original to compare")
+                      + ". Start of the note:\n\n" + body[:1200],
+                  kind="job", payload={"job": j["id"]}, options=[{"label": "Approve", "value": "approve"}, {"label": "Reject", "value": "reject"}])
+    agent.log(f"jobs: the Assistant proposed an updated file for {name} ({path}); waiting for you")
+    return j
+
+
+def _write_updated(j):
+    draft = DIR / f"{j['id']}.draft"
+    out = Path(agent.VAULT) / j["result"]["path"]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+    tmp.replace(out)
+    draft.unlink(missing_ok=True)
+    return j["result"]["path"]
 
 
 def run_one(model):
