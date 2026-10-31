@@ -330,7 +330,8 @@ badge();
 PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER).replace("__THEME_JS__", ui_nav.THEME_JS).replace("__THEME_CSS__", ui_nav.THEME_CSS)
 
 GRAPH_HTML = r"""
-<style>.tg{display:inline-block;font-size:13px;padding:4px 10px;margin:2px 4px 2px 0;border-radius:14px;border:1px solid var(--line);background:var(--card);cursor:pointer;user-select:none}.tg.off{opacity:.35}.tg i{display:inline-block;width:9px;height:9px;border-radius:5px;margin-right:6px}
+<style>.lrow{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);cursor:pointer}.lt{flex:1;min-width:0}.lt>div{overflow-wrap:anywhere}.lp{font-size:12px}
+.tg{display:inline-block;font-size:13px;padding:4px 10px;margin:2px 4px 2px 0;border-radius:14px;border:1px solid var(--line);background:var(--card);cursor:pointer;user-select:none}.tg.off{opacity:.35}.tg i{display:inline-block;width:9px;height:9px;border-radius:5px;margin-right:6px}
 .gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
 <input id="q" type="search" placeholder="Search notes, names, aliases..." autocomplete="off">
 <div id="stats" class="mut" style="margin:6px 2px"></div>
@@ -340,6 +341,7 @@ GRAPH_HTML = r"""
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
 const col=t=>COL[t]||COL.note;
+function row(n){return h("div",{class:"lrow",onclick:()=>openNote(n.path)},h("div",{class:"lt"},h("div",{},n.title),h("div",{class:"mut lp"},n.path)),h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 const hide=new Set();let curD=null,curLabel="";
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
@@ -347,7 +349,7 @@ async function showList(url,label){const d=await api(url);if(d.stats)$("#stats")
 function paint(){const d=curD,types={};d.notes.forEach(n=>types[n.type]=(types[n.type]||0)+1);
  const shown=d.notes.filter(n=>!hide.has(n.type));
  $("#tags").replaceChildren(...Object.keys(types).sort().map(t=>h("span",{class:"tg"+(hide.has(t)?" off":""),onclick:()=>{hide.has(t)?hide.delete(t):hide.add(t);paint()}},h("i",{style:"background:"+col(t)}),t+" "+types[t])));
- $("#list").replaceChildren(h("div",{class:"mut"},curLabel+" ("+shown.length+(shown.length<d.notes.length?" of "+d.notes.length:"")+")"),...shown.map(n=>chip(n)))}
+ $("#list").replaceChildren(h("div",{class:"mut"},curLabel+" ("+shown.length+(shown.length<d.notes.length?" of "+d.notes.length:"")+")"),...shown.map(row))}
 let t;$("#q").addEventListener("input",e=>{clearTimeout(t);t=setTimeout(()=>{const v=e.target.value.trim();
  v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Everything, most connected first")},250)});
 let hops=1,cur=null;
