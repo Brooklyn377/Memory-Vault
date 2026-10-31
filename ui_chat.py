@@ -604,7 +604,8 @@ CHAT_HTML = r"""
 .st .del{font:inherit;color:#f87171;background:none;border:0;padding:0 0 0 8px;cursor:pointer}
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
-#cuse{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
+#cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
+#cs svg{width:18px;height:18px;background:none;border-radius:0}
 .cwrap{position:relative}.cwrap textarea{padding-right:56px;box-sizing:border-box;width:100%}
 #cs{position:absolute;right:10px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center}
 </style>
