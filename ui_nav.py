@@ -4,7 +4,9 @@ so it can be dropped into any page template."""
 DRAWER = r"""
 <style>
 body{padding-top:52px}
-#dbar{position:fixed;top:0;left:0;right:0;height:52px;display:flex;align-items:center;gap:6px;padding:0 12px;background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-bottom:1px solid var(--line,#2b3240);z-index:30}
+#dbar{position:fixed;top:0;left:0;right:0;height:52px;display:flex;align-items:center;gap:6px;padding:0 12px;background:var(--head,var(--card,#1b2029));color:var(--headink,var(--ink,#e6e9f0));border-bottom:1px solid var(--line,#2b3240);z-index:30}
+#dtheme{margin:0 0 0 auto;padding:4px 6px;font-size:13px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;width:auto}
+#dtheme option{color:#111;background:#fff}
 #dbar b{font-size:17px;white-space:nowrap;flex:none}
 #dbtn{position:relative;display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:8px;margin:0;line-height:0;cursor:pointer}
 #dscrim{position:fixed;top:52px;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);z-index:34;display:none}
@@ -24,6 +26,9 @@ body{padding-top:52px}
   <svg width="26" height="26" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
   <span id="dh" class="dn" hidden style="position:absolute;top:0;right:-2px;font-size:11px;padding:0 5px"></span>
  </button>
+ <select id="dtheme" aria-label="Colour theme" title="Colour theme (this device only)">
+  <option value="system">System</option><option value="white">White</option><option value="blue">Blue</option><option value="purple">Purple</option><option value="candy">Candy</option>
+ </select>
 </div>
 <div id="dscrim"></div>
 <div id="dwr">
@@ -48,6 +53,11 @@ body{padding-top:52px}
  dr.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
  function mark(){var here=location.pathname+location.hash;
   dr.querySelectorAll("a").forEach(function(a){a.classList.toggle("on",a.getAttribute("href")===here)})}
+ var ts=document.getElementById("dtheme");
+ try{ts.value=localStorage.getItem("theme")||"system"}catch(e){}
+ ts.addEventListener("change",function(){var v=ts.value;   // kept in this browser only
+  try{localStorage.setItem("theme",v)}catch(e){}
+  if(v==="system")delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=v});
  window.addEventListener("hashchange",mark);mark();
  function show(id,n){var b=document.getElementById(id);if(b){b.hidden=!n;b.textContent=n}}
  async function counts(){

@@ -206,9 +206,14 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Memory vault</title>
+<script>try{var t=localStorage.getItem("theme");if(t&&t!=="system")document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
-:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c}
-@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2029;--ink:#e6e9f0;--mut:#98a2b5;--line:#2b3240;--acc:#6d9cff;--warn:#fb923c}}
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:var(--card);--headink:var(--ink)}
+@media (prefers-color-scheme:dark){:root{--bg:#131313;--card:#2b2b2b;--ink:#ececec;--mut:#a8a8a8;--line:#3d3d3d;--acc:#b06be0;--warn:#fb923c;--head:#691a54;--headink:#fff}}
+:root[data-theme=white]{color-scheme:light;--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:#fff;--headink:#1c2230}
+:root[data-theme=blue]{color-scheme:dark;--bg:#12151c;--card:#1b2029;--ink:#e6e9f0;--mut:#98a2b5;--line:#2b3240;--acc:#6d9cff;--warn:#fb923c;--head:#1b2029;--headink:#e6e9f0}
+:root[data-theme=purple]{color-scheme:dark;--bg:#131313;--card:#2b2b2b;--ink:#ececec;--mut:#a8a8a8;--line:#3d3d3d;--acc:#b06be0;--warn:#fb923c;--head:#691a54;--headink:#fff}
+:root[data-theme=candy]{color-scheme:light;--bg:#c9faa8;--card:#abfada;--ink:#2b2b2b;--mut:#4b5d55;--line:#86d9bb;--acc:#8a4bd1;--warn:#b93a0b;--head:#d9aafa;--headink:#2b2b2b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif}
 nav{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
 nav a{padding:8px 10px;white-space:nowrap;border-radius:8px;color:var(--mut);text-decoration:none;font-weight:600}

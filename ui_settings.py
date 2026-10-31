@@ -177,7 +177,7 @@ HTML = r"""
 .fld{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0}
 .fld.off{opacity:.4}
 .fld input[type=number]{width:120px}
-input,select{background:#2a2f3a;color:#e6e9f0;border:1px solid #3a4150;border-radius:8px;padding:8px 10px;box-sizing:border-box;color-scheme:dark}
+input,select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;box-sizing:border-box}
 .fld label{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
 .fld input[type=checkbox]{flex:none}
 .fld select{flex:1;min-width:0;max-width:100%}

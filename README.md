@@ -164,6 +164,11 @@ Everything lives in the container. Stop it and delete it in the Proxmox web inte
 Nothing leaves the container unless you set up publishing (below), add Git servers, or point a model at an
 external server on the Settings page.
 
+## Colour themes
+A small drop-down in the top-right corner of every page picks the colours: **System** (the default: White when your device is
+in light mode, Purple in dark mode), **White**, **Blue**, **Purple** or **Candy**. The choice is kept in the browser on that
+device only, so your phone and your PC can differ.
+
 ## Optional: the Assistant
 A fourth model you chat with. It is off until you turn it on: on its card on the Settings page, choose a model
 (local) or an external server, load it, and tick "Use the Assistant for chat". Plain chat messages then go to it;
