@@ -14,7 +14,6 @@ VAULT = Path(CFG["paths"]["vault"])
 INBOX = STATE / "inbox"
 UI_USER = os.environ["UI_USER"]
 UI_PASSWORD = os.environ["UI_PASSWORD"]
-MAX_BYTES = int(CFG.get("upload", {}).get("max_mb", 200)) * 1024 * 1024
 ALLOWED = {".zip", ".json"}
 SESSION_SECONDS = 30 * 24 * 3600
 SESSIONS = {}
@@ -119,17 +118,19 @@ async def upload(request: Request, file: UploadFile = File(...)):
     name = f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}{suffix}"
     part = INBOX / (name + ".part")
     size, too_big = 0, False
+    gb = __import__("tuning").get("import.max_upload_gb")   # set under Settings, Sweeper, Limits and guardrails
+    max_bytes = gb * 1024 ** 3
     with part.open("wb") as out:
         while chunk := await file.read(1 << 20):
             size += len(chunk)
-            if size > MAX_BYTES:
+            if size > max_bytes:
                 too_big = True
                 break
             out.write(chunk)
     if too_big:
         part.unlink(missing_ok=True)
-        log(f"upload rejected: {file.filename} is over the {MAX_BYTES // (1024 * 1024)} MB upload limit (upload.max_mb in config.yaml)")
-        raise HTTPException(413, "file too large")
+        log(f"upload rejected: {file.filename} is over the {gb} GB import limit (Settings > Sweeper > Limits and guardrails > Largest file you can upload)")
+        raise HTTPException(413, f"file too large: the limit is {gb} GB (Settings > Sweeper > Limits and guardrails)")
     part.rename(INBOX / name)
     log(f"upload saved {name} ({size} bytes)")
     return {"saved": name, "bytes": size}
