@@ -331,7 +331,7 @@ GRAPH_HTML = r"""
 <div id="list"></div>
 <div id="view"></div>
 <script>
-const COL={file:"#f97316","file-note":"#fb923c","updated-file":"#facc15",entity:"#3b82f6",summary:"#10b981",timeline:"#f59e0b",conversation:"#9ca3af",raw:"#9ca3af","claude-memory":"#a855f7",note:"#6b7280"};
+const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
 const col=t=>COL[t]||COL.note;
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
@@ -378,8 +378,9 @@ async function deleteEntry(n){
  try{await api("/api/graph/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:n.path})});
   history.replaceState(null,"",location.pathname);$("#view").replaceChildren(h("div",{class:"card mut"},"Deleted "+n.path));await refreshList()}
  catch(e){alert(e.message)}}
-showList("/api/graph/hubs","Most connected");
-if(location.hash.length>1)openNote(decodeURIComponent(location.hash.slice(1)));
+api("/api/tagcolors").then(d=>Object.assign(COL,d.colors)).catch(()=>{}).then(()=>{
+ showList("/api/graph/hubs","Most connected");
+ if(location.hash.length>1)openNote(decodeURIComponent(location.hash.slice(1)))});
 </script>
 """
 
