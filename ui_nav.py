@@ -71,3 +71,12 @@ body{padding-top:52px}
 })();
 </script>
 """
+
+# The colour themes, shared by every page template: the choice (System, White, Blue, Purple, Candy) is kept in this browser.
+THEME_JS = r'''<script>(function(){try{var t=localStorage.getItem("theme");if(t&&t!=="system")document.documentElement.dataset.theme=t}catch(e){}})()</script>'''
+THEME_CSS = r''':root{--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:var(--card);--headink:var(--ink)}
+@media (prefers-color-scheme:dark){:root{--bg:#131313;--card:#2b2b2b;--ink:#eaeaea;--mut:#a8a8a8;--line:rgba(255,255,255,.14);--acc:#8508BF;--warn:#fb923c;--head:#691B54;--headink:#fff}}
+:root[data-theme=white]{color-scheme:light;--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:#fff;--headink:#1c2230}
+:root[data-theme=blue]{color-scheme:dark;--bg:#12151c;--card:#1b2029;--ink:#e6e9f0;--mut:#98a2b5;--line:#2b3240;--acc:#6d9cff;--warn:#fb923c;--head:#1b2029;--headink:#e6e9f0}
+:root[data-theme=purple]{color-scheme:dark;--bg:#131313;--card:#2b2b2b;--ink:#eaeaea;--mut:#a8a8a8;--line:rgba(255,255,255,.14);--acc:#8508BF;--warn:#fb923c;--head:#691B54;--headink:#fff}
+:root[data-theme=candy]{color-scheme:light;--bg:#CAFBAA;--card:#AAFBDB;--ink:#363636;--mut:#424242;--line:rgba(0,0,0,.14);--acc:#3273dc;--warn:#b93a0b;--head:#DBAAFB;--headink:#fff}'''

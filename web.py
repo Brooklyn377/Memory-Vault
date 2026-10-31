@@ -162,18 +162,20 @@ def activity(request: Request):
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Memory Agent</title>
+__THEME_JS__
 <style>
-body{margin:0;font-family:system-ui;background:#111;color:#eee;padding:16px 16px 80px}
-button,label.btn{background:#6d3fe0;color:#fff;border:0;border-radius:10px;padding:14px;
+__THEME_CSS__
+body{margin:0;font-family:system-ui;background:var(--bg);color:var(--ink);padding:16px 16px 80px}
+button,label.btn{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:14px;
  font-size:16px;display:block;text-align:center;width:100%;box-sizing:border-box}
-textarea,input[type=password],input[type=text]{width:100%;box-sizing:border-box;background:#222;
- color:#eee;border:1px solid #444;border-radius:8px;padding:10px;font-size:16px;margin-bottom:10px}
-nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#1b1b1b}
-nav button{border-radius:0;background:#1b1b1b;flex:1}nav button.on{background:#6d3fe0}
+textarea,input[type=password],input[type=text]{width:100%;box-sizing:border-box;background:var(--card);
+ color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:16px;margin-bottom:10px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line)}
+nav button{border-radius:0;background:var(--card);color:var(--ink);flex:1}nav button.on{background:var(--acc);color:#fff}
 .tab{display:none}.tab.on{display:block}
-.idx a{display:block;background:#1b1b1b;border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:10px;color:inherit;text-decoration:none}
-.idx b{display:block;font-size:17px}.idx span{color:#aaa;font-size:14px}
-pre{white-space:pre-wrap;font-size:13px;color:#bbb}
+.idx a{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;color:inherit;text-decoration:none}
+.idx b{display:block;font-size:17px}.idx span{color:var(--mut);font-size:14px}
+pre{white-space:pre-wrap;font-size:13px;color:var(--mut)}
 </style></head><body>
 <div id="hm" class="tab on"><h3>Memory vault</h3>
 <div class="idx">
@@ -227,7 +229,7 @@ api("/api/me");
 </script></body></html>"""
 
 import ui_nav
-PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER)
+PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER).replace("__THEME_JS__", ui_nav.THEME_JS).replace("__THEME_CSS__", ui_nav.THEME_CSS)
 
 import ui_extra
 
