@@ -428,7 +428,7 @@ window.refreshModelFiles=function(models){
   FS.forEach(function(f){if(f.kind==="model"&&e.fx[f.key])fill(e.fx[f.key],[h("option",{value:""},"default")])})}};
 // Changes typed on the page are kept only by Apply all: warn before leaving the page with some not applied.
 let dirty=false;
-["input","change"].forEach(function(t){document.addEventListener(t,function(ev){if(ev.target.closest&&ev.target.closest("#mm,#sp,#sv"))dirty=true},true)});
+["input","change"].forEach(function(t){document.addEventListener(t,function(ev){if(ev.target.closest&&ev.target.closest("#mm,#sp,#sv")&&!ev.target.closest("[data-instant]"))dirty=true},true)});
 addEventListener("beforeunload",function(ev){if(dirty){ev.preventDefault();ev.returnValue=""}});
 async function stat(){clearTimeout(T);
  const [d,st]=await Promise.all([api("/api/server/info"),api("/api/server/status")]);let busy=false;

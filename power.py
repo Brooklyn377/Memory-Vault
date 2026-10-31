@@ -240,7 +240,7 @@ function powerButton(key,u){
  u.btn=btn;u.txt=txt;return btn}
 // The Assistant's chat memory controls, under its drop-downs: the manual compression and the server token count toggle.
 function memoryBlock(){
- const KEY="assistant.show_server_tokens",msg=h("div",{class:"mut"}),box=h("input",{type:"checkbox"});
+ const KEY="assistant.show_server_tokens",msg=h("div",{class:"mut"}),box=h("input",{type:"checkbox","data-instant":"1"});   // saves by itself: not an unsaved change
  api("/api/tuning").then(function(d){const r=d.items.find(function(x){return x.key===KEY});if(r)box.checked=Number(r.saved==null?r.default:r.saved)===1}).catch(function(){});
  box.onchange=async function(){msg.textContent="";box.disabled=true;
   try{await api("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:{[KEY]:box.checked?1:0},confirmed:true})});msg.textContent="Saved."}
