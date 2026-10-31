@@ -5,8 +5,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import ui_extra
 
-MAX_NODES = 3000
-
 
 def register(app, authed):
     router = APIRouter()
@@ -17,7 +15,7 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         v = ui_extra.vault()
         every = [*v.body, *v.files]   # every file in the vault: notes, chats, saved originals and the rest
-        rels = sorted(every, key=lambda r: (-ui_extra.degree(v, r), r))[:MAX_NODES]
+        rels = sorted(every, key=lambda r: (-ui_extra.degree(v, r), r))
         idx = {r: i for i, r in enumerate(rels)}
         nodes = [{"p": r, "t": ui_extra.brief(v, r)["title"], "ty": ui_extra.ntype(v, r), "d": ui_extra.degree(v, r)} for r in rels]
         edges = [[idx[a], idx[b]] for a in rels for b in ui_extra._links_to(v, a) if b in idx and a != b]
