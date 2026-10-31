@@ -20,6 +20,7 @@ REG = [
     ("taskcheck.max_tasks", "gpt", "Open tasks checked per chunk", "Open tasks compared against each chunk's new facts.", 30, 5, 200, ""),
     ("files.window", "gpt", "File check: characters around each mention", "Text kept on each side of a file name when the Reviewer reads chats about a file.", 1500, 300, 8000, "memory-filechanges"),
     ("files.excerpt_chars", "gpt", "File check: chat text per call", "Most chat text sent to the Reviewer in one file check.", 12000, 3000, 60000, "memory-filechanges"),
+    ("chat.page_messages", "gpt", "Chat: messages loaded at a time", "The Chat page opens on this many of the newest messages. Scrolling up loads this many more, all the way back to the first one, which is kept in the vault.", 40, 5, 1000, ""),
     ("chat.notes", "gpt", "Chat: notes read in full", "Best-matching notes the chat reads for a question.", 4, 1, 12, ""),
     ("chat.hop_notes", "gpt", "Chat: notes whose links are followed", "How many of those notes have their linked notes pulled in.", 2, 0, 8, ""),
     ("chat.linked", "gpt", "Chat: linked notes added", "Most linked notes added to the chat's context.", 4, 0, 20, ""),

@@ -15,8 +15,6 @@ import ui_nav
 from graph import Vault
 
 WL = re.compile(r"\[\[([^\]\|#]+?)(?:#[^\]\|]*)?(?:\|([^\]]*))?\]\]")
-BODY_MAX = 20000
-HOOD_MAX = 70
 _cache = {"t": 0.0, "v": None}
 
 
@@ -66,7 +64,6 @@ def brief(v, rel):
 
 
 def render_body(v, text):
-    text = text[:BODY_MAX]
     esc = html.escape(text, quote=False)
 
     def sub(m):
@@ -104,11 +101,11 @@ def hood(v, rel, hops):
             if nxt not in dist:
                 dist[nxt] = dist[cur] + 1
                 queue.append(nxt)
-    keep = sorted(dist, key=lambda r: (dist[r], -degree(v, r), r))[:HOOD_MAX]
+    keep = sorted(dist, key=lambda r: (dist[r], -degree(v, r), r))
     ks = set(keep)
     nodes = [dict(brief(v, r), dist=dist[r]) for r in keep]
     edges = [{"s": a, "t": b} for a in keep for b in _links_to(v, a) if b in ks]
-    return {"center": rel, "nodes": nodes, "edges": edges, "truncated": len(dist) > len(keep)}
+    return {"center": rel, "nodes": nodes, "edges": edges, "truncated": False}
 
 
 def register(app, authed):
@@ -169,7 +166,7 @@ def register(app, authed):
                 "out": [brief(v, r) for r in sorted(v.out[rel])],
                 "back": [brief(v, r) for r in sorted(v.back[rel])],
                 "broken": sorted(v.unresolved[rel]), "files": [brief(v, f) for f in sorted(v.file_out.get(rel, ()))],
-                "body": render_body(v, v.body[rel]), "truncated": len(v.body[rel]) > BODY_MAX}
+                "body": render_body(v, v.body[rel]), "truncated": False}
 
     @router.post("/api/graph/delete")
     async def delete_entry(request: Request):
@@ -201,8 +198,8 @@ def register(app, authed):
         need(request)
         if status == "closed":
             import qhistory
-            return {"questions": [qhistory.view(q) for q in questions.list_questions() if q["status"] != "open"][:40]}
-        return {"questions": questions.list_questions(status)[:50]}
+            return {"questions": [qhistory.view(q) for q in questions.list_questions() if q["status"] != "open"]}
+        return {"questions": questions.list_questions(status)}
 
     @router.get("/api/questions/count")
     def count_q(request: Request):
@@ -355,7 +352,8 @@ let t;$("#q").addEventListener("input",e=>{clearTimeout(t);t=setTimeout(()=>{con
 let hops=1,cur=null;
 function layout(d,W,H){const N=d.nodes,idx={};N.forEach((n,i)=>{idx[n.path]=i;const a=i*2.4,r=n.dist?60*n.dist+((i*37)%25):0;n.x=W/2+r*Math.cos(a);n.y=H/2+r*Math.sin(a);n.vx=n.vy=0});
  const E=d.edges.map(e=>[idx[e.s],idx[e.t]]);
- for(let it=0;it<260;it++){const cool=1-it/260;
+ const its=Math.max(30,Math.min(260,Math.floor(4e7/(N.length*N.length+1))));   // a very busy note gets fewer passes so the page stays quick
+ for(let it=0;it<its;it++){const cool=1-it/its;
   for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){let dx=N[i].x-N[j].x,dy=N[i].y-N[j].y,d2=dx*dx+dy*dy+.1,f=2600/d2,dd=Math.sqrt(d2);
    N[i].vx+=f*dx/dd;N[i].vy+=f*dy/dd;N[j].vx-=f*dx/dd;N[j].vy-=f*dy/dd}
   for(const[a,b]of E){let dx=N[b].x-N[a].x,dy=N[b].y-N[a].y,dd=Math.sqrt(dx*dx+dy*dy)+.1,f=(dd-70)*.04;
@@ -434,9 +432,11 @@ function row(q){
   if(q.flip)b.append(h("button",{onclick:()=>act("/api/questions/change",{id:q.id,answer:q.flip})},"Change to "+(q.flip==="drop"?"Drop":"Keep")));
   r.append(b)}
  return r}
+let allDone=false;
 async function load(){const[o,d]=await Promise.all([api("/api/questions?status=open"),api("/api/questions?status=closed")]);
  $("#open").replaceChildren(...(o.questions.length?o.questions.map(card):[h("div",{class:"card mut"},"No questions right now. When the agent is unsure about something it will show up here.")]));
- $("#done").replaceChildren(...d.questions.map(row))}
+ const shown=allDone?d.questions:d.questions.slice(0,10);
+ $("#done").replaceChildren(...shown.map(row),...(d.questions.length>shown.length?[h("button",{onclick:()=>{allDone=true;load()}},"See more ("+(d.questions.length-shown.length)+")")]:[]))}
 load();
 </script>
 """

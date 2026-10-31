@@ -556,10 +556,16 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
 
     @router.get("/api/chat")
-    def chat_list(request: Request):
+    def chat_list(request: Request, before: str = ""):
+        """The newest messages, or with before=<an id> the messages just before it. more says there are older ones."""
         need(request)
+        n = __import__("tuning").get("chat.page_messages")
+        msgs = [m for m in _all() if not before or m["id"] < before]
+        page = msgs[-n:] if n > 0 else msgs
+        if before:
+            return {"messages": page, "more": len(msgs) > len(page)}
         import chatmemory
-        return {"messages": _all()[-60:], "memory": chatmemory.status(), "server": usage_info()}
+        return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(), "server": usage_info()}
 
     @router.post("/api/chat/compress")
     async def chat_compress(request: Request):
@@ -635,7 +641,6 @@ CHAT_HTML = r"""
 <button class="pri" id="cs" title="Send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div><span id="ce" class="mut"></span></div>
 <script>
 const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed",skipped:"Skipped"};
-let seen=-1;
 function webList(w){
  const searches=w.filter(function(x){return x.kind==="search"}),pages=w.filter(function(x){return x.kind==="page"});
  const line=h("span",{},"Used the web: "+searches.length+(searches.length===1?" search":" searches")+", "+pages.length+(pages.length===1?" page":" pages")+" ");
@@ -665,15 +670,26 @@ function bubble(m){
   if(m.confirm==="discarded")box.append(h("div",{class:"mut"},"Discarded. Nothing was filed."));
   out.push(box)}
  return out}
+let older=[],more=false,loadingOlder=false,lastSeen="";
+function show(list){$("#thread").replaceChildren(...(list.length?[...(more?[h("div",{class:"mut",style:"text-align:center"},"Scroll up for earlier messages")]:[]),...list.flatMap(bubble)]:[h("div",{class:"card mut"},"Ask a question about your notes, or start with /fix to correct a note.")]))}
+let latest=[];
+function everything(){const first=latest.length?latest[0].id:"~";return older.filter(m=>m.id<first).concat(latest)}
 async function load(){try{const d=await api("/api/chat");
- $("#thread").replaceChildren(...(d.messages.length?d.messages.flatMap(bubble):[h("div",{class:"card mut"},"Ask a question about your notes, or start with /fix to correct a note.")]));
+ latest=d.messages;if(!older.length)more=d.more;show(everything());
  const mm=d.memory,sv=d.server;
  $("#cuseA").textContent=mm?"Memory "+mm.tokens.toLocaleString()+" / "+mm.limit.toLocaleString()+" tokens (estimate)"+(mm.running||mm.requested?" · compressing":""):"";
  $("#cuseB").textContent=!sv?"":sv.none?"Server count: no call yet":"Server: "+sv.tokens.toLocaleString()+(sv.context>0?" of "+sv.context.toLocaleString():"")+" tokens in the last call · estimate "+sv.estimate.toLocaleString()+" · "+sv.per_token+" characters per token";
- if(d.messages.length!==seen){seen=d.messages.length;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
+ const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
+async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
+ try{const first=(older.length?older[0]:latest[0]);if(!first)return;
+  const d=await api("/api/chat?before="+encodeURIComponent(first.id));
+  const h0=document.body.scrollHeight;older=d.messages.concat(older);more=d.more;show(everything());
+  window.scrollTo(0,window.scrollY+document.body.scrollHeight-h0)}   // stay on the message you were reading
+ catch(e){}finally{loadingOlder=false}}
+addEventListener("scroll",function(){if(window.scrollY<80)loadOlder()});
 async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
- try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
+ try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
 $("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
  try{await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});$("#ct").value="";await load()}
