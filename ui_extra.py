@@ -32,20 +32,23 @@ def is_file(v, rel):
 
 def file_chat(v, rel):
     """The chat a saved original came from: its version name ends with the first 8 characters of the chat's id."""
-    short = Path(rel).stem.rsplit("-", 1)[-1]
-    return next((r for r in sorted(v.body) if r.startswith("raw/conversations/") and r[:-3].endswith(short)), None) if short else None
+    if not rel.startswith("raw/files/"):
+        return None
+    if not hasattr(v, "_chat_by_id"):
+        v._chat_by_id = {r[:-3][-8:]: r for r in sorted(v.body) if r.startswith("raw/conversations/")}
+    return v._chat_by_id.get(Path(rel).stem.rsplit("-", 1)[-1])
 
 
 def file_title(rel):
     parts = rel.split("/")   # raw/files/<name>/<stamp>-<chat>.<ext>
     stamp = Path(rel).name[:8]
     day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if stamp.isdigit() else ""
-    return f"{parts[2]} ({day})" if len(parts) > 3 and day else Path(rel).name
+    return f"{parts[2]} ({day})" if rel.startswith("raw/files/") and len(parts) > 3 and day else rel
 
 
 def ntype(v, rel):
     if is_file(v, rel):
-        return "file"
+        return "derived-file" if rel.startswith("files/derived/") else "file"
     t = v.meta[rel].get("type")
     return str(t) if t else ("raw" if rel.startswith("raw/") else "note")
 
@@ -58,7 +61,7 @@ def degree(v, rel):
 
 def brief(v, rel):
     if is_file(v, rel):
-        return {"path": rel, "title": file_title(rel), "type": "file", "deg": degree(v, rel)}
+        return {"path": rel, "title": file_title(rel), "type": ntype(v, rel), "deg": degree(v, rel)}
     return {"path": rel, "title": v.title(rel), "type": ntype(v, rel), "deg": degree(v, rel)}
 
 
@@ -123,10 +126,9 @@ def register(app, authed):
     @router.get("/api/graph/hubs")
     def hubs(request: Request):
         need(request)
-        v = vault()
-        top = sorted((r for r in v.body if not r.startswith("raw/")),
-                     key=lambda r: (-degree(v, r), r))[:30]
-        return {"stats": v.stats(), "notes": [brief(v, r) for r in top]}
+        v = vault()   # everything in the vault, most connected first: notes, chats and every other file
+        every = sorted([*v.body, *v.files], key=lambda r: (-degree(v, r), r))
+        return {"stats": v.stats(), "notes": [brief(v, r) for r in every]}
 
     @router.get("/api/graph/search")
     def search(request: Request, q: str = ""):
@@ -144,7 +146,7 @@ def register(app, authed):
         for f in v.files:   # the saved originals, by their name
             if q in f.lower():
                 hits.append((q != Path(f).name.lower(), True, -degree(v, f), f))
-        return {"notes": [brief(v, h[3]) for h in sorted(hits)[:30]]}
+        return {"notes": [brief(v, h[3]) for h in sorted(hits)]}
 
     @router.get("/api/graph/note")
     def note(request: Request, path: str):
@@ -154,8 +156,11 @@ def register(app, authed):
         if is_file(v, rel):   # a saved original: its exact text, nothing added
             text = (agent.VAULT / rel).read_text(encoding="utf-8", errors="replace")
             chat = file_chat(v, rel)
-            meta = {"type": "file", "filename": rel.split("/")[2], "saved": file_title(rel).split("(")[-1].rstrip(")"),
-                    "size": f"{len(text):,} characters", "read-only": "yes"}
+            raw = rel.startswith("raw/files/")
+            meta = {"type": ntype(v, rel), "filename": rel.split("/")[2] if raw else Path(rel).name,
+                    "size": f"{len(text):,} characters"}
+            if raw:
+                meta.update({"saved": file_title(rel).split("(")[-1].rstrip(")"), "read-only": "yes"})
             return {**brief(v, rel), "meta": meta, "aliases": [], "out": [brief(v, chat)] if chat else [],
                     "back": [brief(v, r) for r in sorted(v.file_back.get(rel, ()))], "broken": [], "files": [],
                     "body": html.escape(text, quote=False), "truncated": False}
@@ -325,19 +330,26 @@ badge();
 PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER).replace("__THEME_JS__", ui_nav.THEME_JS).replace("__THEME_CSS__", ui_nav.THEME_CSS)
 
 GRAPH_HTML = r"""
-<style>.gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
+<style>.tg{display:inline-block;font-size:13px;padding:4px 10px;margin:2px 4px 2px 0;border-radius:14px;border:1px solid var(--line);background:var(--card);cursor:pointer;user-select:none}.tg.off{opacity:.35}.tg i{display:inline-block;width:9px;height:9px;border-radius:5px;margin-right:6px}
+.gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
 <input id="q" type="search" placeholder="Search notes, names, aliases..." autocomplete="off">
 <div id="stats" class="mut" style="margin:6px 2px"></div>
+<div id="tags"></div>
 <div id="list"></div>
 <div id="view"></div>
 <script>
-const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
+const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
 const col=t=>COL[t]||COL.note;
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
+const hide=new Set();let curD=null,curLabel="";
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
- const l=$("#list");l.replaceChildren(h("div",{class:"mut"},label+" ("+d.notes.length+")"),...d.notes.map(n=>chip(n)))}
+ curD=d;curLabel=label;paint()}
+function paint(){const d=curD,types={};d.notes.forEach(n=>types[n.type]=(types[n.type]||0)+1);
+ const shown=d.notes.filter(n=>!hide.has(n.type));
+ $("#tags").replaceChildren(...Object.keys(types).sort().map(t=>h("span",{class:"tg"+(hide.has(t)?" off":""),onclick:()=>{hide.has(t)?hide.delete(t):hide.add(t);paint()}},h("i",{style:"background:"+col(t)}),t+" "+types[t])));
+ $("#list").replaceChildren(h("div",{class:"mut"},curLabel+" ("+shown.length+(shown.length<d.notes.length?" of "+d.notes.length:"")+")"),...shown.map(n=>chip(n)))}
 let t;$("#q").addEventListener("input",e=>{clearTimeout(t);t=setTimeout(()=>{const v=e.target.value.trim();
- v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Most connected")},250)});
+ v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Everything, most connected first")},250)});
 let hops=1,cur=null;
 function layout(d,W,H){const N=d.nodes,idx={};N.forEach((n,i)=>{idx[n.path]=i;const a=i*2.4,r=n.dist?60*n.dist+((i*37)%25):0;n.x=W/2+r*Math.cos(a);n.y=H/2+r*Math.sin(a);n.vx=n.vy=0});
  const E=d.edges.map(e=>[idx[e.s],idx[e.t]]);
@@ -372,14 +384,14 @@ async function openNote(path){cur=path;const[n,g]=await Promise.all([api("/api/g
    n.broken.length?h("div",{class:"mut",style:"color:var(--warn)"},"Broken links: "+n.broken.join(", ")):null),
   h("div",{class:"card"},h("div",{class:"mut"},Object.entries(n.meta).map(([k,v])=>k+": "+v).join("  ·  ")),h("hr"),body,n.truncated?h("div",{class:"mut"},"(shortened)"):null));
  window.scrollTo({top:$("#view").offsetTop-60,behavior:"smooth"})}
-function refreshList(){const v=$("#q").value.trim();return v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Most connected")}
+function refreshList(){const v=$("#q").value.trim();return v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Everything, most connected first")}
 async function deleteEntry(n){
  if(!await holdConfirm("Delete "+n.title+"?",n.path+" will be deleted from the vault and cannot be undone. Anything that links to it will have a broken link."))return;
  try{await api("/api/graph/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:n.path})});
   history.replaceState(null,"",location.pathname);$("#view").replaceChildren(h("div",{class:"card mut"},"Deleted "+n.path));await refreshList()}
  catch(e){alert(e.message)}}
 api("/api/tagcolors").then(d=>Object.assign(COL,d.colors)).catch(()=>{}).then(()=>{
- showList("/api/graph/hubs","Most connected");
+ showList("/api/graph/hubs","Everything, most connected first");
  if(location.hash.length>1)openNote(decodeURIComponent(location.hash.slice(1)))});
 </script>
 """

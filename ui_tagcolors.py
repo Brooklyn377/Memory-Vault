@@ -11,7 +11,7 @@ import ui_extra
 FILE = agent.STATE / "tag_colors.json"
 DEFAULTS = {"entity": "#5b8def", "summary": "#34d399", "timeline": "#f5a524", "conversation": "#8b93a7", "raw": "#8b93a7",
             "claude-memory": "#c084fc", "note": "#f472b6", "file": "#22d3ee", "file-note": "#22d3ee", "updated-file": "#facc15",
-            "hub": "#a3e635"}
+            "derived-file": "#a78bfa", "hub": "#a3e635"}
 HEX = re.compile(r"#[0-9a-fA-F]{6}")
 
 
@@ -26,7 +26,7 @@ def saved():
 def listing():
     v = ui_extra.vault()
     counts = {}
-    for rel in v.body:
+    for rel in [*v.body, *v.files]:
         t = ui_extra.ntype(v, rel)
         counts[t] = counts.get(t, 0) + 1
     mine = saved()

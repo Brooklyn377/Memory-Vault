@@ -16,11 +16,12 @@ def register(app, authed):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
         v = ui_extra.vault()
-        rels = sorted(v.body, key=lambda r: (-ui_extra.degree(v, r), r))[:MAX_NODES]
+        every = [*v.body, *v.files]   # every file in the vault: notes, chats, saved originals and the rest
+        rels = sorted(every, key=lambda r: (-ui_extra.degree(v, r), r))[:MAX_NODES]
         idx = {r: i for i, r in enumerate(rels)}
-        nodes = [{"p": r, "t": v.title(r), "ty": ui_extra.ntype(v, r), "d": ui_extra.degree(v, r)} for r in rels]
-        edges = [[idx[a], idx[b]] for a in rels for b in v.out[a] if b in idx and a != b]
-        return {"nodes": nodes, "edges": edges, "total": len(v.body)}
+        nodes = [{"p": r, "t": ui_extra.brief(v, r)["title"], "ty": ui_extra.ntype(v, r), "d": ui_extra.degree(v, r)} for r in rels]
+        edges = [[idx[a], idx[b]] for a in rels for b in ui_extra._links_to(v, a) if b in idx and a != b]
+        return {"nodes": nodes, "edges": edges, "total": len(every)}
 
     @router.get("/map", response_class=HTMLResponse)
     def map_page(request: Request):
@@ -50,7 +51,8 @@ main{max-width:none!important;padding:0!important}
  <div id="bar"><input id="s" type="search" placeholder="Find a note..." autocomplete="off"><div class="f" id="flt"></div></div>
  <div id="info"></div><div id="st"></div></div>
 <script>
-const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee",hub:"#a3e635"};
+const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};
+let TOTAL=0;
 const col=t=>COL[t]||COL.note;   // the colours are the ones set under Settings, Tag colours
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let N=[],E=[],adj=[],W=0,H=0,dpr=1,view={x:0,y:0,k:1},sel=-1,hit=new Set(),off=new Set(),alpha=1,running=false;
@@ -96,7 +98,7 @@ function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
  for(const[t0,x,y,s]of labels){const t=t0.length>26?t0.slice(0,25)+"…":t0,w=ctx.measureText(t).width/2+3;
   if(boxes.length>=80||boxes.some(b=>Math.abs(b[0]-x)<w+b[2]&&Math.abs(b[1]-y)<13))continue;boxes.push([x,y,w]);
   ctx.fillStyle=s?"#fff":"rgba(220,226,240,.85)";ctx.fillText(t,x,y)}
- $("#st").textContent=N.filter((_,i)=>vis(i)).length+" notes · "+E.length+" links"}
+ $("#st").textContent=N.filter((_,i)=>vis(i)).length+(TOTAL>N.length?" of "+TOTAL:"")+" files · "+E.length+" links"}
 let touched=false;
 function fit(){if(!N.length)return;const xs=N.map(n=>n.x).sort((a,b)=>a-b),ys=N.map(n=>n.y).sort((a,b)=>a-b),lo=Math.floor(N.length*.03),hi=Math.ceil(N.length*.97)-1;
  const a=xs[lo],c=xs[hi],b=ys[lo],d=ys[hi];view.x=(a+c)/2;view.y=(b+d)/2;view.k=Math.min(W/(c-a+60),H/(d-b+60),3)}
@@ -120,7 +122,7 @@ $("#s").addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase()
  if(q)N.forEach((n,i)=>{if(vis(i)&&(n.t.toLowerCase().includes(q)||n.p.toLowerCase().includes(q)))hit.add(i)});
  if(hit.size&&hit.size<=40){let sx=0,sy=0;hit.forEach(i=>{sx+=N[i].x;sy+=N[i].y});view.x=sx/hit.size;view.y=sy/hit.size;view.k=Math.max(view.k,hit.size===1?2.5:1)}draw()});
 window.addEventListener("resize",resize);
-(async()=>{try{Object.assign(COL,(await api("/api/tagcolors")).colors)}catch(e){}const d=await api("/api/graph/all");N=d.nodes;E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
+(async()=>{try{Object.assign(COL,(await api("/api/tagcolors")).colors)}catch(e){}const d=await api("/api/graph/all");TOTAL=d.total;N=d.nodes;E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
  const types=[...new Set(N.map(n=>n.ty))].sort();
  $("#flt").replaceChildren(...types.map(t=>{const s=h("span",{onclick:()=>{off.has(t)?off.delete(t):off.add(t);s.classList.toggle("off");if(sel>=0&&!vis(sel))select(-1);draw()}},h("i",{style:"background:"+col(t)}),t);return s}));
  resize();initPos();

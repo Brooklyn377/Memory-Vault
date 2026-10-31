@@ -32,7 +32,7 @@ class Vault:
         self.out = {}
         self.back = {}
         self.unresolved = {}
-        self.files = set()       # the saved original files under raw/files: not notes, but links to them are followed
+        self.files = set()       # every file in the vault that is not a note (saved originals under raw/files, derived copies, ...): links to them are followed
         self.file_out = {}       # note -> the files it links to
         self.file_back = {}      # file -> the notes that link to it
         self._load()
@@ -65,9 +65,11 @@ class Vault:
                 self.by_name.setdefault(n, [])
                 if rel not in self.by_name[n]:
                     self.by_name[n].append(rel)
-        raw_files = self.root / "raw" / "files"
-        if raw_files.is_dir():
-            self.files = {p.relative_to(self.root).as_posix() for p in raw_files.rglob("*") if p.is_file()}
+        for p in self.root.rglob("*"):   # every file that is not a note: saved originals, derived copies, anything else
+            if p.is_file() and p.suffix.lower() not in (".md", ".tmp", ".part"):
+                rel = p.relative_to(self.root)
+                if not any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
+                    self.files.add(rel.as_posix())
         for rel in self.body:
             self.out[rel] = set()
             self.back.setdefault(rel, set())
