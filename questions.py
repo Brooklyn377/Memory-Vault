@@ -24,7 +24,7 @@ MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 MAX_ANSWER = 4000
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
-KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job")
+KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "memory")
 
 
 def _path(qid):
@@ -133,6 +133,11 @@ def answer(qid, text):
             ui_chat.retry(q["payload"]["chat"])
         except ValueError:   # already sent again from the Chat page, or removed
             pass
+    elif q["kind"] == "memory":   # the chat memory could not be compressed: Try again lets the next idle time run it
+        if text != "retry":
+            raise ValueError("unknown answer")
+        import chatmemory
+        chatmemory.clear_failure()
     elif q["kind"] in ("gitpull", "serverfail"):   # notices: answering only acknowledges them
         pass
     elif q["kind"] == "job":

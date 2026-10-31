@@ -336,13 +336,9 @@ def assistant_answer(m, context):
 
 
 def earlier_turns(m):
-    """Your earlier plain messages and their replies, oldest first, so the Assistant can follow up."""
-    n = __import__("tuning").get("assistant.history")
-    done = [x for x in _all() if x["id"] < m["id"] and x["kind"] == "lookup" and x["status"] == "replied" and x["reply"]]
-    out = []
-    for x in done[-n:] if n else []:
-        out += [{"role": "user", "content": x["text"]}, {"role": "assistant", "content": x["reply"]}]
-    return out
+    """Your earlier chats for the Assistant: the newest word for word, older ones as summaries (see chatmemory.py)."""
+    import chatmemory
+    return chatmemory.turns(m)
 
 
 def handle(m, who="gpt"):
@@ -403,13 +399,18 @@ def remove(mid):
 CONV = VAULT / "raw" / "conversations"
 
 
+def conv_name(day):
+    """The file one day's chat is filed in under raw/conversations."""
+    return f"{day}-chat-with-the-assistant-{hashlib.sha1(('assistant-chat-' + day).encode()).hexdigest()[:8]}.md"
+
+
 def archive(m):
     """Add a replied exchange to its day's conversation file in raw/conversations, in the format of imported chats, so
     the Sweeper reads your chat like any other conversation and the notes can find it. One file per day; the text is
     scrubbed like an import."""
     day = f"{m['id'][:4]}-{m['id'][4:6]}-{m['id'][6:8]}"
     stamp = f"{day} {m['id'][9:11]}:{m['id'][11:13]}:{m['id'][13:15]}"
-    name = f"{day}-chat-with-the-assistant-{hashlib.sha1(('assistant-chat-' + day).encode()).hexdigest()[:8]}.md"
+    name = conv_name(day)
     clean = lambda t: scrub(str(t))[0].replace("[[", "[ [")
     turn = lambda who, t: f"### {who} ({stamp})\n\n{clean(t)}\n"
     pages = [w["url"] for w in m.get("web") or [] if w.get("kind") == "page"]
@@ -451,6 +452,11 @@ def watch():
     while True:
         todo = [m for m in _all() if m["status"] == "queued"]
         if not todo:
+            try:   # idle: the chat memory is compressed here when it has grown past its size
+                import chatmemory
+                chatmemory.run(lambda: any(x["status"] == "queued" for x in _all()))
+            except Exception as e:
+                agent.log(f"chat memory: {type(e).__name__}: {str(e)[:120]}")
             time.sleep(10)
             continue
         m = todo[0]

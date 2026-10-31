@@ -193,6 +193,14 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses
   (for example one that is too big) is not repeated; that fails with the server's reason.
+- **Its memory of earlier chats:** with every message the Assistant sees your earlier chats: the newest word for word, older
+  ones as one short summary each. When that memory passes **Chat memory size that starts compression** (30,000 tokens by
+  default), the Assistant is asked, in its idle time, to summarize the oldest chats until only **Chats kept word for word**
+  (6) are left. If the memory is then not at least **Shrink the memory by** (25%) smaller than that size, the oldest
+  summaries are moved to `raw/chat-summaries/` in the vault, one note per day, each summary linked to its chat in
+  `raw/conversations`; the Assistant can still find them by search. Nothing stops a chat: the size only starts the
+  shrinking. The size is estimated from characters (**Characters per token**, 4) and a summary is at most **Summary length**
+  (100) words. If a summary cannot be written, an Ask card says why and offers **Try again**.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,

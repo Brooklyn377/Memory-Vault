@@ -56,7 +56,11 @@ REG += [
     ("assistant.tool_chars", "pa", "Characters per look-up result", "Each tool result is cut to this many characters before the Assistant reads it.", 6000, 1000, 40000, ""),
     ("assistant.search_results", "pa", "Search results per search", "Files listed for one search, best first.", 10, 1, 50, ""),
     ("assistant.web_calls", "pa", "Web look-ups per message", "Most web searches and pages the Assistant opens for one message, when web access is on (Settings, Web access). 0 turns the web off for it.", 4, 0, 20, ""),
-    ("assistant.history", "pa", "Earlier messages it sees", "How many of your earlier chat messages, with their replies, the Assistant sees with a new one, so you can ask follow-ups. 0 turns it off.", 6, 0, 30, ""),
+    ("assistant.history", "pa", "Chats kept word for word", "When the chat memory is compressed, this many of your newest chats stay word for word and every older one becomes a single short summary. 0 summarizes them all.", 6, 0, 30, ""),
+    ("assistant.memory_tokens", "pa", "Chat memory size that starts compression", "The Assistant sees your earlier chats with every new message: the newest word for word, older ones as summaries. When that passes this many tokens, the Assistant is asked to compress it in its idle time. It never stops a chat, it only starts the shrinking.", 30000, 1000, 1000000, ""),
+    ("assistant.memory_shrink", "pa", "Shrink the memory by (%)", "After compressing, if the memory is not at least this many percent smaller than the size above, the oldest summaries are moved to the vault (raw/chat-summaries) until it is. They are still found by search.", 25, 1, 90, ""),
+    ("assistant.summary_words", "pa", "Summary length (words)", "Most words in the summary the Assistant writes for one older chat (a question and its reply).", 100, 20, 1000, ""),
+    ("assistant.chars_per_token", "pa", "Characters per token (memory size estimate)", "The chat memory's size is estimated from its length in characters, divided by this. 4 suits English text; use a lower number for code or other languages to count more tokens.", 4, 1, 10, ""),
     ("sweep.facts_context", "qwen", "Earlier facts shown", "Shows the most recent facts already recorded from earlier in this chat, so the model can spot contradictions and avoid repeating. 0 turns it off.", 0, 0, 200, ""),
 ]
 BY = {r[0]: r for r in REG}
