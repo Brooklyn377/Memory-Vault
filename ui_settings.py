@@ -239,17 +239,6 @@ async function load(){const d=await api("/api/settings");
  $("#sp").replaceChildren(...Object.keys(NAMES).map(m=>card(m,d.settings[m],d.caps[m])))}
 function gb(n){return n>=1e9?(n/1e9).toFixed(1)+" GB":Math.round(n/1e6)+" MB"}
 let dlT=null,MODELS=[];
-function holdConfirm(title,text){return new Promise(res=>{
- const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
- const done=v=>{ov.remove();res(v)};
- const fill=h("div",{style:"position:absolute;left:0;top:0;bottom:0;width:0;background:#b91c1c"});
- const yes=h("button",{style:"position:relative;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none;margin-right:8px"},fill,h("span",{style:"position:relative"},"Hold to delete"));
- let t=null;
- const stop=()=>{clearTimeout(t);t=null;fill.style.transition="width .15s";fill.style.width="0"};
- yes.onpointerdown=e=>{e.preventDefault();fill.style.transition="width 1.5s cubic-bezier(.05,.8,.3,1)";fill.style.width="100%";t=setTimeout(()=>{if(navigator.vibrate)navigator.vibrate(40);done(true)},1500)};
- yes.onpointerup=stop;yes.onpointerleave=stop;yes.onpointercancel=stop;yes.oncontextmenu=e=>e.preventDefault();
- ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},title),h("div",{class:"mut",style:"margin-bottom:12px"},text),yes,h("button",{class:"pri",onclick:()=>done(false)},"No")));
- document.body.append(ov)})}
 async function dlDel(m){
  const sp=m.name.match(/^(.*)-\d{5}-of-(\d{5})\.gguf$/);
  const grp=sp?MODELS.filter(x=>x.name.startsWith(sp[1]+"-")&&x.name.endsWith("-of-"+sp[2]+".gguf")):[m];

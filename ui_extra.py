@@ -166,6 +166,25 @@ def register(app, authed):
                 "broken": sorted(v.unresolved[rel]), "files": [brief(v, f) for f in sorted(v.file_out.get(rel, ()))],
                 "body": render_body(v, v.body[rel]), "truncated": len(v.body[rel]) > BODY_MAX}
 
+    @router.post("/api/graph/delete")
+    async def delete_entry(request: Request):
+        need(request)
+        d = await request.json()
+        path, v = str(d.get("path", "")), vault()
+        if path not in v.body and path not in v.files:
+            raise HTTPException(status_code=404, detail="no such note or file")
+        root = Path(agent.VAULT).resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            raise HTTPException(status_code=404, detail="no such note or file")
+        target.unlink()
+        folder = target.parent
+        if path.startswith("raw/files/") and folder != root / "raw" / "files" and not any(folder.iterdir()):
+            folder.rmdir()   # the last saved version of a file: its empty folder goes too
+        agent.log(f"deleted {path} from the List page")
+        _cache["v"] = None
+        return {"ok": True}
+
     @router.get("/api/graph/hood")
     def hood_api(request: Request, path: str, hops: int = 1):
         need(request)
@@ -285,6 +304,18 @@ async function api(p,o){const r=await fetch(p,o);if(r.status===401){location="/l
 async function badge(){try{const c=(await api("/api/questions/count")).open,b=$("#qn");b.hidden=!c;b.textContent=c}catch(e){}
  try{const c=(await api("/api/todo/count")).open,b=$("#tn");b.hidden=!c;b.textContent=c}catch(e){}}
 const badgeTodo=badge;
+// Push and hold to confirm: the fill is fast at first and slow at the end, and the phone buzzes when it takes effect.
+function holdConfirm(title,text){return new Promise(res=>{
+ const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
+ const done=v=>{ov.remove();res(v)};
+ const fill=h("div",{style:"position:absolute;left:0;top:0;bottom:0;width:0;background:#b91c1c"});
+ const yes=h("button",{style:"position:relative;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none;margin-right:8px"},fill,h("span",{style:"position:relative"},"Hold to delete"));
+ let t=null;
+ const stop=()=>{clearTimeout(t);t=null;fill.style.transition="width .15s";fill.style.width="0"};
+ yes.onpointerdown=e=>{e.preventDefault();fill.style.transition="width 1.5s cubic-bezier(.05,.8,.3,1)";fill.style.width="100%";t=setTimeout(()=>{if(navigator.vibrate)navigator.vibrate(40);done(true)},1500)};
+ yes.onpointerup=stop;yes.onpointerleave=stop;yes.onpointercancel=stop;yes.oncontextmenu=e=>e.preventDefault();
+ ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},title),h("div",{class:"mut",style:"margin-bottom:12px"},text),yes,h("button",{class:"pri",onclick:()=>done(false)},"No")));
+ document.body.append(ov)})}
 (function(){const act="__ACTIVE__";document.querySelectorAll("nav a").forEach(a=>{if(a.getAttribute("href")==="/"+act)a.classList.add("on")})})();
 badge();
 </script>
@@ -294,6 +325,7 @@ badge();
 PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER).replace("__THEME_JS__", ui_nav.THEME_JS).replace("__THEME_CSS__", ui_nav.THEME_CSS)
 
 GRAPH_HTML = r"""
+<style>.gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
 <input id="q" type="search" placeholder="Search notes, names, aliases..." autocomplete="off">
 <div id="stats" class="mut" style="margin:6px 2px"></div>
 <div id="list"></div>
@@ -334,12 +366,18 @@ async function openNote(path){cur=path;const[n,g]=await Promise.all([api("/api/g
  $("#view").replaceChildren(h("div",{class:"card"},
   h("h2",{},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type)),h("div",{class:"mut"},n.path),
   n.aliases.length?h("div",{class:"mut"},"aliases: "+n.aliases.join(", ")):null,
-  svg(g),legend,h("div",{class:"mut"},g.nodes.length+" notes within "+hops+" hop"+(hops>1?"s":"")+(g.truncated?" (showing the closest "+g.nodes.length+")":"")),hopBtn),
+  svg(g),legend,h("div",{class:"mut"},g.nodes.length+" notes within "+hops+" hop"+(hops>1?"s":"")+(g.truncated?" (showing the closest "+g.nodes.length+")":"")),hopBtn,h("button",{class:"gdel",onclick:()=>deleteEntry(n)},"Delete")),
   h("div",{class:"card"},n.files&&n.files.length?h("div",{},h("h3",{},"Files ("+n.files.length+")"),...n.files.map(chip)):null,h("h3",{},"Links out ("+n.out.length+")"),...(n.out.length?n.out.map(chip):[h("span",{class:"mut"},"none")]),
    h("h3",{},"Backlinks ("+n.back.length+")"),...(n.back.length?n.back.map(chip):[h("span",{class:"mut"},"none")]),
    n.broken.length?h("div",{class:"mut",style:"color:var(--warn)"},"Broken links: "+n.broken.join(", ")):null),
   h("div",{class:"card"},h("div",{class:"mut"},Object.entries(n.meta).map(([k,v])=>k+": "+v).join("  ·  ")),h("hr"),body,n.truncated?h("div",{class:"mut"},"(shortened)"):null));
  window.scrollTo({top:$("#view").offsetTop-60,behavior:"smooth"})}
+function refreshList(){const v=$("#q").value.trim();return v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Most connected")}
+async function deleteEntry(n){
+ if(!await holdConfirm("Delete "+n.title+"?",n.path+" will be deleted from the vault and cannot be undone. Anything that links to it will have a broken link."))return;
+ try{await api("/api/graph/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:n.path})});
+  history.replaceState(null,"",location.pathname);$("#view").replaceChildren(h("div",{class:"card mut"},"Deleted "+n.path));await refreshList()}
+ catch(e){alert(e.message)}}
 showList("/api/graph/hubs","Most connected");
 if(location.hash.length>1)openNote(decodeURIComponent(location.hash.slice(1)));
 </script>
