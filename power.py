@@ -192,7 +192,7 @@ HTML = r"""
 .mh b{font-size:18px}
 .mc{font-size:12px;font-weight:600;padding:2px 10px;border-radius:10px;background:var(--line);color:var(--mut)}
 .mc.on{background:var(--acc);color:#fff}
-.pw{position:relative;overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none}
+.pw{position:relative;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
 .mh .pw{margin-left:auto}
 .sw{position:relative;display:inline-block;width:44px;height:24px;flex:none}
 .sw input{opacity:0;width:0;height:0;position:absolute}
@@ -229,14 +229,28 @@ function powerButton(key,u){
   if(btn.disabled||!u.act)return;
   e.preventDefault();u.msg.textContent="";
   fill.style.background=u.act==="load"?"#15803d":"#b91c1c";
-  fill.style.transition="width 1.5s linear";fill.style.width="100%";
+  fill.style.transition="width 1.5s cubic-bezier(.05,.8,.3,1)";fill.style.width="100%";   // fast at first, slow at the end
   t=setTimeout(async function(){
+   if(navigator.vibrate)navigator.vibrate(40);   // the buzz comes when it takes effect
    stop();
    const r=await post({model:key,action:u.act});
    u.msg.textContent=r.ok?(r.note||""):(r.detail||"Could not do that");
    refresh()},1500)};
  btn.onpointerup=stop;btn.onpointerleave=stop;btn.onpointercancel=stop;btn.oncontextmenu=function(e){e.preventDefault()};
  u.btn=btn;u.txt=txt;return btn}
+// The Assistant's chat memory controls, under its drop-downs: the manual compression and the server token count toggle.
+function memoryBlock(){
+ const KEY="assistant.show_server_tokens",msg=h("div",{class:"mut"}),box=h("input",{type:"checkbox"});
+ api("/api/tuning").then(function(d){const r=d.items.find(function(x){return x.key===KEY});if(r)box.checked=Number(r.saved==null?r.default:r.saved)===1}).catch(function(){});
+ box.onchange=async function(){msg.textContent="";box.disabled=true;
+  try{await api("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:{[KEY]:box.checked?1:0},confirmed:true})});msg.textContent="Saved."}
+  catch(e){msg.textContent=e.message;box.checked=!box.checked}box.disabled=false};
+ const b=h("button",{style:"padding:4px 10px;font-size:13px"},"Compress chat memory now");
+ b.onclick=async function(){
+  if(!await window.warnPop("Compress the chat memory now?",["The Assistant summarizes your older chats in its idle time, the same way as when the memory passes its size. If the memory is still too big afterwards, the oldest summaries are moved to the vault.","Your chats stay in the chat history and in raw/conversations."],"Compress now","Cancel"))return;
+  b.disabled=true;msg.textContent="";
+  try{await api("/api/chat/compress",{method:"POST"});msg.textContent="Queued: it runs in the Assistant's idle time."}catch(e){msg.textContent=e.message}b.disabled=false};
+ return h("div",{style:"margin-top:10px"},h("label",{class:"mut",style:"display:flex;gap:8px;align-items:center"},box,"Show the server's token count above the chat"),h("div",{style:"margin-top:6px"},b),msg)}
 // The slider: on = the model takes part in the turns; off = its server is stopped and it takes no turns.
 function enableSlider(key,u){
  const box=h("input",{type:"checkbox",title:"On: takes part in the turns. Off: stopped, takes no turns."});
@@ -277,6 +291,7 @@ function merge(){
   card.append(u.secSrv,u.secGen);
   if(key==="cur")card.append(u.secCur);
   card.append(u.secPr);
+  if(key==="pa")card.append(memoryBlock());
   card.append(h("button",{class:"pri",style:"margin-top:10px",onclick:function(){window.applyAll()}},"Apply all models"));
   mm.append(card)});
  refresh();setInterval(function(){if(!document.hidden)refresh()},3000)}
