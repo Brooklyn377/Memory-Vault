@@ -228,7 +228,13 @@ def _ask_assistant_once(system, messages, label="chat"):
         body["chat_template_kwargs"] = {"enable_thinking": bool(s.get("thinking", True))}
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
-    r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label)
+    try:
+        r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label)
+    except RuntimeError as e:   # the server refused a request bigger than its context window: say which limit and what to change
+        big = re.search(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", str(e))
+        if not big:
+            raise
+        raise HitLimit(_context_text(int(big.group(1)), int(big.group(2)))) from None
     _note_usage(body, r)
     if r.get("finish_reason") == "length":   # it stopped at a limit: not something to hand back to the model
         raise HitLimit(_limit_text(r.get("tokens") or 0, s["max_tokens"]["chat"], bool((r.get("content") or "").strip())))
@@ -272,8 +278,17 @@ def _limit_text(tokens, cap, has_text):
         return (f"the Assistant hit its limit of {cap:,} tokens for a chat reply ({what}). Raise \"chat max tokens\" under "
                 "the Assistant on the Settings page.")
     return (f"the Assistant hit the context window of its server after {tokens:,} tokens ({what}): the question, notes, earlier "
-            "messages and its reply did not fit together. Raise the Context of the Assistant's server on the Settings page, or "
-            "lower \"Earlier messages it sees\" or \"Characters per look-up result\" under the Assistant.")
+            "chats and its reply did not fit together. " + _context_fix())
+
+
+def _context_fix():
+    return ("Raise the Context of the Assistant's server on the Settings page, or send less: lower \"Chats kept word for word\", "
+            "\"Chat memory size that starts compression\" or \"Characters per look-up result\" under the Assistant.")
+
+
+def _context_text(request, window):
+    return (f"what was sent to the Assistant ({request:,} tokens: the question, notes, earlier chats and look-up results) is bigger "
+            f"than the context window of its server ({window:,} tokens), so the server refused it. " + _context_fix())
 
 
 def cited(reply):
