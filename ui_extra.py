@@ -331,7 +331,7 @@ GRAPH_HTML = r"""
 <div id="list"></div>
 <div id="view"></div>
 <script>
-const COL={file:"#f97316","file-note":"#fb923c",entity:"#3b82f6",summary:"#10b981",timeline:"#f59e0b",conversation:"#9ca3af",raw:"#9ca3af","claude-memory":"#a855f7",note:"#6b7280"};
+const COL={file:"#f97316","file-note":"#fb923c","updated-file":"#facc15",entity:"#3b82f6",summary:"#10b981",timeline:"#f59e0b",conversation:"#9ca3af",raw:"#9ca3af","claude-memory":"#a855f7",note:"#6b7280"};
 const col=t=>COL[t]||COL.note;
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
@@ -362,7 +362,7 @@ function svg(d){const W=360,H=340,E=layout(d,W,H),N=d.nodes,S="http://www.w3.org
 async function openNote(path){cur=path;const[n,g]=await Promise.all([api("/api/graph/note?path="+encodeURIComponent(path)),api("/api/graph/hood?path="+encodeURIComponent(path)+"&hops="+hops)]);
  const body=h("div",{class:"body"});body.innerHTML=n.body;body.querySelectorAll("a.wl").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();openNote(a.dataset.p)}));
  const hopBtn=h("button",{onclick:()=>{hops=hops===1?2:1;openNote(cur)}},hops===1?"Show 2 hops":"Show 1 hop");
- const legend=h("div",{class:"legend"},...Object.entries({entity:1,summary:1,timeline:1,raw:1,file:1,"file-note":1,"claude-memory":1}).map(([k])=>h("span",{},h("i",{style:"background:"+col(k)}),k)));
+ const legend=h("div",{class:"legend"},...Object.entries({entity:1,summary:1,timeline:1,raw:1,file:1,"file-note":1,"updated-file":1,"claude-memory":1}).map(([k])=>h("span",{},h("i",{style:"background:"+col(k)}),k)));
  $("#view").replaceChildren(h("div",{class:"card"},
   h("h2",{},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type)),h("div",{class:"mut"},n.path),
   n.aliases.length?h("div",{class:"mut"},"aliases: "+n.aliases.join(", ")):null,

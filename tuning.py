@@ -51,6 +51,7 @@ REG += [
 REG += [
     ("sweep.recap_chars", "qwen", "Recap length kept (characters)", "The code cuts each chunk's recap to this many characters. The Sweeper is told the matching word count with each chunk (about 7.5 characters per word, so 900 is 120 words). Raise the Reviewer's 'Recap length the gate sees' to at least this.", 900, 300, 12000, ""),
     ("sweep.overlap_chars", "qwen", "End of the previous chunk shown (characters)", "Gives the model the last part of the previous chunk, word for word, as background. 0 turns it off. Quotes must still come from the new chunk.", 0, 0, 20000, ""),
+    ("files.lookup_seconds", "qwen", "File look-up time per chat (seconds)", "When a chat says a file was updated, the Sweeper looks for it in your Git servers and checks the commits made since. It stops looking at that chat after this many seconds and goes on to the next.", 60, 5, 3600, ""),
     ("import.max_upload_gb", "qwen", "Largest file you can upload (GB)", "The biggest chat export or file the Upload page accepts. A bigger one is refused with this limit in the message and logged.", 10, 1, 1000, ""),
     ("import.max_unzipped_gb", "qwen", "Largest export when unpacked (GB)", "An export zip whose conversations.json is bigger than this when unpacked is not imported; it is moved to the failed folder and the reason is logged. Raise it for a bigger export.", 20, 1, 1000, ""),
     ("assistant.tool_calls", "pa", "Look-ups per message", "Most tool calls (search, open a file, list tasks and so on) the Assistant makes before it must answer.", 8, 1, 30, ""),

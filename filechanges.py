@@ -236,10 +236,10 @@ def watch():
     seen = None
     while True:
         sig = _sig()
-        if sig == seen or not ORIG.is_dir() or not agent.model_ready() or not reviewer.ready():
+        if sig == seen or not agent.model_ready() or not reviewer.ready():
             time.sleep(60)
             continue
-        for n in sorted(p.name for p in ORIG.iterdir()):
+        for n in sorted(p.name for p in ORIG.iterdir()) if ORIG.is_dir() else []:
             while not _idle():
                 time.sleep(30)
             try:
@@ -248,6 +248,11 @@ def watch():
                 r = park(n, [], f"error {type(e).__name__}: {str(e)[:150]}")
             if r not in ("nothing new to read", "no saved original"):
                 agent.log(f"file changes: {n}: {r}")
+        try:   # then the files the chats say were updated, looked up in the Git servers
+            import filementions
+            filementions.run()
+        except Exception as e:
+            agent.log(f"file look-up: {type(e).__name__}: {str(e)[:150]}")
         seen = sig
 
 
