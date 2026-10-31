@@ -30,6 +30,16 @@ def _flag(**kv):
     return d
 
 
+def request():
+    """Compress now, as if the memory had passed its size: the chat watcher starts it in its next idle time."""
+    _flag(requested=True, failed_at=None)
+
+
+def status():
+    st = _flag()
+    return {"tokens": size(), "limit": _g("assistant.memory_tokens"), "running": bool(st.get("running")), "requested": bool(st.get("requested"))}
+
+
 def clear_failure():
     _flag(failed_at=None)
 
@@ -121,10 +131,11 @@ def run(busy):
     old, sums = _work()
     if not st.get("running"):
         now = size()
-        if now <= _g("assistant.memory_tokens") or not (old or sums) or st.get("failed_at") == now:
+        asked = bool(st.get("requested"))
+        if not asked and (now <= _g("assistant.memory_tokens") or not (old or sums) or st.get("failed_at") == now):
             return
-        _flag(running=True)
-        agent.log(f"chat memory: {now:,} tokens, over {_g('assistant.memory_tokens'):,}; compressing in idle time")
+        _flag(running=True, requested=False)
+        agent.log(f"chat memory: {now:,} tokens; compressing in idle time" + (" (you asked for it)" if asked else f", over {_g('assistant.memory_tokens'):,}"))
     for x in old:
         if busy():
             return

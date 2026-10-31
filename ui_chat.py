@@ -229,9 +229,37 @@ def _ask_assistant_once(system, messages, label="chat"):
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
     r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label)
+    _note_usage(body, r)
     if r.get("finish_reason") == "length":   # it stopped at a limit: not something to hand back to the model
         raise HitLimit(_limit_text(r.get("tokens") or 0, s["max_tokens"]["chat"], bool((r.get("content") or "").strip())))
     return (r.get("content") or "").strip()
+
+
+USAGE = STATE / "chat-usage.json"
+
+
+def _note_usage(body, r):
+    """Keep what the server counted for the last call, with how many characters were sent, to compare with the estimate."""
+    n = (r.get("usage") or {}).get("prompt_tokens")
+    if n:
+        chars = sum(len(str(x.get("content") or "")) for x in body["messages"])
+        try:
+            USAGE.write_text(json.dumps({"prompt_tokens": n, "chars": chars, "at": time.time()}))
+        except OSError:
+            pass
+
+
+def usage_info():
+    """The server's own count for the last call against this page's estimate, or None when switched off or no call yet."""
+    tuning = __import__("tuning")
+    if not tuning.get("assistant.show_server_tokens"):
+        return None
+    try:
+        u = json.loads(USAGE.read_text())
+    except (OSError, ValueError):
+        return {"none": True}
+    return {"tokens": u["prompt_tokens"], "estimate": int(u["chars"] / max(1, tuning.get("assistant.chars_per_token"))),
+            "per_token": round(u["chars"] / u["prompt_tokens"], 2), "context": int(settings.get("pa").get("context") or 0)}
 
 
 class HitLimit(RuntimeError):
@@ -510,7 +538,15 @@ def register(app, authed):
     @router.get("/api/chat")
     def chat_list(request: Request):
         need(request)
-        return {"messages": _all()[-60:]}
+        import chatmemory
+        return {"messages": _all()[-60:], "memory": chatmemory.status(), "server": usage_info()}
+
+    @router.post("/api/chat/compress")
+    async def chat_compress(request: Request):
+        need(request)
+        import chatmemory
+        chatmemory.request()
+        return {"ok": True}
 
     @router.post("/api/chat/send")
     async def chat_send(request: Request):
@@ -568,10 +604,14 @@ CHAT_HTML = r"""
 .st .del{font:inherit;color:#f87171;background:none;border:0;padding:0 0 0 8px;cursor:pointer}
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+#cuse{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
+.cwrap{position:relative}.cwrap textarea{padding-right:56px;box-sizing:border-box;width:100%}
+#cs{position:absolute;right:10px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center}
 </style>
 <div id="thread"></div>
-<div id="cbox"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
-<button class="pri" id="cs">Send</button><span id="ce" class="mut"></span></div>
+<div id="cbox"><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"></span></div>
+<div class="cwrap"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
+<button class="pri" id="cs" title="Send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div><span id="ce" class="mut"></span></div>
 <script>
 const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed",skipped:"Skipped"};
 let seen=-1;
@@ -606,6 +646,9 @@ function bubble(m){
  return out}
 async function load(){try{const d=await api("/api/chat");
  $("#thread").replaceChildren(...(d.messages.length?d.messages.flatMap(bubble):[h("div",{class:"card mut"},"Ask a question about your notes, or start with /fix to correct a note.")]));
+ const mm=d.memory,sv=d.server;
+ $("#cuseA").textContent=mm?"Memory "+mm.tokens.toLocaleString()+" / "+mm.limit.toLocaleString()+" tokens (estimate)"+(mm.running||mm.requested?" · compressing":""):"";
+ $("#cuseB").textContent=!sv?"":sv.none?"Server count: no call yet":"Server: "+sv.tokens.toLocaleString()+(sv.context>0?" of "+sv.context.toLocaleString():"")+" tokens in the last call · estimate "+sv.estimate.toLocaleString()+" · "+sv.per_token+" characters per token";
  if(d.messages.length!==seen){seen=d.messages.length;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
 async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;

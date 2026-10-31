@@ -200,7 +200,11 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   summaries are moved to `raw/chat-summaries/` in the vault, one note per day, each summary linked to its chat in
   `raw/conversations`; the Assistant can still find them by search. Nothing stops a chat: the size only starts the
   shrinking. The size is estimated from characters (**Characters per token**, 4) and a summary is at most **Summary length**
-  (100) words. If a summary cannot be written, an Ask card says why and offers **Try again**.
+  (100) words. If a summary cannot be written, an Ask card says why and offers **Try again**. Above the chat box, on the right,
+  the Chat page shows the memory against that size. With **Show the server's token count above the chat** on, the left shows
+  how many tokens the Assistant's server counted in its last call, next to the estimate and the characters per token the
+  server's count implies, to tune **Characters per token**. **Compress the chat memory now**, on the Assistant's card under
+  Settings, runs a compression in the Assistant's idle time exactly as if the size had been passed.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,

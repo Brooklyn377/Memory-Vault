@@ -234,7 +234,13 @@ function card(m,s,cp){
   fld("Temperature",t,false),...rows,
   fld("Thinking",th,!cp.thinking),
   fld("Reasoning effort",re,!cp.reasoning_effort),fld("Thinking budget (tokens, -1 unlimited)",tb,!cp.thinking_budget),fld("Force valid JSON (experimental)",jm,false),h("details",{},h("summary",{class:"mut"},"Sampling (blank uses the server default)"),...sr),
+  m==="pa"?compressRow():null,
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),msg)}
+function compressRow(){const note=h("div",{class:"mut"});
+ const b=h("button",{onclick:async()=>{b.disabled=true;note.textContent="";
+  try{await api("/api/chat/compress",{method:"POST"});note.textContent="Queued. It runs in the Assistant's idle time, the same way as when the memory passes its size."}
+  catch(e){note.textContent=e.message}b.disabled=false}},"Compress the chat memory now");
+ return h("div",{style:"margin:8px 0"},b,note)}
 async function load(){const d=await api("/api/settings");
  $("#sp").replaceChildren(...Object.keys(NAMES).map(m=>card(m,d.settings[m],d.caps[m])))}
 function gb(n){return n>=1e9?(n/1e9).toFixed(1)+" GB":Math.round(n/1e6)+" MB"}
