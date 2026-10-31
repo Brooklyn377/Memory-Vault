@@ -332,9 +332,9 @@ GRAPH_HTML = r"""
 .gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
 <input id="q" type="search" placeholder="Search notes, names, aliases..." autocomplete="off">
 <div id="stats" class="mut" style="margin:6px 2px"></div>
+<div id="view"></div>
 <div id="tags"></div>
 <div id="list"></div>
-<div id="view"></div>
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
 const col=t=>COL[t]||COL.note;
