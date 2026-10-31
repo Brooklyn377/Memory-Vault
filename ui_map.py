@@ -62,13 +62,16 @@ function initPos(){const R=Math.sqrt(N.length)*22,done=new Array(N.length).fill(
  for(let s=0;s<N.length;s++){if(done[s])continue;const a=seed++*2.399963,r=R*Math.sqrt(Math.random());place(s,r*Math.cos(a),r*Math.sin(a));
   while(q.length){const c=q.shift();for(const j of adj[c])if(!done[j])place(j,N[c].x+(Math.random()-.5)*40,N[c].y+(Math.random()-.5)*40)}}}
 function step(){
- const CELL=60,g=new Map();
+ const CELL=120,g=new Map();   // dots push each other away up to twice this far
  for(let i=0;i<N.length;i++){const n=N[i],key=Math.floor(n.x/CELL)+","+Math.floor(n.y/CELL);let a=g.get(key);if(!a)g.set(key,a=[]);a.push(i)}
  for(let i=0;i<N.length;i++){const n=N[i],cx=Math.floor(n.x/CELL),cy=Math.floor(n.y/CELL);
   for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++){const a=g.get((cx+ox)+","+(cy+oy));if(!a)continue;
    for(const j of a){if(j<=i)continue;const m=N[j];let dx=n.x-m.x,dy=n.y-m.y,d2=dx*dx+dy*dy;if(d2>CELL*CELL*4)continue;if(d2<.01){dx=Math.random()-.5;dy=Math.random()-.5;d2=.5}
-    const f=(120/d2)*alpha,d=Math.sqrt(d2);n.vx+=f*dx/d*6;n.vy+=f*dy/d*6;m.vx-=f*dx/d*6;m.vy-=f*dy/d*6}}}
- for(const[a,b]of E){const p=N[a],q=N[b];let dx=q.x-p.x,dy=q.y-p.y,d=Math.sqrt(dx*dx+dy*dy)+.01,f=(d-18)*.05*alpha;
+    const q=(1+Math.sqrt(n.d))*(1+Math.sqrt(m.d)),f=(120*q/d2)*alpha,d=Math.sqrt(d2);   // a note with many links pushes harder
+    n.vx+=f*dx/d*6;n.vy+=f*dy/d*6;m.vx-=f*dx/d*6;m.vy-=f*dy/d*6}}}
+ for(const[a,b]of E){const p=N[a],q=N[b];let dx=q.x-p.x,dy=q.y-p.y,d=Math.sqrt(dx*dx+dy*dy)+.01;
+  // the busier of the two notes sets how long the link is, the less busy one how hard it pulls
+  const f=(d-(18+6*Math.sqrt(Math.max(p.d,q.d))))*.05/Math.sqrt(Math.max(1,Math.min(p.d,q.d)))*alpha;
   p.vx+=f*dx/d;p.vy+=f*dy/d;q.vx-=f*dx/d;q.vy-=f*dy/d}
  for(const n of N){n.vx-=n.x*.0006*alpha;n.vy-=n.y*.0006*alpha;const sp=Math.hypot(n.vx,n.vy);if(sp>14){n.vx*=14/sp;n.vy*=14/sp}n.x+=n.vx;n.y+=n.vy;n.vx*=.6;n.vy*=.6}
 }
