@@ -32,6 +32,9 @@ class Vault:
         self.out = {}
         self.back = {}
         self.unresolved = {}
+        self.files = set()       # the saved original files under raw/files: not notes, but links to them are followed
+        self.file_out = {}       # note -> the files it links to
+        self.file_back = {}      # file -> the notes that link to it
         self._load()
 
     def _load(self):
@@ -62,6 +65,9 @@ class Vault:
                 self.by_name.setdefault(n, [])
                 if rel not in self.by_name[n]:
                     self.by_name[n].append(rel)
+        raw_files = self.root / "raw" / "files"
+        if raw_files.is_dir():
+            self.files = {p.relative_to(self.root).as_posix() for p in raw_files.rglob("*") if p.is_file()}
         for rel in self.body:
             self.out[rel] = set()
             self.back.setdefault(rel, set())
@@ -71,7 +77,10 @@ class Vault:
             targets = LINK_RE.findall(fm_raw[rel] + "\n" + text)
             for t in targets:
                 dest = self.resolve(t)
-                if dest is None:
+                if dest is None and (fdest := self.resolve_file(t)):
+                    self.file_out.setdefault(rel, set()).add(fdest)
+                    self.file_back.setdefault(fdest, set()).add(rel)
+                elif dest is None:
                     self.unresolved[rel].add(t.strip())
                 elif dest != rel:
                     self.out[rel].add(dest)
@@ -89,6 +98,14 @@ class Vault:
                 found = self.by_name.get(k, [])
             if found:
                 return sorted(found, key=lambda r: (len(r), r))[0]
+        return None
+
+    def resolve_file(self, target):
+        """A link to a saved original, written as its path under raw/files (or the end of it)."""
+        key = target.strip().lower().lstrip("/")
+        for f in self.files:
+            if f.lower() == key or f.lower().endswith("/" + key):
+                return f
         return None
 
     def find(self, name):

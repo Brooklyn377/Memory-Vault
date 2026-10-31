@@ -1,7 +1,7 @@
 """Save files Claude created, exactly as written, plus one note per file.
   raw/files/<name>/<stamp>-<chat>.<ext>   original versions: written once, read-only, never scrubbed
   files/derived/<name>/                   copy + changes.json, made by filechanges.py
-  files/<name>.md                         note, type: file, linked to the chats
+  files/<name>.md                         a note ABOUT the file, type: file-note, linking to the saved originals and the chats
 Never saves .md files. Dry run unless --write."""
 import glob
 import hashlib
@@ -102,10 +102,12 @@ def write_note(name, raws=None):
     applied, unapplied = ch.get("applied", []), ch.get("unapplied", [])
     text = vers[-1].read_text(encoding="utf-8", errors="replace")
     first = next((l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#!")), "")
-    body = (f"---\ntype: file\nconfidence: high\nfilename: {json.dumps(name)}\nversions: {len(vers)}\n"
-            f"updated: {datetime.now():%Y-%m-%d}\n---\n# {name}\n\n"
-            f"Original (read-only): `raw/files/{name}/{vers[-1].name}` ({len(text)} characters, "
-            f"latest of {len(vers)} version(s)).\nStarts with: `{first[:100]}`\n")
+    body = (f"---\ntype: file-note\ntitle: {json.dumps('Notes about ' + name)}\nconfidence: high\nfilename: {json.dumps(name)}\n"
+            f"versions: {len(vers)}\nupdated: {datetime.now():%Y-%m-%d}\n---\n# Notes about {name}\n\n"
+            f"The file itself (read-only, {len(text)} characters, latest of {len(vers)} version(s)): "
+            f"[[raw/files/{name}/{vers[-1].name}]]\nStarts with: `{first[:100]}`\n")
+    if len(vers) > 1:
+        body += "\nEarlier versions: " + ", ".join(f"[[raw/files/{name}/{p.name}]]" for p in vers[:-1]) + "\n"
     if (DER / name / name).exists():
         body += f"Latest derived copy: `files/derived/{name}/{name}` ({len(applied)} change(s) applied).\n"
     if applied:
@@ -155,8 +157,17 @@ def main(write):
     print("done" if write else "dry run, nothing written")
 
 
+def migrate():
+    """Notes written before files were told apart from notes about them were labelled type: file; relabel them."""
+    for d in sorted(ORIG.iterdir()) if ORIG.is_dir() else []:
+        note = FILES / f"{d.name}.md"
+        if d.is_dir() and note.exists() and "\ntype: file\n" in note.read_text(encoding="utf-8", errors="replace")[:300]:
+            write_note(d.name)
+
+
 def auto():
     """Run main(write=True) only when the set of export zips has changed since last time."""
+    migrate()
     sig = sorted(f"{z}:{os.path.getsize(z)}" for z in glob.glob(str(agent.STATE / "*" / "*.zip")))
     mark = agent.STATE / "filestore_seen.json"
     try:

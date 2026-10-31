@@ -4,6 +4,7 @@ import html
 import re
 import time
 from collections import deque
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -25,16 +26,39 @@ def vault():
     return _cache["v"]
 
 
+def is_file(v, rel):
+    return rel in v.files
+
+
+def file_chat(v, rel):
+    """The chat a saved original came from: its version name ends with the first 8 characters of the chat's id."""
+    short = Path(rel).stem.rsplit("-", 1)[-1]
+    return next((r for r in sorted(v.body) if r.startswith("raw/conversations/") and r[:-3].endswith(short)), None) if short else None
+
+
+def file_title(rel):
+    parts = rel.split("/")   # raw/files/<name>/<stamp>-<chat>.<ext>
+    stamp = Path(rel).name[:8]
+    day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if stamp.isdigit() else ""
+    return f"{parts[2]} ({day})" if len(parts) > 3 and day else Path(rel).name
+
+
 def ntype(v, rel):
+    if is_file(v, rel):
+        return "file"
     t = v.meta[rel].get("type")
     return str(t) if t else ("raw" if rel.startswith("raw/") else "note")
 
 
 def degree(v, rel):
-    return len(v.out[rel]) + len(v.back[rel])
+    if is_file(v, rel):
+        return len(v.file_back.get(rel, ())) + (1 if file_chat(v, rel) else 0)
+    return len(v.out[rel]) + len(v.back[rel]) + len(v.file_out.get(rel, ()))
 
 
 def brief(v, rel):
+    if is_file(v, rel):
+        return {"path": rel, "title": file_title(rel), "type": "file", "deg": degree(v, rel)}
     return {"path": rel, "title": v.title(rel), "type": ntype(v, rel), "deg": degree(v, rel)}
 
 
@@ -45,11 +69,26 @@ def render_body(v, text):
     def sub(m):
         target = html.unescape(m.group(1))
         label = m.group(2) or target
-        dest = v.resolve(target)
+        dest = v.resolve(target) or v.resolve_file(target)
         if dest:
             return f'<a href="#" class="wl" data-p="{html.escape(dest, quote=True)}">{label}</a>'
         return f'<span class="bl">{label}</span>'
     return WL.sub(sub, esc)
+
+
+def _around(v, rel):
+    """Everything one step from a note or a saved file, for the little map."""
+    if is_file(v, rel):
+        chat = file_chat(v, rel)
+        return set(v.file_back.get(rel, ())) | ({chat} if chat else set())
+    return v.out[rel] | v.back[rel] | v.file_out.get(rel, set())
+
+
+def _links_to(v, rel):
+    if is_file(v, rel):
+        chat = file_chat(v, rel)
+        return {chat} if chat else set()
+    return v.out[rel] | v.file_out.get(rel, set())
 
 
 def hood(v, rel, hops):
@@ -58,14 +97,14 @@ def hood(v, rel, hops):
         cur = queue.popleft()
         if dist[cur] >= hops:
             continue
-        for nxt in sorted(v.out[cur] | v.back[cur]):
+        for nxt in sorted(_around(v, cur)):
             if nxt not in dist:
                 dist[nxt] = dist[cur] + 1
                 queue.append(nxt)
     keep = sorted(dist, key=lambda r: (dist[r], -degree(v, r), r))[:HOOD_MAX]
     ks = set(keep)
     nodes = [dict(brief(v, r), dist=dist[r]) for r in keep]
-    edges = [{"s": a, "t": b} for a in keep for b in v.out[a] if b in ks]
+    edges = [{"s": a, "t": b} for a in keep for b in _links_to(v, a) if b in ks]
     return {"center": rel, "nodes": nodes, "edges": edges, "truncated": len(dist) > len(keep)}
 
 
@@ -77,7 +116,7 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
 
     def note_or_404(v, path):
-        if path not in v.body:
+        if path not in v.body and path not in v.files:
             raise HTTPException(status_code=404, detail="no such note")
         return path
 
@@ -102,6 +141,9 @@ def register(app, authed):
             if any(q in n for n in names):
                 exact = any(n == q or n.rsplit("/", 1)[-1][:-3] == q for n in names)
                 hits.append((not exact, r.startswith("raw/"), -degree(v, r), r))
+        for f in v.files:   # the saved originals, by their name
+            if q in f.lower():
+                hits.append((q != Path(f).name.lower(), True, -degree(v, f), f))
         return {"notes": [brief(v, h[3]) for h in sorted(hits)[:30]]}
 
     @router.get("/api/graph/note")
@@ -109,11 +151,19 @@ def register(app, authed):
         need(request)
         v = vault()
         rel = note_or_404(v, path)
+        if is_file(v, rel):   # a saved original: its exact text, nothing added
+            text = (agent.VAULT / rel).read_text(encoding="utf-8", errors="replace")
+            chat = file_chat(v, rel)
+            meta = {"type": "file", "filename": rel.split("/")[2], "saved": file_title(rel).split("(")[-1].rstrip(")"),
+                    "size": f"{len(text):,} characters", "read-only": "yes"}
+            return {**brief(v, rel), "meta": meta, "aliases": [], "out": [brief(v, chat)] if chat else [],
+                    "back": [brief(v, r) for r in sorted(v.file_back.get(rel, ()))], "broken": [], "files": [],
+                    "body": html.escape(text, quote=False), "truncated": False}
         meta = {k: str(val)[:200] for k, val in v.meta[rel].items() if k != "aliases"}
         return {**brief(v, rel), "meta": meta, "aliases": v.meta[rel].get("aliases") or [],
                 "out": [brief(v, r) for r in sorted(v.out[rel])],
                 "back": [brief(v, r) for r in sorted(v.back[rel])],
-                "broken": sorted(v.unresolved[rel]),
+                "broken": sorted(v.unresolved[rel]), "files": [brief(v, f) for f in sorted(v.file_out.get(rel, ()))],
                 "body": render_body(v, v.body[rel]), "truncated": len(v.body[rel]) > BODY_MAX}
 
     @router.get("/api/graph/hood")
@@ -249,7 +299,7 @@ GRAPH_HTML = r"""
 <div id="list"></div>
 <div id="view"></div>
 <script>
-const COL={entity:"#3b82f6",summary:"#10b981",timeline:"#f59e0b",conversation:"#9ca3af",raw:"#9ca3af","claude-memory":"#a855f7",note:"#6b7280"};
+const COL={file:"#f97316","file-note":"#fb923c",entity:"#3b82f6",summary:"#10b981",timeline:"#f59e0b",conversation:"#9ca3af",raw:"#9ca3af","claude-memory":"#a855f7",note:"#6b7280"};
 const col=t=>COL[t]||COL.note;
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
@@ -280,12 +330,12 @@ function svg(d){const W=360,H=340,E=layout(d,W,H),N=d.nodes,S="http://www.w3.org
 async function openNote(path){cur=path;const[n,g]=await Promise.all([api("/api/graph/note?path="+encodeURIComponent(path)),api("/api/graph/hood?path="+encodeURIComponent(path)+"&hops="+hops)]);
  const body=h("div",{class:"body"});body.innerHTML=n.body;body.querySelectorAll("a.wl").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();openNote(a.dataset.p)}));
  const hopBtn=h("button",{onclick:()=>{hops=hops===1?2:1;openNote(cur)}},hops===1?"Show 2 hops":"Show 1 hop");
- const legend=h("div",{class:"legend"},...Object.entries({entity:1,summary:1,timeline:1,raw:1,"claude-memory":1}).map(([k])=>h("span",{},h("i",{style:"background:"+col(k)}),k)));
+ const legend=h("div",{class:"legend"},...Object.entries({entity:1,summary:1,timeline:1,raw:1,file:1,"file-note":1,"claude-memory":1}).map(([k])=>h("span",{},h("i",{style:"background:"+col(k)}),k)));
  $("#view").replaceChildren(h("div",{class:"card"},
   h("h2",{},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type)),h("div",{class:"mut"},n.path),
   n.aliases.length?h("div",{class:"mut"},"aliases: "+n.aliases.join(", ")):null,
   svg(g),legend,h("div",{class:"mut"},g.nodes.length+" notes within "+hops+" hop"+(hops>1?"s":"")+(g.truncated?" (showing the closest "+g.nodes.length+")":"")),hopBtn),
-  h("div",{class:"card"},h("h3",{},"Links out ("+n.out.length+")"),...(n.out.length?n.out.map(chip):[h("span",{class:"mut"},"none")]),
+  h("div",{class:"card"},n.files&&n.files.length?h("div",{},h("h3",{},"Files ("+n.files.length+")"),...n.files.map(chip)):null,h("h3",{},"Links out ("+n.out.length+")"),...(n.out.length?n.out.map(chip):[h("span",{class:"mut"},"none")]),
    h("h3",{},"Backlinks ("+n.back.length+")"),...(n.back.length?n.back.map(chip):[h("span",{class:"mut"},"none")]),
    n.broken.length?h("div",{class:"mut",style:"color:var(--warn)"},"Broken links: "+n.broken.join(", ")):null),
   h("div",{class:"card"},h("div",{class:"mut"},Object.entries(n.meta).map(([k,v])=>k+": "+v).join("  ·  ")),h("hr"),body,n.truncated?h("div",{class:"mut"},"(shortened)"):null));
