@@ -1,4 +1,4 @@
-"""The reviewer reads later chats about a file and records what changed.
+"""The Sweeper reads later chats about a file and proposes what changed; the Reviewer checks each proposed edit before it is applied.
 The original is never touched. Changes go to files/derived/<name>/<name>, with a log in changes.json.
   filechanges.py NAME [NAME...]    check those files
   filechanges.py --all             check every saved file
@@ -87,6 +87,27 @@ def decide(name, text):
     filestore.write_note(name)
 
 
+VERIFY_SYS = ("You check edits that another model says were made to one saved file. For each numbered change you get the exact "
+              "old and new text and the quote it relied on, plus the chat excerpts. Say ok true only if the excerpts show this exact "
+              "edit was made to THIS file and was not abandoned or undone later. Reply as JSON only: "
+              '{"verdicts":[{"n":0,"ok":true,"why":"<one short reason>"}]}')
+
+
+def verify(name, blob, cands):
+    """The Reviewer's check of what the Sweeper proposed. {index: (approved, reason)}, or None if it never answered."""
+    listing = "\n".join(f"[{i}] {c.get('what', '')}\nOLD:\n{old}\nNEW:\n{new}\nQUOTE: {rec['quote']}\n" for i, (c, old, new, rec) in enumerate(cands))
+    user = f"FILE: {name}\n\nEXCERPTS:\n{blob}\n\nCHANGES:\n{listing}"
+    for attempt in range(2):
+        v = reviewer.rask(VERIFY_SYS, user if attempt == 0 else user + "\n\nReply with the JSON only.", tokens=4000)
+        if isinstance(v, dict) and isinstance(v.get("verdicts"), list):
+            out = {}
+            for x in v["verdicts"]:
+                if isinstance(x, dict) and isinstance(x.get("n"), int):
+                    out[x["n"]] = (x.get("ok") is True, str(x.get("why", "")))
+            return out
+    return None
+
+
 def process(name):
     vers = sorted((ORIG / name).glob("*")) if (ORIG / name).is_dir() else []
     if not vers:
@@ -107,14 +128,16 @@ def process(name):
         return "nothing new to read"
     blob = "\n".join(ex)
     user = f"CURRENT FILE ({name}):\n{cur[:9000]}\n\nEXCERPTS:\n{blob}"
+    budget = agent.Budget(2)
     for attempt in range(2):
-        v = reviewer.rask(SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only.", tokens=8000)
+        v = agent.ask(SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only.", budget)
         if isinstance(v, dict) and isinstance(v.get("changes"), list):
             break
     else:
-        return park(name, stems, "the reviewer gave no usable answer twice")
+        return park(name, stems, "the Sweeper gave no usable answer twice")
     now = datetime.now().isoformat(timespec="seconds")
     ok = bad = 0
+    cands = []   # passed the code's checks: the Reviewer decides which are applied
     for c in v["changes"]:
         if not isinstance(c, dict):
             continue
@@ -125,14 +148,27 @@ def process(name):
         elif cur.count(old) != 1:
             rec["why"] = f"old text found {cur.count(old)} times in the file, not once"
         else:
-            cur = cur.replace(old, new)
-            sure = (old in blob and new in blob) + bool(c.get("confirmed"))
-            rec["confidence"] = ("low", "medium", "high")[sure]
-            st["applied"].append(rec)
-            ok += 1
+            cands.append((c, old, new, rec))
             continue
         st["unapplied"].append(rec)
         bad += 1
+    if cands:
+        verdicts = verify(name, blob, cands)
+        if verdicts is None:
+            return park(name, stems, "the Reviewer gave no usable answer twice")
+        for i, (c, old, new, rec) in enumerate(cands):
+            yes, why = verdicts.get(i, (False, "the Reviewer gave no verdict"))
+            if yes and cur.count(old) == 1:
+                cur = cur.replace(old, new)
+                sure = (old in blob and new in blob) + bool(c.get("confirmed"))
+                rec["confidence"] = ("low", "medium", "high")[sure]
+                rec["reviewed"] = why[:200]
+                st["applied"].append(rec)
+                ok += 1
+            else:
+                rec["why"] = "the Reviewer did not approve it: " + (why or "no reason given")[:200]
+                st["unapplied"].append(rec)
+                bad += 1
     st["checked"] += stems
     cdir.mkdir(parents=True, exist_ok=True)
     if ok:
@@ -147,8 +183,10 @@ def main(args):
         shutil.rmtree(DER / args[1], ignore_errors=True)
         filestore.write_note(args[1])
         return print("reset", args[1])
+    if not agent.model_ready():
+        sys.exit("the Sweeper is down")
     if not reviewer.ready():
-        sys.exit("reviewer is down")
+        sys.exit("the Reviewer is down")
     names = sorted(p.name for p in ORIG.iterdir()) if args[:1] == ["--all"] else args
     for n in names:
         print(n + ":", process(n))
@@ -158,13 +196,13 @@ def _idle():
     import urllib.request
     import swap
     import turns
-    if turns.managed("gpt"):   # taking turns: the call itself waits for the Reviewer's turn
+    if turns.managed("qwen"):   # taking turns: the call itself waits for the Sweeper's turn
         return True
     if swap.holding():
-        turns.want("gpt")
+        turns.want("qwen")
         return False
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8081/slots", timeout=3) as r:
+        with urllib.request.urlopen("http://127.0.0.1:8080/slots", timeout=3) as r:
             return not any(x.get("is_processing") for x in json.load(r))
     except Exception:
         return False
@@ -198,7 +236,7 @@ def watch():
     seen = None
     while True:
         sig = _sig()
-        if sig == seen or not ORIG.is_dir() or not reviewer.ready():
+        if sig == seen or not ORIG.is_dir() or not agent.model_ready() or not reviewer.ready():
             time.sleep(60)
             continue
         for n in sorted(p.name for p in ORIG.iterdir()):
