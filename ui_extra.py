@@ -206,7 +206,7 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Memory vault</title>
-<script>try{var t=localStorage.getItem("theme");if(t&&t!=="system")document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>(function(){try{var t=localStorage.getItem("theme");if(t&&t!=="system")document.documentElement.dataset.theme=t}catch(e){}})()</script>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:var(--card);--headink:var(--ink)}
 @media (prefers-color-scheme:dark){:root{--bg:#131313;--card:#2b2b2b;--ink:#eaeaea;--mut:#a8a8a8;--line:rgba(255,255,255,.14);--acc:#8508BF;--warn:#fb923c;--head:#691B54;--headink:#fff}}
