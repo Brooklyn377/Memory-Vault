@@ -428,8 +428,14 @@ window.refreshModelFiles=function(models){
   FS.forEach(function(f){if(f.kind==="model"&&e.fx[f.key])fill(e.fx[f.key],[h("option",{value:""},"default")])})}};
 // Changes typed on the page are kept only by Apply all: warn before leaving the page with some not applied.
 let dirty=false;
-["input","change"].forEach(function(t){document.addEventListener(t,function(ev){if(ev.target.closest&&ev.target.closest("#mm,#sp,#sv")&&!ev.target.closest("[data-instant]"))dirty=true},true)});
-addEventListener("beforeunload",function(ev){if(dirty){ev.preventDefault();ev.returnValue=""}});
+// Unsaved edits in a section with its own Save button (data-saves) are tracked per section, and cleared when that section
+// saves; a control that saves by itself (data-instant) is not an unsaved change at all.
+const ownEdits=new Set();
+window.markSaved=function(el){ownEdits.delete(el)};
+["input","change"].forEach(function(t){document.addEventListener(t,function(ev){const el=ev.target;
+ if(!(el.closest&&el.closest("#mm,#sp,#sv"))||el.closest("[data-instant]"))return;
+ const own=el.closest("[data-saves]");if(own)ownEdits.add(own);else dirty=true},true)});
+addEventListener("beforeunload",function(ev){if(dirty||[...ownEdits].some(function(e){return e.isConnected})){ev.preventDefault();ev.returnValue=""}});
 async function stat(){clearTimeout(T);
  const [d,st]=await Promise.all([api("/api/server/info"),api("/api/server/status")]);let busy=false;
  for(const m of IDS){const s=Object.assign({},d.servers[m],st[m]),e=E[m];if(!e)continue;

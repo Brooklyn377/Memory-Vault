@@ -66,10 +66,10 @@ function item(p){
    h("button",{onclick:function(){ta.value=v.text;msg.textContent="Loaded v"+v.n+" into the box. Press Save to use it."}},"Load"),pre))});
  if(!(p.history||[]).length)hist.append(h("div",{class:"mut"},"No saved versions yet."));
  async function refresh(){const d=await api("/api/prompts");D=d.prompts;const q=D.find(function(x){return x.id===p.id});if(q&&NODES[p.id]){const n=item(q);NODES[p.id].replaceWith(n);NODES[p.id]=n}}
- async function save(){msg.textContent="";const r=await call("/api/prompts/save",{id:p.id,text:ta.value,skip_check:skip.checked});if(!r.ok){msg.textContent=r.detail||"Could not save";return}await refresh()}
- async function reset(){if(!confirm("Go back to the default prompt?"))return;const r=await call("/api/prompts/reset",{id:p.id});if(!r.ok){msg.textContent=r.detail||"Could not reset";return}await refresh()}
+ async function save(){msg.textContent="";const r=await call("/api/prompts/save",{id:p.id,text:ta.value,skip_check:skip.checked});if(!r.ok){msg.textContent=r.detail||"Could not save";return}if(window.markSaved)window.markSaved(d);await refresh()}
+ async function reset(){if(!confirm("Go back to the default prompt?"))return;const r=await call("/api/prompts/reset",{id:p.id});if(!r.ok){msg.textContent=r.detail||"Could not reset";return}if(window.markSaved)window.markSaved(d);await refresh()}
  const state=p.missing?"default could not be read":p.edited?"edited v"+p.version:"default";
- const d=h("details",{class:"pi"},h("summary",{},p.title+" · "+state),h("div",{class:"mut",style:"margin:6px 0"},p.when),
+ const d=h("details",{class:"pi","data-saves":"1"},h("summary",{},p.title+" · "+state),h("div",{class:"mut",style:"margin:6px 0"},p.when),
   p.stale?h("div",{style:"color:#f5a524;margin:6px 0"},"The default changed in a code update since you edited this. Show default to compare."):null,
   ta,
   p.required.length?h("div",{class:"mut"},"Answer keys the code reads: "+p.required.join(", ")):null,
