@@ -51,7 +51,7 @@ main{max-width:none!important;padding:0!important}
  <div id="info"></div><div id="st"></div></div>
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee",hub:"#a3e635"};
-const col=t=>COL[t]||COL.note;
+const col=t=>COL[t]||COL.note;   // the colours are the ones set under Settings, Tag colours
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let N=[],E=[],adj=[],W=0,H=0,dpr=1,view={x:0,y:0,k:1},sel=-1,hit=new Set(),off=new Set(),alpha=1,running=false;
 const rad=n=>2.2+Math.sqrt(n.d)*.8;
@@ -117,7 +117,7 @@ $("#s").addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase()
  if(q)N.forEach((n,i)=>{if(vis(i)&&(n.t.toLowerCase().includes(q)||n.p.toLowerCase().includes(q)))hit.add(i)});
  if(hit.size&&hit.size<=40){let sx=0,sy=0;hit.forEach(i=>{sx+=N[i].x;sy+=N[i].y});view.x=sx/hit.size;view.y=sy/hit.size;view.k=Math.max(view.k,hit.size===1?2.5:1)}draw()});
 window.addEventListener("resize",resize);
-(async()=>{const d=await api("/api/graph/all");N=d.nodes;E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
+(async()=>{try{Object.assign(COL,(await api("/api/tagcolors")).colors)}catch(e){}const d=await api("/api/graph/all");N=d.nodes;E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
  const types=[...new Set(N.map(n=>n.ty))].sort();
  $("#flt").replaceChildren(...types.map(t=>{const s=h("span",{onclick:()=>{off.has(t)?off.delete(t):off.add(t);s.classList.toggle("off");if(sel>=0&&!vis(sel))select(-1);draw()}},h("i",{style:"background:"+col(t)}),t);return s}));
  resize();initPos();
