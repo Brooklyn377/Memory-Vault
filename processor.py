@@ -25,7 +25,6 @@ OUT_DIR = VAULT / "raw" / "conversations"
 MEM_DIR = VAULT / "raw" / "claude-memory"
 KEEP_DAYS = 7
 POLL_SECONDS = 10
-MAX_UNZIPPED = 4 * 1024 ** 3
 
 
 def log(msg):
@@ -152,8 +151,10 @@ def load_export(path):
             names = [n for n in z.namelist() if n.lower().endswith("conversations.json")]
             if not names:
                 raise ValueError("no conversations.json in zip (contains: " + ", ".join(z.namelist()[:5]) + ")")
-            if z.getinfo(names[0]).file_size > MAX_UNZIPPED:
-                raise ValueError("conversations.json too large")
+            gb, size = __import__("tuning").get("import.max_unzipped_gb"), z.getinfo(names[0]).file_size
+            if size > gb * 1024 ** 3:
+                raise ValueError(f"conversations.json is {size / 1024 ** 3:.1f} GB unpacked, over the limit of {gb} GB "
+                                 "(Settings > Sweeper > Limits and guardrails > Largest export when unpacked)")
             with z.open(names[0]) as f:
                 data = json.load(f)
     else:
@@ -195,7 +196,8 @@ def process_memory_export(path):
         for name in memory_members(path):
             rel = safe_rel(name)
             info = z.getinfo(name)
-            if rel is None or info.file_size > 5 * 1024 * 1024:
+            if rel is None:
+                log(f"import memory-export {path.name}: skipped {name} (its path is not safe to write inside the vault)")
                 stats["skipped"] += 1
                 continue
             raw = z.read(name).decode("utf-8", errors="replace")

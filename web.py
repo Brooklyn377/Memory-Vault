@@ -128,6 +128,7 @@ async def upload(request: Request, file: UploadFile = File(...)):
             out.write(chunk)
     if too_big:
         part.unlink(missing_ok=True)
+        log(f"upload rejected: {file.filename} is over the {MAX_BYTES // (1024 * 1024)} MB upload limit (upload.max_mb in config.yaml)")
         raise HTTPException(413, "file too large")
     part.rename(INBOX / name)
     log(f"upload saved {name} ({size} bytes)")

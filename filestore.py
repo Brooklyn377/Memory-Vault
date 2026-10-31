@@ -20,7 +20,6 @@ VAULT = agent.VAULT
 FILES = VAULT / "files"
 ORIG = VAULT / "raw" / "files"
 DER = FILES / "derived"
-MAX_BYTES = 2 * 1024 * 1024
 HEREDOC = re.compile(r"cat\s+>\s*(\S+)\s*<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\2[ \t]*(?:\n|$)", re.S)
 NAME = re.compile(r"[\w.-]{1,80}\.([A-Za-z0-9]{1,6})$")
 
@@ -58,7 +57,8 @@ def collect():
             if not names:
                 continue
             convs = json.loads(zf.read(names[0]))
-        except (OSError, ValueError, zipfile.BadZipFile):
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            agent.log(f"files: could not read {Path(z).name} for saved files ({type(e).__name__}: {str(e)[:150]})")
             continue
         for c in convs:
             for m in c.get("chat_messages", []):
@@ -132,8 +132,6 @@ def main(write):
         have = {hashlib.sha1(p.read_bytes()).hexdigest() for p in d.glob("*")} if d.is_dir() else set()
         added = 0
         for (when, text), short in sorted(found[name].items()):
-            if len(text.encode()) > MAX_BYTES:
-                continue
             h = hashlib.sha1(text.encode()).hexdigest()
             if h in have:
                 continue
