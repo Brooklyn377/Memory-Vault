@@ -253,7 +253,7 @@ function memoryBlock(){
  return h("div",{style:"margin-top:10px"},h("label",{class:"mut",style:"display:flex;gap:8px;align-items:center"},box,"Show the server's token count above the chat"),h("div",{style:"margin-top:6px"},b),msg)}
 // The slider: on = the model takes part in the turns; off = its server is stopped and it takes no turns.
 function enableSlider(key,u){
- const box=h("input",{type:"checkbox",title:"On: takes part in the turns. Off: stopped, takes no turns."});
+ const box=h("input",{type:"checkbox","data-instant":"1",title:"On: takes part in the turns. Off: stopped, takes no turns."});
  box.onchange=async function(){u.msg.textContent="";box.disabled=true;
   const r=await post({model:key,action:box.checked?"enable":"disable"});
   u.msg.textContent=r.ok?(r.note||""):(r.detail||"Could not do that");box.disabled=false;refresh()};
