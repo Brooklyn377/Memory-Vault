@@ -239,8 +239,8 @@ def sync_merges(st, merges):
     try:
         import filestore
         filestore.auto()
-    except Exception:
-        pass
+    except Exception as e:
+        agent.log(f"sweep: saving files from the exports failed ({type(e).__name__}: {str(e)[:150]})")
     try:
         import qhistory
         qhistory.purge()
