@@ -125,14 +125,16 @@ def answer(qid, text):
             raise ValueError("unknown answer")
         import reviewgate
         reviewgate.decide_stuck(q["payload"]["key"], text)
-    elif q["kind"] == "assistant":   # a chat message the Assistant could not answer: Try again queues it again
-        if text != "retry":
-            raise ValueError("unknown answer")
-        import ui_chat
-        try:
-            ui_chat.retry(q["payload"]["chat"])
-        except ValueError:   # already sent again from the Chat page, or removed
-            pass
+    elif q["kind"] == "assistant":
+        if "chat" in (q.get("payload") or {}):   # a chat message the Assistant could not answer: Try again queues it again
+            if text != "retry":
+                raise ValueError("unknown answer")
+            import ui_chat
+            try:
+                ui_chat.retry(q["payload"]["chat"])
+            except ValueError:   # already sent again from the Chat page, or removed
+                pass
+        # otherwise it is a notice about a job (a change that could not be committed, a job that failed): OK only closes it
     elif q["kind"] == "memory":   # the chat memory could not be compressed: Try again lets the next idle time run it
         if text != "retry":
             raise ValueError("unknown answer")
