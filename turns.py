@@ -440,7 +440,7 @@ def others_idle(model):
     import applier
     counts, w, held = lease_counts(), wants(), lease_counts(HOLDS)
     for m in MODELS:
-        if not conflict(model, m):
+        if not conflict(model, m) or _off(m):   # a model that is switched off holds nobody up
             continue
         if counts.get(m) or held.get(m) or m in w or not applier.idle(m):
             return False
