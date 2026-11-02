@@ -181,11 +181,12 @@ def _aborted_since(model, t):
         return False
 
 
-def _watch(model, started, resp, done, cut):
-    """Close the connection as soon as the model is aborted; the server then stops generating."""
+def _watch(model, started, resp, done, cut, cancel=None):
+    """Close the connection as soon as the model is aborted, or the caller says (cancel) it no longer wants the answer; the
+    server then stops generating."""
     import socket
     while not done.wait(0.5):
-        if _aborted_since(model, started):
+        if _aborted_since(model, started) or (cancel and cancel()):
             cut.set()
             try:
                 resp.fp.raw._sock.shutdown(socket.SHUT_RDWR)
@@ -198,7 +199,7 @@ def _watch(model, started, resp, done, cut):
             return
 
 
-def _chat_remote(model, body, label):
+def _chat_remote(model, body, label, cancel=None):
     import remote
     c = remote.raw(model)
     b = dict(body)
@@ -208,12 +209,12 @@ def _chat_remote(model, body, label):
         b.pop("chat_template_kwargs", None)
     _auth.key = remote.saved_key(model)
     try:
-        return _chat_local(model, remote.endpoint(model), b, label, None)
+        return _chat_local(model, remote.endpoint(model), b, label, None, cancel)
     finally:
         _auth.key = ""
 
 
-def chat(model, endpoint, body, label, slot=None):
+def chat(model, endpoint, body, label, slot=None, cancel=None):
     try:
         import remote
         external = remote.enabled(model)
@@ -221,22 +222,24 @@ def chat(model, endpoint, body, label, slot=None):
         external = False
     try:
         import power
-        power.wait_on(model)   # a model you unloaded or stopped: its calls wait here, local or external
+        power.wait_on(model, cancel)   # a model you unloaded or stopped: its calls wait here, local or external
     except Exception:
         pass
+    if cancel and cancel():
+        raise Aborted(f"{model}: the call was cancelled")
     import turns
     began = time.time()
 
-    def give_up():   # while waiting for its turn: the server was switched or stopped
-        if _aborted_since(model, began):
-            raise Aborted(f"{model} was switched or stopped")
+    def give_up():   # while waiting for its turn: the server was switched or stopped, or the answer is no longer wanted
+        if _aborted_since(model, began) or (cancel and cancel()):
+            raise Aborted(f"{model} was switched or stopped, or the call was cancelled")
     with turns.lease(model, stop=give_up):   # waits for the model's turn (model groups), local or external
         if external:
-            return _chat_remote(model, body, label)
-        return _chat_local(model, endpoint, body, label, slot)
+            return _chat_remote(model, body, label, cancel)
+        return _chat_local(model, endpoint, body, label, slot, cancel)
 
 
-def _chat_local(model, endpoint, body, label, slot=None):
+def _chat_local(model, endpoint, body, label, slot=None, cancel=None):
     """Same job as the old urlopen block, but streamed. Returns {"content": ..., "reasoning_content": ..., "finish_reason": ..., "tokens": ...}."""
     call = str(time.time_ns())
     body = _with_sampling(model, label, body)
@@ -263,7 +266,7 @@ def _chat_local(model, endpoint, body, label, slot=None):
     done, cut, failed = threading.Event(), threading.Event(), {}
     try:
         with urllib.request.urlopen(req, timeout=None) as r:
-            threading.Thread(target=_watch, args=(model, started, r, done, cut), daemon=True).start()
+            threading.Thread(target=_watch, args=(model, started, r, done, cut, cancel), daemon=True).start()
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
                 if not line.startswith("data:") or line.endswith("[DONE]"):

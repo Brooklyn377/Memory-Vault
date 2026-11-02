@@ -38,7 +38,7 @@ def consume_kill(m):
     return False
 
 
-def wait_on(m):
+def wait_on(m, cancel=None):
     """Calls to an unloaded or stopped model wait here until you load or start it again. Not the Assistant (chat answers
     with the Reviewer meanwhile), and the Curator only on an external server (locally it is loaded on demand)."""
     if m == "pa":
@@ -47,7 +47,7 @@ def wait_on(m):
         import remote
         if not remote.enabled(m):
             return
-    while off(m):
+    while off(m) and not (cancel and cancel()):   # cancel: the caller no longer wants the answer
         time.sleep(5)
 
 

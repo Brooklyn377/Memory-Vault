@@ -80,7 +80,20 @@ def _path(mid):
     return CHAT / f"{mid}.json"
 
 
+GONE = CHAT / ".deleted"   # one small file per deleted message: nothing may write that message again
+
+
+class Cancelled(Exception):
+    """The message was deleted while it was being answered: the answer is dropped, not saved or filed."""
+
+
+def gone(m):
+    return (GONE / m["id"]).exists()
+
+
 def _save(m):
+    if gone(m):   # a message deleted while it was being answered must not come back when the answer finishes
+        return
     CHAT.mkdir(parents=True, exist_ok=True)
     tmp = _path(m["id"]).with_suffix(".tmp")
     tmp.write_text(json.dumps(m, indent=1, ensure_ascii=False))
@@ -164,13 +177,13 @@ def retrieve(question):
     return top, extra[:__import__("tuning").get("chat.linked")]
 
 
-def _ask(system, user):
+def _ask(system, user, m=None):
     import reviewer
     body = {"model": reviewer.NAME, "temperature": settings.get("gpt")["temperature"], "max_tokens": settings.get("gpt")["max_tokens"]["chat"],
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "chat_template_kwargs": {"reasoning_effort": settings.get("gpt")["reasoning_effort"]}}
     import thinklog
-    return (thinklog.chat("gpt", reviewer.ENDPOINT, body, "chat", slot=1).get("content") or "").strip()
+    return (thinklog.chat("gpt", reviewer.ENDPOINT, body, "chat", slot=1, cancel=(lambda: gone(m)) if m else None).get("content") or "").strip()
 
 
 def assistant_on():
@@ -202,10 +215,12 @@ def _ask_assistant(system, messages, label="chat", m=None):
     tries = 0
     while True:
         try:
-            return _ask_assistant_once(system, messages, label)
+            return _ask_assistant_once(system, messages, label, m)
         except thinklog.Aborted:
             raise
         except Exception as e:
+            if m is not None and gone(m):
+                raise Cancelled() from None
             on = bool(settings.get("pa").get("enabled")) and not power.off("pa")
             if not (on and _transient(e)):
                 raise
@@ -221,7 +236,7 @@ def _ask_assistant(system, messages, label="chat", m=None):
                 _save(m)
 
 
-def _ask_assistant_once(system, messages, label="chat"):
+def _ask_assistant_once(system, messages, label="chat", m=None):
     import applier
     import thinklog
     import ui_settings
@@ -234,7 +249,7 @@ def _ask_assistant_once(system, messages, label="chat"):
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
     try:
-        r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label)
+        r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label, cancel=(lambda: gone(m)) if m else None)
     except RuntimeError as e:   # the server refused a request bigger than its context window: say which limit and what to change
         big = re.search(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", str(e))
         if not big:
@@ -348,6 +363,8 @@ def assistant_answer(m, context):
     msgs = earlier_turns(m) + [{"role": "user", "content": f"{context}\n\nQUESTION: {m['text']}"}]
     opened, used, repairs = [], 0, 0
     while True:
+        if gone(m):
+            raise Cancelled()
         last = used >= budget
         if last:
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
@@ -373,6 +390,8 @@ def assistant_answer(m, context):
             if isinstance(data, dict):   # JSON without an answer: nothing usable to show
                 raise RuntimeError("the Assistant gave no answer")
             return cited(text), opened   # plain text: the model answered without the JSON wrapper
+        if gone(m):   # deleted while it was thinking: its tool is not run
+            raise Cancelled()
         used += 1
         name, args = str(data.get("tool")), data.get("args")
         if not isinstance(args, dict):   # models often put the arguments beside "tool" instead of inside "args"
@@ -390,6 +409,8 @@ def earlier_turns(m):
 
 
 def handle(m, who="gpt"):
+    if gone(m):
+        raise Cancelled()
     v = _vault()
     top, extra = retrieve(m["text"])
     if not top and m["kind"] == "lookup" and who == "gpt":
@@ -408,7 +429,7 @@ def handle(m, who="gpt"):
     else:
         system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
         kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
-        reply = _ask(system, f"{context}\n\n{kind}: {m['text']}")
+        reply = _ask(system, f"{context}\n\n{kind}: {m['text']}", m)
     if not reply:
         raise RuntimeError("empty reply")
     m["reply"], m["sources"], m["by"] = reply, top + extra, "Assistant" if who == "pa" else "Reviewer"
@@ -441,7 +462,9 @@ def remove(mid):
     added to raw/conversations stays there."""
     if not _load(mid):
         raise ValueError("there is no such message")
-    _path(mid).unlink()
+    GONE.mkdir(parents=True, exist_ok=True)
+    (GONE / mid).write_text(str(time.time()))   # first, so a message being answered stops and cannot be saved again
+    _path(mid).unlink(missing_ok=True)
 
 
 CONV = VAULT / "raw" / "conversations"
@@ -516,6 +539,9 @@ def watch():
         _save(m)
         try:
             handle(m, who)
+            if gone(m):   # deleted while it was being answered: nothing is saved or filed
+                agent.log(f"chat: {m['id']} was deleted while it was being answered; the answer was dropped")
+                continue
             m["status"] = "replied"
             agent.log(f"chat: replied to {m['id']} ({m['by']})")
             try:   # your chat is also a conversation in the vault: a failure here never fails the reply
@@ -524,6 +550,9 @@ def watch():
             except Exception as ae:
                 agent.log(f"chat: could not save {m['id']} as a conversation ({type(ae).__name__}: {str(ae)[:80]})")
         except Exception as e:
+            if gone(m) or isinstance(e, Cancelled):   # deleted: stopped on purpose, not a failure
+                agent.log(f"chat: {m['id']} was deleted while it was being answered; stopped")
+                continue
             why = f"{type(e).__name__}: {str(e)[:400]}"
             import thinklog
             if isinstance(e, thinklog.Aborted):   # you switched or stopped the server: answer it again with what is current
