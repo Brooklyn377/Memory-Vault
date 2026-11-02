@@ -20,6 +20,17 @@ body{padding-top:52px}
 .dn{background:#fb923c;color:#fff;border-radius:10px;padding:0 8px;font-size:13px;font-weight:600}
 .dn[hidden]{display:none}
 #dwr .dn{background:none;color:inherit;font-size:15px;padding:0}
+#dchat{position:fixed;top:52px;bottom:0;left:0;width:min(80vw,300px);background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-right:1px solid var(--line,#2b3240);z-index:36;transform:translateX(102%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;padding:8px;overflow-y:auto;box-sizing:border-box}
+#dchat.open{transform:none;visibility:visible;transition:transform .2s ease,visibility 0s}
+#dchat .dh{display:flex;align-items:center;gap:6px;padding:0 0 6px}
+#dchat .dh b{font-size:17px}
+#dback svg{background:none;border-radius:0;width:24px;height:24px}
+#dback{display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:8px;margin:0;line-height:0;cursor:pointer;border-radius:50%}
+#dchat a{display:block;padding:10px 12px;border-radius:14px;color:inherit;text-decoration:none;font-size:16px;overflow-wrap:anywhere}
+#dchat a small{display:block;color:var(--mut,#98a2b5);font-size:12px}
+#dchat a.on{background:var(--acc,#6d9cff);color:#fff}
+#dchat a.on small{color:inherit}
+#dchat #dnew{text-align:center;font-weight:600;border:1px solid currentColor;margin:2px 0 8px}
 </style>
 <div id="dbar">
  <b>Memory vault</b>
@@ -32,6 +43,11 @@ body{padding-top:52px}
  </select>
 </div>
 <div id="dscrim"></div>
+<div id="dchat" aria-label="Chats">
+ <div class="dh"><button id="dback" aria-label="Back to the menu"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button><b>Chats</b></div>
+ <a id="dnew" href="/chat#new">+ New chat</a>
+ <div id="dlist"></div>
+</div>
 <div id="dwr">
  <a href="/">Home</a>
  <a href="/#up">Upload</a>
@@ -47,13 +63,28 @@ body{padding-top:52px}
 </div>
 <script>
 (function(){
- var dr=document.getElementById("dwr"),sc=document.getElementById("dscrim");
- function set(o){dr.classList.toggle("open",o);sc.classList.toggle("open",o)}
+ var dr=document.getElementById("dwr"),sc=document.getElementById("dscrim"),ch=document.getElementById("dchat"),dl=document.getElementById("dlist");
+ function set(o){dr.classList.toggle("open",o);sc.classList.toggle("open",o);if(!o)ch.classList.remove("open")}
+ // Chat in the menu opens the list of chats over the menu; the arrow at its top left goes back to the menu
+ function day(id){return /^[0-9]{8}/.test(id)?id.slice(0,4)+"-"+id.slice(4,6)+"-"+id.slice(6,8):""}
+ function here(){return location.pathname==="/chat"?decodeURIComponent(location.hash.slice(1)):null}
+ async function openChats(){
+  ch.classList.add("open");dl.textContent="Loading your chats...";
+  try{var r=await fetch("/api/chat/list");if(!r.ok)throw 0;var d=await r.json();dl.textContent="";
+   if(!d.chats.length)dl.textContent="No chats yet.";
+   d.chats.forEach(function(c){var a=document.createElement("a");a.href="/chat#"+encodeURIComponent(c.id);
+    a.append(c.title||"Chat");var sm=document.createElement("small");sm.textContent=day(c.last)+" · "+c.count+(c.count===1?" message":" messages");a.append(sm);
+    if(here()===c.id)a.classList.add("on");dl.append(a)})}
+  catch(e){dl.textContent="Could not load your chats."}}
+ var chatLink=dr.querySelector('a[href="/chat"]');
+ chatLink.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openChats()});
+ document.getElementById("dback").addEventListener("click",function(){ch.classList.remove("open")});
+ ch.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
  document.getElementById("dbtn").addEventListener("click",function(){set(!dr.classList.contains("open"))});
  sc.addEventListener("click",function(){set(false)});
  dr.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
  function mark(){var here=location.pathname+location.hash;
-  dr.querySelectorAll("a").forEach(function(a){a.classList.toggle("on",a.getAttribute("href")===here)})}
+  dr.querySelectorAll("a").forEach(function(a){var h=a.getAttribute("href");a.classList.toggle("on",h==="/chat"?location.pathname==="/chat":h===here)})}
  var ts=document.getElementById("dtheme");
  try{ts.value=localStorage.getItem("theme")||"system"}catch(e){}
  ts.addEventListener("change",function(){var v=ts.value;   // kept in this browser only

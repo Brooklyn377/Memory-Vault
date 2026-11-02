@@ -49,7 +49,7 @@ ASSIST_SYS = (
     'are ready, reply with ONLY JSON: {"answer":"<your reply>"}. Tools: '
     'search {"text":"<words>","where":"all|notes|raw|inbox|vault|state|code|logs|git|<Git server name>"} finds files; '
     'open {"path":"<path>","start":<line>} reads a file or lists a folder; '
-    'links {"path":"<note path>"} lists linked notes; tasks {} lists open to-do tasks; '
+    'links {"path":"<note path>"} lists linked notes; chats {"id":"<chat id, optional>"} lists your chats, or reads one; tasks {} lists open to-do tasks; '
     "questions {} lists open Ask cards; queue {} shows what the Sweeper, Reviewer and Curator are doing; "
     "repos {} lists the Git servers you can read and what each is for; jobs {} lists jobs and their status. "
     'The web is the last resort, and works only if the person has turned it on: after search found nothing in the vault '
@@ -111,7 +111,23 @@ def _all():
     return sorted((json.loads(p.read_text()) for p in CHAT.glob("*.json")), key=lambda m: m["id"])
 
 
-def send(text):
+def chat_of(m):
+    """The chat a message belongs to: the id of the chat's first message. Messages from before chats were separate are one chat."""
+    return m.get("chat") or "earlier"
+
+
+def chats():
+    """Your chats, the one you wrote in last first: [{"id", "title", "last" (the newest message's id), "count"}]."""
+    out = {}
+    for m in _all():
+        c = out.setdefault(chat_of(m), {"id": chat_of(m), "title": "", "last": "", "count": 0})
+        if not c["title"]:
+            c["title"] = "Earlier messages" if c["id"] == "earlier" else " ".join(m["text"].split())[:60]
+        c["last"], c["count"] = m["id"], c["count"] + 1
+    return sorted(out.values(), key=lambda c: c["last"], reverse=True)
+
+
+def send(text, chat=""):
     text = str(text).strip()
     kind = "correction" if re.match(r"(?i)/fix\b", text) else "lookup"
     if kind == "correction":
@@ -119,8 +135,12 @@ def send(text):
     text = scrub(text)[0][:MAX_TEXT].strip()
     if not text:
         raise ValueError("empty message")
+    chat = str(chat or "").strip()
+    if chat not in ("", "new") and not any(c["id"] == chat for c in chats()):
+        raise ValueError("there is no such chat")
     m = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": kind, "text": text,
          "status": "queued", "reply": "", "sources": [], "confirm": "none", "tries": 0}
+    m["chat"] = chat if chat not in ("", "new") else m["id"]   # a new chat is named after its first message
     _save(m)
     return m
 
@@ -585,16 +605,22 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
 
     @router.get("/api/chat")
-    def chat_list(request: Request, before: str = ""):
-        """The newest messages, or with before=<an id> the messages just before it. more says there are older ones."""
+    def chat_list(request: Request, before: str = "", chat: str = ""):
+        """The newest messages of one chat (all of them without chat=), or with before=<an id> the messages just before it. more
+        says there are older ones."""
         need(request)
         n = __import__("tuning").get("chat.page_messages")
-        msgs = [m for m in _all() if not before or m["id"] < before]
+        msgs = [m for m in _all() if (not before or m["id"] < before) and (not chat or chat_of(m) == chat)]
         page = msgs[-n:] if n > 0 else msgs
         if before:
             return {"messages": page, "more": len(msgs) > len(page)}
         import chatmemory
         return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(), "server": usage_info()}
+
+    @router.get("/api/chat/list")
+    def chat_chats(request: Request):
+        need(request)
+        return {"chats": chats()}
 
     @router.post("/api/chat/compress")
     async def chat_compress(request: Request):
@@ -608,10 +634,10 @@ def register(app, authed):
         need(request)
         data = await request.json()
         try:
-            m = send(data.get("text", ""))
+            m = send(data.get("text", ""), data.get("chat", ""))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"id": m["id"]}
+        return {"id": m["id"], "chat": m["chat"]}
 
     @router.post("/api/chat/confirm")
     async def chat_confirm(request: Request):
@@ -699,11 +725,16 @@ function bubble(m){
   if(m.confirm==="discarded")box.append(h("div",{class:"mut"},"Discarded. Nothing was filed."));
   out.push(box)}
  return out}
-let older=[],more=false,loadingOlder=false,lastSeen="";
+let older=[],more=false,loadingOlder=false,lastSeen="",chatId="";   // chatId: the chat on screen; "new" is one with no messages yet
+function fromHash(){return decodeURIComponent(location.hash.slice(1))}
+async function pick(){const h=fromHash();if(h){chatId=h;return}
+ try{const d=await api("/api/chat/list");chatId=d.chats.length?d.chats[0].id:"new"}catch(e){chatId="new"}}
+function reset(){older=[];latest=[];more=false;lastSeen="";$("#thread").replaceChildren()}
+addEventListener("hashchange",function(){if(fromHash()===chatId)return;chatId=fromHash()||"new";reset();load()});
 function show(list){$("#thread").replaceChildren(...(list.length?[...(more?[h("div",{class:"mut",style:"text-align:center"},"Scroll up for earlier messages")]:[]),...list.flatMap(bubble)]:[h("div",{class:"card mut"},"Ask a question about your notes, or start with /fix to correct a note.")]))}
 let latest=[];
 function everything(){const first=latest.length?latest[0].id:"~";return older.filter(m=>m.id<first).concat(latest)}
-async function load(){try{const d=await api("/api/chat");
+async function load(){try{const d=await api("/api/chat?chat="+encodeURIComponent(chatId||"new"));
  latest=d.messages;if(!older.length)more=d.more;show(everything());
  const mm=d.memory,sv=d.server;
  $("#cuseA").textContent=mm?"Memory "+mm.tokens.toLocaleString()+" / "+mm.limit.toLocaleString()+" tokens (estimate)"+(mm.running||mm.requested?" · compressing":""):"";
@@ -711,7 +742,7 @@ async function load(){try{const d=await api("/api/chat");
  const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
 async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
  try{const first=(older.length?older[0]:latest[0]);if(!first)return;
-  const d=await api("/api/chat?before="+encodeURIComponent(first.id));
+  const d=await api("/api/chat?before="+encodeURIComponent(first.id)+"&chat="+encodeURIComponent(chatId));
   const h0=document.body.scrollHeight;older=d.messages.concat(older);more=d.more;show(everything());
   window.scrollTo(0,window.scrollY+document.body.scrollHeight-h0)}   // stay on the message you were reading
  catch(e){}finally{loadingOlder=false}}
@@ -721,10 +752,12 @@ async function removeOne(id){if(!confirm("Remove this message and its reply from
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
 $("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
- try{await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});$("#ct").value="";await load()}
+ try{const r=await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t,chat:chatId})});$("#ct").value="";
+  if(chatId==="new"){chatId=r.chat;location.hash=r.chat}   // the first message names the chat
+  await load()}
  catch(e){$("#ce").textContent=e.message}$("#cs").disabled=false};
-setInterval(()=>{if(!document.hidden)load()},10000);
-load();
+setInterval(()=>{if(!document.hidden&&chatId)load()},10000);
+pick().then(load);
 </script>
 """
 

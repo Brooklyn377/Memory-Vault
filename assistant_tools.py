@@ -273,6 +273,19 @@ def updated_file(a):
             "the note; approving writes it to their vault only, nothing goes to Git. Tell them it is waiting there.")
 
 
+def chats_tool(a):
+    """Your chats: the list, or with an id one chat's questions and replies."""
+    import ui_chat
+    cid = str(a.get("id") or "").strip()
+    if not cid:
+        rows = ui_chat.chats()
+        return "\n".join(f"- {c['id']}: {c['title']} ({c['count']} message{'s' if c['count'] != 1 else ''}, last {c['last'][:8]})" for c in rows) or "No chats yet."
+    msgs = [m for m in ui_chat._all() if ui_chat.chat_of(m) == cid and m.get("reply")]
+    if not msgs:
+        raise ValueError(f"there is no chat {cid}, or it has no replies yet: list your chats first")
+    return "\n\n".join(f"[{m['id']}] YOU: {m['text']}\nASSISTANT: {m['reply']}" for m in msgs)
+
+
 def job_list():
     import jobs
     rows = jobs.summary()
@@ -289,6 +302,7 @@ TOOLS = {"search": do_search,
          "web_search": lambda a: web_search(a.get("query") or a.get("text")),
          "web_open": lambda a: web_open(a.get("url"), a.get("start", 0)),
          "updated_file": updated_file,
+         "chats": chats_tool,
          "edit_file": lambda a: edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
 
 

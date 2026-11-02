@@ -169,6 +169,12 @@ A small drop-down in the top-right corner of every page picks the colours: **Sys
 in light mode, Purple in dark mode), **White**, **Blue**, **Purple** or **Candy**. The choice is kept in the browser on that
 device only, so your phone and your PC can differ.
 
+## Chats
+**Chat** in the menu opens a list of your chats over the menu (the arrow at its top left goes back to the menu). Tap a chat to open it, or
+**+ New chat** to start another; the first message names a chat. Messages from before chats were separate are one chat, "Earlier
+messages". The chats are only a way to organise and find your conversations: the Assistant still carries its memory of all of them into every
+chat, and it has a `chats` tool to look at the list or read another chat when it needs something from there.
+
 ## Optional: the Assistant
 A fourth model you chat with. It is off until you turn it on: on its card on the Settings page, choose a model
 (local) or an external server, load it, and tick "Use the Assistant for chat". Plain chat messages then go to it;
