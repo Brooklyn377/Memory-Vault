@@ -50,7 +50,7 @@ main{max-width:none!important;padding:0!important}
  <div id="info"></div><div id="st"></div></div>
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};
-let TOTAL=0;
+let TOTAL=0,BUSY=6;const HUBPUSH=20;   // BUSY: how many links make a note a busy hub (set from the busiest note once loaded)
 const col=t=>COL[t]||COL.note;   // the colours are the ones set under Settings, Tag colours
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let N=[],E=[],adj=[],W=0,H=0,dpr=1,view={x:0,y:0,k:1},sel=-1,hit=new Set(),off=new Set(),alpha=1,running=false;
@@ -67,8 +67,12 @@ function step(){
  for(let i=0;i<N.length;i++){const n=N[i],cx=Math.floor(n.x/CELL),cy=Math.floor(n.y/CELL);
   for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++){const a=g.get((cx+ox)+","+(cy+oy));if(!a)continue;
    for(const j of a){if(j<=i)continue;const m=N[j];let dx=n.x-m.x,dy=n.y-m.y,d2=dx*dx+dy*dy;if(d2>CELL*CELL*4)continue;if(d2<.01){dx=Math.random()-.5;dy=Math.random()-.5;d2=.5}
+    if(n.d>=BUSY&&m.d>=BUSY)continue;   // two busy hubs are handled below, over any distance
     const q=(1+Math.sqrt(n.d))*(1+Math.sqrt(m.d)),f=(120*q/d2)*alpha,d=Math.sqrt(d2);   // a note with many links pushes harder
     n.vx+=f*dx/d*6;n.vy+=f*dy/d*6;m.vx-=f*dx/d*6;m.vy-=f*dy/d*6}}}
+ const hubs=N.filter(n=>n.d>=BUSY);   // busy hubs push each other apart far harder, so the notes around each can fan out between them
+ for(let a=0;a<hubs.length;a++)for(let b=a+1;b<hubs.length;b++){const n=hubs[a],m=hubs[b];let dx=n.x-m.x,dy=n.y-m.y,d2=dx*dx+dy*dy;if(d2<.01){dx=Math.random()-.5;dy=Math.random()-.5;d2=.5}
+  const q=(1+Math.sqrt(n.d))*(1+Math.sqrt(m.d))*HUBPUSH,f=(120*q/d2)*alpha,d=Math.sqrt(d2);n.vx+=f*dx/d*6;n.vy+=f*dy/d*6;m.vx-=f*dx/d*6;m.vy-=f*dy/d*6}
  for(const[a,b]of E){const p=N[a],q=N[b];let dx=q.x-p.x,dy=q.y-p.y,d=Math.sqrt(dx*dx+dy*dy)+.01;
   // the busier of the two notes sets how long the link is, the less busy one how hard it pulls
   const f=(d-(18+6*Math.sqrt(Math.max(p.d,q.d))))*.05/Math.sqrt(Math.max(1,Math.min(p.d,q.d)))*alpha;
@@ -120,7 +124,8 @@ $("#s").addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase()
  if(q)N.forEach((n,i)=>{if(vis(i)&&(n.t.toLowerCase().includes(q)||n.p.toLowerCase().includes(q)))hit.add(i)});
  if(hit.size&&hit.size<=40){let sx=0,sy=0;hit.forEach(i=>{sx+=N[i].x;sy+=N[i].y});view.x=sx/hit.size;view.y=sy/hit.size;view.k=Math.max(view.k,hit.size===1?2.5:1)}draw()});
 window.addEventListener("resize",resize);
-(async()=>{try{Object.assign(COL,(await api("/api/tagcolors")).colors)}catch(e){}const d=await api("/api/graph/all");TOTAL=d.total;N=d.nodes;E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
+(async()=>{try{Object.assign(COL,(await api("/api/tagcolors")).colors)}catch(e){}const d=await api("/api/graph/all");TOTAL=d.total;N=d.nodes;BUSY=Math.max(6,.1*Math.max(0,...N.map(n=>n.d)));   // a busy hub: at least a tenth of the busiest note's links
+ E=d.edges;adj=N.map(()=>[]);for(const[a,b]of E){adj[a].push(b);adj[b].push(a)}
  const types=[...new Set(N.map(n=>n.ty))].sort();
  $("#flt").replaceChildren(...types.map(t=>{const s=h("span",{onclick:()=>{off.has(t)?off.delete(t):off.add(t);s.classList.toggle("off");if(sel>=0&&!vis(sel))select(-1);draw()}},h("i",{style:"background:"+col(t)}),t);return s}));
  resize();initPos();
