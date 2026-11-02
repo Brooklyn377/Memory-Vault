@@ -40,10 +40,12 @@ NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant
 FRESH = 30         # seconds a want counts after it was last made (a waiting call repeats it every few seconds)
 QUIET = 30         # seconds after its last call that a model still counts as busy: its group is not given away between two calls
 BEAT_FRESH = 20    # seconds the manager's heartbeat counts
+STALL = 45         # seconds without a pass after which the manager is taken to be stuck and a new one is started
 STEP = 2           # seconds between the manager's looks
 _started = False
 _WAIT = {}   # the last reason logged for each model that is waiting
 _UP = {}     # whether each external server answered at the last look
+_SLOW, _SEEN = set(), {}   # models whose systemd answer is late, and the last answer each gave
 _IDLE = {}   # since when a model's server has had no request in progress while a call of it is said to be running
 
 
@@ -365,10 +367,20 @@ def _set_active(st):
 
 
 @contextmanager
-def _lock():
+def _lock(wait=20):
+    """The one lock the manager and every waiting call share. Nothing slow (systemd, a request to a server) may happen while
+    it is held. If it cannot be had within `wait` seconds, TimeoutError: a stuck holder must not freeze everyone."""
     DIR.mkdir(parents=True, exist_ok=True)
     with open(LOCK, "a+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        end = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() > end:
+                    raise TimeoutError(f"the turn lock was held for more than {wait} seconds by another process") from None
+                time.sleep(0.05)
         try:
             yield
         finally:
@@ -389,13 +401,17 @@ def lease(model, stop=None):
         want(model)
         if stop:
             stop()
-        with _lock():
-            st = active()
-            if model in st["group"] and model not in st["draining"] and applier.health(model) == "ready":
-                path = LEASES / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
-                path.write_text(_mark())
-                clear_want(model)   # it has its turn: it is not asking any more (a call still waiting asks again)
-                _used(model)
+        ready = applier.health(model) == "ready"   # asked first: a slow answer must not be waited for while holding the lock
+        try:
+            with _lock():
+                st = active()
+                if model in st["group"] and model not in st["draining"] and ready:
+                    path = LEASES / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
+                    path.write_text(_mark())
+                    clear_want(model)   # it has its turn: it is not asking any more (a call still waiting asks again)
+                    _used(model)
+        except TimeoutError:   # the lock is held by someone stuck: ask again shortly
+            pass
         if path is None:
             time.sleep(STEP)
             if not alive():   # the manager went away: do not wait for it
@@ -449,14 +465,24 @@ def others_idle(model):
 
 # ---------- the manager ----------
 def _systemctl(*args):
-    return subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=600)
+    # asking whether a unit is running must be quick; starting and stopping one may take a while
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=15 if args[:1] == ("is-active",) else 600)
 
 
 def _running(model):
     """The model's server is up or on its way up: a server that is still starting counts, or a second group could be
     started on top of it."""
     import applier
-    return _systemctl("is-active", applier.UNIT[model]).stdout.strip() in ("active", "activating", "reloading")
+    try:
+        up = _systemctl("is-active", applier.UNIT[model]).stdout.strip() in ("active", "activating", "reloading")
+    except subprocess.TimeoutExpired:   # systemd did not answer: take it as it was last time, and say so once
+        if model not in _SLOW:
+            agent.log(f"turns: systemd did not say within 15 seconds whether the {NICE[model]}'s server is running")
+        _SLOW.add(model)
+        return _SEEN.get(model, False)
+    _SLOW.discard(model)
+    _SEEN[model] = up
+    return up
 
 
 def _stop_unit(model):
@@ -488,31 +514,33 @@ def step(now=None):
         if _external(m) and _running(m) and not _off(m):
             _stop_unit(m)
             did.append("stop " + m + " (it runs on another machine)")
-    with _lock():
+    # Slow questions (systemd, a server) are asked before the lock is taken, never while holding it.
+    running = [m for m in MODELS if not _external(m) and _running(m)]
+    counts = lease_counts()
+    # A call that is said to be running but whose server has had nothing in progress for a while is not running: the
+    # process died, or the connection did. Being slow is never a reason: a server that is working keeps its turn.
+    for m in MODELS:
+        if not counts.get(m) or _external(m):
+            _IDLE.pop(m, None)
+            continue
+        if _off(m) or import_applier().busy(m) is not False:   # busy, or could not be asked: believe the call
+            _IDLE.pop(m, None)
+            continue
+        if now - _IDLE.setdefault(m, now) >= __import__("tuning").get("turns.stale_seconds"):
+            drop_leases(m)
+            _IDLE.pop(m, None)
+            import thinklog
+            thinklog.abort(m)   # a caller still waiting on a dead connection is cut loose and queues its work again
+            counts = lease_counts()
+            did.append(f"drop the stale call of {m} (its server had nothing in progress)")
+    with _lock():   # a TimeoutError from it is logged by the manager's loop, and the next pass tries again
         cfg = config()
         st = active()
         loaded, since, drain = list(st["group"]), dict(st["since"]), set()   # who is finishing up is worked out afresh each time
         w = {m: d for m, d in wants(now).items() if _has_model(m)}
         counts = lease_counts()
         held = lease_counts(HOLDS)
-        running = [m for m in MODELS if not _external(m) and _running(m)]
         mine = [m for m in running if not _off(m)]   # a model you turned off is not the manager's to adopt, start or stop
-        # A call that is said to be running but whose server has had nothing in progress for a while is not running: the
-        # process died, or the connection did. Being slow is never a reason: a server that is working keeps its turn.
-        for m in MODELS:
-            if not counts.get(m) or _external(m):
-                _IDLE.pop(m, None)
-                continue
-            if _off(m) or import_applier().busy(m) is not False:   # busy, or could not be asked: believe the call
-                _IDLE.pop(m, None)
-                continue
-            if now - _IDLE.setdefault(m, now) >= __import__("tuning").get("turns.stale_seconds"):
-                drop_leases(m)
-                _IDLE.pop(m, None)
-                import thinklog
-                thinklog.abort(m)   # a caller still waiting on a dead connection is cut loose and queues its work again
-                counts = lease_counts()
-                did.append(f"drop the stale call of {m} (its server had nothing in progress)")
         # Settings may have changed since this list was saved (groups, the number per hardware, a model switched off): whoever
         # no longer fits goes now, whatever it is doing, in the order of the priority. Its running call is cut off.
         kept, evict = [], []
@@ -646,19 +674,38 @@ def _watch_servers():
 
 
 def start():
-    """Run the manager in a thread of this process (the web service). It beats every few seconds."""
+    """Run the manager in a thread of this process (the web service). It beats every few seconds. A watchdog starts a new one
+    if the beat stops (one pass stuck on something slow), and says so in the log."""
     global _started
     if _started:
         return
     _started = True
+    gen = [0]   # the number of the manager thread that is current: an older one that wakes up again stops
 
-    def loop():
+    def spawn():
+        gen[0] += 1
+        mine = gen[0]
+
+        def loop():
+            while gen[0] == mine:
+                try:
+                    step()
+                except Exception as e:
+                    agent.log(f"turns: {type(e).__name__}: {str(e)[:100]}")
+                time.sleep(STEP)
+        threading.Thread(target=loop, daemon=True).start()
+
+    def watchdog():
         while True:
+            time.sleep(STALL // 3)
             try:
-                step()
-            except Exception as e:
-                agent.log(f"turns: {type(e).__name__}: {str(e)[:100]}")
-            time.sleep(STEP)
+                age = time.time() - BEAT.stat().st_mtime
+            except OSError:
+                age = 0
+            if age > STALL:
+                agent.log(f"turns: the manager made no pass for {int(age)} seconds (stuck on something slow); a new one was started")
+                spawn()
+                time.sleep(STALL)
 
     def health_loop():
         while True:
@@ -667,5 +714,6 @@ def start():
             except Exception as e:
                 agent.log(f"turns: {type(e).__name__}: {str(e)[:100]}")
             time.sleep(15)
-    threading.Thread(target=loop, daemon=True).start()
+    spawn()
+    threading.Thread(target=watchdog, daemon=True).start()
     threading.Thread(target=health_loop, daemon=True).start()
