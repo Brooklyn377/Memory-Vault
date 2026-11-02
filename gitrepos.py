@@ -228,6 +228,10 @@ def content_sha(path):
     return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else ""
 
 
+class Changed(ValueError):
+    """The file in the repository is no longer what the draft was written against."""
+
+
 def commit_file(eid, rel, text, base, message):
     """Commit and push one file you approved. Only for an entry marked read and write, only if the file in the
     repository is still exactly what the draft was based on. -> the commit id. Raises ValueError with a plain reason,
@@ -248,8 +252,7 @@ def commit_file(eid, rel, text, base, message):
     if not f.is_relative_to(dest.resolve()) or ".git" in f.relative_to(dest.resolve()).parts:
         raise ValueError("that path leaves the repository")
     if content_sha(f) != base:
-        raise ValueError(f"{rel} changed in {e['name']} since the draft was written, so nothing was committed. "
-                         "Ask the Assistant for a new draft.")
+        raise Changed(f"{rel} changed in {e['name']} since the draft was written, so nothing was committed.")
     g = agent.CFG.get("gitea") or {}
     who = ["-c", f"user.name={g.get('bot_name') or 'Memory agent'}", "-c", f"user.email={g.get('bot_email') or 'memory-agent@localhost'}"]
     try:

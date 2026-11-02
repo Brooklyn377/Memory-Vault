@@ -17,6 +17,7 @@ A failed job is marked failed and parks an Ask card; nothing retries by itself. 
 import difflib
 import json
 import os
+import re
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -140,6 +141,14 @@ def decide(jid, ok):
             j.update(status="failed", error=str(e)[:400], decided=datetime.now().isoformat(timespec="seconds"))
             _save(j)
             import questions
+            if isinstance(e, gitrepos.Changed):   # the file moved on: offer to merge the draft's changes into it
+                questions.ask(f"The approved change to {j['result']['path']} in {j['result']['server']} was not committed: the file "
+                              "changed in the repository since the draft was written.",
+                              why="Nothing changed in the repository. Merge applies the draft's changes to the file as it is now and "
+                                  "asks you again before anything is committed. Skip leaves it as it is.",
+                              kind="jobmerge", options=[{"label": "Merge", "value": "merge"}], payload={"job": j["id"]})
+                agent.log(f"jobs: {j['id']} could not be committed, the file changed; merge offered")
+                return j
             questions.ask(f"The approved change to {j['result']['path']} in {j['result']['server']} was not committed: "
                           f"{str(e)[:250]}", why="Nothing changed in the repository. Queue it again from the Queue page "
                           "for a new draft, or ask the Assistant again.", kind="assistant",
@@ -442,6 +451,90 @@ def propose_updated_file(name, what, contents, chat="", reference="", path="", a
                       + ". Start of the note:\n\n" + body[:1200],
                   kind="job", payload={"job": j["id"]}, options=[{"label": "Approve", "value": "approve"}, {"label": "Reject", "value": "reject"}])
     agent.log(f"jobs: the Assistant proposed an updated file for {name} ({path}); waiting for you")
+    return j
+
+
+def _hunks(diff):
+    """The hunks of a unified diff: [{"start": line in the old file, "lines": [" x", "-x", "+x"]}]."""
+    out, cur = [], None
+    for line in diff.splitlines(True):
+        m = re.match(r"@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@", line)
+        if m:
+            cur = {"start": int(m.group(1)), "lines": []}
+            out.append(cur)
+        elif cur is not None and line[:1] in (" ", "+", "-"):
+            cur["lines"].append(line)
+    return out
+
+
+def merge_patch(current, diff):
+    """Apply the changes of a diff (made against an older version) to the file as it is now. Each hunk goes where its text is
+    found, nearest to where it was; with less of the unchanged lines around it if they have changed. -> (text, applied, failed)."""
+    lines, applied, failed, shift = current.splitlines(True), 0, 0, 0
+    for h in _hunks(diff):
+        body, done = h["lines"], False
+        for trim in range(0, 4):   # all the unchanged lines around the change, then fewer
+            a, b = 0, len(body)
+            for _ in range(trim):
+                if a < b and body[a][0] == " ":
+                    a += 1
+                if a < b and body[b - 1][0] == " ":
+                    b -= 1
+            part = body[a:b]
+            old = [l[1:] for l in part if l[0] in " -"]
+            new = [l[1:] for l in part if l[0] in " +"]
+            if not old or all(l[0] == "+" for l in part):
+                break
+            at = [i for i in range(len(lines) - len(old) + 1) if lines[i:i + len(old)] == old]
+            if trim and len(at) > 1:   # with little around it, the place must be clear
+                continue
+            if at:
+                want = h["start"] - 1 + a + shift
+                i = min(at, key=lambda k: abs(k - want))
+                lines[i:i + len(old)] = new
+                shift += len(new) - len(old)
+                applied += 1
+                done = True
+                break
+        if not done:
+            failed += 1
+    return "".join(lines), applied, failed
+
+
+def merge(jid):
+    """Your answer Merge on a change that could not be committed because the file moved on: put the draft's changes into the
+    file as it is now. Nothing is committed: the result waits for you on a new Ask card. Raises ValueError with the reason."""
+    j = get(jid)
+    if not j or j["status"] != "failed" or j["kind"] not in GIT_CHANGES:
+        raise ValueError("that change is not waiting to be merged")
+    r = j["result"]
+    if r.get("new_file"):
+        raise ValueError("this draft makes a new file, and a file by that name is there now: ask the Assistant for a new draft")
+    if len(r["diff"]) >= 60000:
+        raise ValueError("the draft is too long to merge here: ask the Assistant for a new draft")
+    model = next((m for m in gitrepos.COMMIT_ORDER if gitrepos.has_token(r["server_id"], m)), None)
+    root = gitrepos.copy(r["server_id"], model, force=True) if model else None
+    if root is None:
+        raise ValueError(f"could not get the newest version of {r['server']}")
+    f = (root / r["path"]).resolve()
+    if not f.is_relative_to(root.resolve()) or not f.is_file():
+        raise ValueError(f"{r['path']} is not in {r['server']} any more")
+    current = f.read_text(encoding="utf-8", errors="replace")
+    merged, ok, bad = merge_patch(current, r["diff"])
+    if bad:
+        raise ValueError(f"{bad} of the draft's {ok + bad} change(s) no longer fit {r['path']}, because that part of the file changed. "
+                         "Nothing was changed. Ask the Assistant for a new draft.")
+    diff = "".join(difflib.unified_diff(current.splitlines(True), merged.splitlines(True), f"a/{r['path']}", f"b/{r['path']}"))
+    if not diff:
+        raise ValueError(f"{r['path']} already contains the draft's changes: nothing to commit")
+    (DIR / f"{jid}.draft").write_text(merged, encoding="utf-8")
+    r.update(diff=diff[:60000], base=gitrepos.content_sha(f), merged=True)
+    j.update(status="waiting", error="")
+    _save(j)
+    _card(j, f"Commit the merged change to {r['path']} in {r['server']}? {r.get('summary') or ''}".strip(),
+          f"Repository: {r['server']} ({r['url']}), branch {r['branch']}. File: {r['path']}. The draft's {ok} change(s) were put into "
+          "the file as it is now; the diff below is against that file. Approve commits exactly this diff and pushes it.")
+    agent.log(f"jobs: {jid} merged into the current {r['path']}; waiting for you")
     return j
 
 
