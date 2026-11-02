@@ -1,7 +1,6 @@
 [Unit]
 Description=Reviewer worker (finds unfinished tasks, reads your updates)
 After=memory-reviewer.service
-Wants=memory-reviewer.service
 
 [Service]
 WorkingDirectory=/opt/memory-agent

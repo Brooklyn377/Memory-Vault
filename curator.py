@@ -591,7 +591,7 @@ def summary():
 def _manual():
     try:
         import power
-        return power.manual("cur")
+        return power.manual("cur") and power.off("cur")   # only a server you loaded while the Curator is switched off is yours
     except Exception:
         return False
 

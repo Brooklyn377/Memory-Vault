@@ -114,8 +114,8 @@ def load(m):
     if applier._active(m):
         return
     applier.write_env(m, settings.load()[m])
-    if m == "cur":
-        _flag(m, "on").write_text("1")   # the Curator works with a server you loaded
+    if m == "cur" and off(m):
+        _flag(m, "on").write_text("1")   # switched off, it is yours: the Curator works with a server you loaded. Switched on, the manager decides
     subprocess.run(["systemctl", "start", "--no-block", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} loaded by you")
 
@@ -123,6 +123,9 @@ def load(m):
 def unload(m):
     """Stop this model's server now, whatever the rules say, and cut off its running calls. The slider is not changed: with
     the slider on, the manager loads it again when its turn comes. Returns a note for the page, or ''."""
+    for k in STATE.glob("model_killed_*"):   # notes of an earlier unload that nobody read: they only count for two minutes
+        if time.time() - k.stat().st_mtime > 120:
+            k.unlink(missing_ok=True)
     import remote
     import swap
     import thinklog

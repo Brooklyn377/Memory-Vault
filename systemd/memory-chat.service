@@ -1,7 +1,6 @@
 [Unit]
 Description=Chat worker (answers chat messages with the reviewer model)
 After=memory-reviewer.service
-Wants=memory-reviewer.service
 
 [Service]
 WorkingDirectory=/opt/memory-agent

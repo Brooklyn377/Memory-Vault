@@ -45,6 +45,7 @@ STEP = 2           # seconds between the manager's looks
 _started = False
 _WAIT = {}   # the last reason logged for each model that is waiting
 _UP = {}     # whether each external server answered at the last look
+_ADOPTED = [False]   # the manager has had its first look since it started: servers already up then (an update, a restart) are adopted
 _SLOW, _SEEN = set(), {}   # models whose systemd answer is late, and the last answer each gave
 _IDLE = {}   # since when a model's server has had no request in progress while a call of it is said to be running
 
@@ -556,7 +557,8 @@ def step(now=None):
                 counts.pop(m, None)
                 stop.append(m)
                 did.append(f"remove {m} (it no longer fits the groups or the hardware numbers)")
-        if not loaded and mine:   # servers already up (after an update or a restart): the ones that may work together are adopted
+        first, _ADOPTED[0] = not _ADOPTED[0], True
+        if first and not loaded and mine:   # servers already up (after an update or a restart): the ones that may work together are adopted
             for m in sorted(mine, key=cfg["priority"].index):   # by priority, and only while the groups and hardware numbers allow it
                 if not blockers(m, loaded):
                     loaded.append(m)
@@ -620,11 +622,12 @@ def step(now=None):
         # Memory: a model waiting for its turn is unloaded, and so is any server that does not belong with the ones working,
         # whenever a turn changes hands. A model that runs the same file with the same settings as a working one stays.
         acted = any(d.startswith(("adopt", "load", "switch", "remove")) for d in did)
+        # A server of a model that is switched on and that the manager is not using is stopped now, however it got started
+        # (you loaded it by hand, a service pulled it in). A model that is switched off is yours to load and unload.
         for x in mine:
-            if x in loaded or counts.get(x) or x in stop or any(twin(x, y) for y in loaded):
+            if x in loaded or counts.get(x) or held.get(x) or x in stop or any(twin(x, y) for y in loaded):
                 continue
-            if acted or x in waiting:
-                stop.append(x)
+            stop.append(x)
         _set_active({"group": loaded, "since": since, "draining": sorted(drain), "why": detail})
         stop = [m for m in stop if m in running and not _off(m)]   # only a server on this machine is stopped
         start = [m for m in order if m in loaded and m not in running and not _external(m)]   # wanted ones that are not up
