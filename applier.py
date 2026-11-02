@@ -98,6 +98,16 @@ def idle(model):
         return True  # server not answering: nothing running to cut off
 
 
+def busy(model):
+    """True if the local server is working on a request now, False if it answered and has none, None if it could not be asked
+    (the slots list is off, or the server is down): then nothing is concluded from it."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT[model]}/slots", timeout=3) as r:
+            return any(x.get("is_processing") for x in json.load(r))
+    except Exception:
+        return None
+
+
 def _active(model):
     return subprocess.run(["systemctl", "is-active", "--quiet", UNIT[model]], timeout=10).returncode == 0
 

@@ -44,6 +44,7 @@ STEP = 2           # seconds between the manager's looks
 _started = False
 _WAIT = {}   # the last reason logged for each model that is waiting
 _UP = {}     # whether each external server answered at the last look
+_IDLE = {}   # since when a model's server has had no request in progress while a call of it is said to be running
 
 
 def _dirs():
@@ -180,6 +181,11 @@ def conflict(a, b):
 
 
 # ---------- what is local, and whether the manager is there ----------
+def import_applier():
+    import applier
+    return applier
+
+
 def _external(model):
     try:
         import remote
@@ -286,21 +292,52 @@ def used_lately(model, now=None):
         return False
 
 
+def _started(pid):
+    """When the process began, in the kernel's own ticks since boot (field 22 of /proc/<pid>/stat), or "" if it is gone.
+    Compared with what a lease recorded, it tells the process that wrote it from a later one that got the same number."""
+    try:
+        with open(f"/proc/{int(pid)}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError, ValueError):
+        return ""
+
+
+def _mark():
+    """What a lease or hold file says: when it was made, and which process made it."""
+    return f"{time.time()}\n{_started(os.getpid())}"
+
+
+def _genuine(p, pid):
+    """True if the file was written by the process that has this number now. Files from an older version carry no start
+    time and files from before a reboot name a number that another process holds now: neither is believed."""
+    try:
+        lines = p.read_text().split("\n")
+    except OSError:
+        return False
+    return len(lines) > 1 and lines[1] != "" and lines[1] == _started(pid)
+
+
 def lease_counts(folder=None):
-    """-> {model: running calls}. A lease whose process is gone is removed."""
+    """-> {model: running calls}. A lease whose process is gone, or is a different process that took its number, is removed."""
     out = {}
     folder = folder or LEASES
     for p in folder.glob("*") if folder.exists() else []:
         try:
             model, pid, _ = p.name.split(".", 2)
-            os.kill(int(pid), 0)
-        except ProcessLookupError:
+            int(pid)
+        except ValueError:
+            continue
+        if not _genuine(p, pid):
             p.unlink(missing_ok=True)
             continue
-        except (ValueError, PermissionError):
-            pass
-        out[p.name.split(".")[0]] = out.get(p.name.split(".")[0], 0) + 1
+        out[model] = out.get(model, 0) + 1
     return out
+
+
+def drop_leases(model):
+    """Forget every call this model is said to be running (its server was stopped or found idle)."""
+    for p in LEASES.glob(f"{model}.*") if LEASES.exists() else []:
+        p.unlink(missing_ok=True)
 
 
 def active():
@@ -356,7 +393,7 @@ def lease(model, stop=None):
             st = active()
             if model in st["group"] and model not in st["draining"] and applier.health(model) == "ready":
                 path = LEASES / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
-                path.write_text(str(time.time()))
+                path.write_text(_mark())
                 clear_want(model)   # it has its turn: it is not asking any more (a call still waiting asks again)
                 _used(model)
         if path is None:
@@ -380,7 +417,7 @@ def hold(model):
         return
     HOLDS.mkdir(parents=True, exist_ok=True)
     path = HOLDS / f"{model}.{os.getpid()}.{secrets.token_hex(3)}"
-    path.write_text(str(time.time()))
+    path.write_text(_mark())
     try:
         yield
     finally:
@@ -460,6 +497,37 @@ def step(now=None):
         held = lease_counts(HOLDS)
         running = [m for m in MODELS if not _external(m) and _running(m)]
         mine = [m for m in running if not _off(m)]   # a model you turned off is not the manager's to adopt, start or stop
+        # A call that is said to be running but whose server has had nothing in progress for a while is not running: the
+        # process died, or the connection did. Being slow is never a reason: a server that is working keeps its turn.
+        for m in MODELS:
+            if not counts.get(m) or _external(m):
+                _IDLE.pop(m, None)
+                continue
+            if _off(m) or import_applier().busy(m) is not False:   # busy, or could not be asked: believe the call
+                _IDLE.pop(m, None)
+                continue
+            if now - _IDLE.setdefault(m, now) >= __import__("tuning").get("turns.stale_seconds"):
+                drop_leases(m)
+                _IDLE.pop(m, None)
+                import thinklog
+                thinklog.abort(m)   # a caller still waiting on a dead connection is cut loose and queues its work again
+                counts = lease_counts()
+                did.append(f"drop the stale call of {m} (its server had nothing in progress)")
+        # Settings may have changed since this list was saved (groups, the number per hardware, a model switched off): whoever
+        # no longer fits goes now, whatever it is doing, in the order of the priority. Its running call is cut off.
+        kept, evict = [], []
+        for m in sorted(loaded, key=cfg["priority"].index):
+            (evict if _off(m) or blockers(m, kept) else kept).append(m)
+        for m in evict:
+            loaded.remove(m)
+            since.pop(m, None)
+            if not _off(m):
+                import thinklog
+                thinklog.abort(m)
+                drop_leases(m)
+                counts.pop(m, None)
+                stop.append(m)
+                did.append(f"remove {m} (it no longer fits the groups or the hardware numbers)")
         if not loaded and mine:   # servers already up (after an update or a restart): the ones that may work together are adopted
             for m in sorted(mine, key=cfg["priority"].index):   # by priority, and only while the groups and hardware numbers allow it
                 if not blockers(m, loaded):
@@ -523,7 +591,7 @@ def step(now=None):
         drain = {x for x in drain if x in loaded and x in in_the_way}
         # Memory: a model waiting for its turn is unloaded, and so is any server that does not belong with the ones working,
         # whenever a turn changes hands. A model that runs the same file with the same settings as a working one stays.
-        acted = any(d.startswith(("adopt", "load", "switch")) for d in did)
+        acted = any(d.startswith(("adopt", "load", "switch", "remove")) for d in did)
         for x in mine:
             if x in loaded or counts.get(x) or x in stop or any(twin(x, y) for y in loaded):
                 continue
