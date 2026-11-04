@@ -448,32 +448,30 @@ def hold(model):
         _used(model)
 
 
-def holds(model):
-    return model in active()["group"]
-
-
-def others_waiting(model):
-    """True if a model that may not work together with this one is wanted: it should give way after its current work."""
-    return any(conflict(model, m) for m in wants())
-
-
-def others_idle(model):
-    """True if no model that may not work together with this one has a call running or wanted, and its server has no
-    call in flight."""
-    import applier
-    counts, w, held = lease_counts(), wants(), lease_counts(HOLDS)
-    for m in MODELS:
-        if not conflict(model, m) or _off(m):   # a model that is switched off holds nobody up
-            continue
-        if counts.get(m) or held.get(m) or m in w or not applier.idle(m):
-            return False
-    return True
-
-
 # ---------- the manager ----------
+def _beat():
+    try:
+        BEAT.write_text(str(time.time()))
+    except OSError:
+        pass
+
+
 def _systemctl(*args):
-    # asking whether a unit is running must be quick; starting and stopping one may take a while
-    return subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=15 if args[:1] == ("is-active",) else 600)
+    """Run systemctl. Asking whether a unit is running must be quick; starting and stopping one may take a while, and the
+    heartbeat goes on meanwhile: a manager waiting for a big server to stop is working, not dead."""
+    limit = 15 if args[:1] == ("is-active",) else 600
+    p = subprocess.Popen(["systemctl", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    end = time.time() + limit
+    while True:
+        try:
+            out, err = p.communicate(timeout=1)
+            return subprocess.CompletedProcess(p.args, p.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            if time.time() > end:
+                p.kill()
+                p.communicate()
+                raise subprocess.TimeoutExpired(args, limit) from None
+            _beat()
 
 
 def _running(model):
@@ -569,12 +567,14 @@ def step(now=None):
                 stop.append(m)
                 did.append(f"remove {m} (it no longer fits the groups or the hardware numbers)")
         first, _ADOPTED[0] = not _ADOPTED[0], True
-        if first and not loaded and mine:   # servers already up (after an update or a restart): the ones that may work together are adopted
-            for m in sorted(mine, key=cfg["priority"].index):   # by priority, and only while the groups and hardware numbers allow it
-                if not blockers(m, loaded):
+        if first:   # the first look since this manager started (an update, a restart): the saved list may be out of date
+            loaded = [m for m in loaded if m in running or _external(m)]   # a local model that is not up is not loaded
+            for m in sorted(mine, key=cfg["priority"].index):   # servers already up: adopted by priority, and only while the groups
+                if m not in loaded and not blockers(m, loaded):   # and hardware numbers allow it
                     loaded.append(m)
             since = {m: now for m in loaded}
-            did.append("adopt " + "+".join(loaded))
+            if loaded:
+                did.append("adopt " + "+".join(loaded))
         # the queue: by the priority you set (Assistant, Reviewer, Sweeper, Curator at first). A higher one waits for a working one
         order = sorted(w, key=lambda m: (cfg["priority"].index(m), w[m]["at"]))
         in_the_way = set()
