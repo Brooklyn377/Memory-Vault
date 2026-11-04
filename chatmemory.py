@@ -1,8 +1,9 @@
-"""The Assistant's memory of your earlier chats. It sees them with every new message: the newest word for word, the older
-ones as one short summary each. When that memory passes the size you set, the Assistant is asked in its idle time to
-summarize the oldest chats down to the number kept word for word. If that did not shrink the memory by the percentage you
-set, the oldest summaries are moved to the vault (raw/chat-summaries, linked to their chats) until it did. Nothing here
-ever stops a chat; the size only starts the shrinking."""
+"""The Assistant's memory of one chat. In a chat it sees that chat's earlier messages and no other chat's: the newest word
+for word, the older ones as one short summary each. When one chat's memory passes the size you set, the Assistant is asked
+in its idle time to summarize that chat's oldest messages down to the number kept word for word. If that did not shrink it
+by the percentage you set, that chat's oldest summaries are moved to the vault (raw/chat-summaries, linked to their chats)
+until it did. Every chat is measured and shrunk on its own. Nothing here ever stops a chat; the size only starts the
+shrinking."""
 import json
 import re
 from datetime import datetime
@@ -12,7 +13,7 @@ import tuning
 from scrub import scrub
 
 SUMMARIES = agent.VAULT / "raw" / "chat-summaries"
-FLAG = agent.STATE / "chat-memory.json"   # {"running": true} while a compression is under way; {"failed_at": size} after one failed
+FLAG = agent.STATE / "chat-memory.json"   # {"running": [chat ids being compressed], "requested": true, "failed_at": {chat id: size}}
 
 
 def _g(key):
@@ -30,19 +31,29 @@ def _flag(**kv):
     return d
 
 
+def _list(v):
+    return list(v) if isinstance(v, list) else []
+
+
+def _dict(v):
+    return dict(v) if isinstance(v, dict) else {}
+
+
 def request():
-    """Compress now, as if the memory had passed its size: the chat watcher starts it in its next idle time."""
-    _flag(requested=True, failed_at=None)
+    """Compress now, as if every chat had passed its size: the chat watcher starts it in its next idle time."""
+    _flag(requested=True, failed_at={})
 
 
 def status(chat=""):
     """The memory bar: with a chat, how much of the memory is that chat's own (all that the Assistant sees in it)."""
     st = _flag()
-    return {"tokens": size(chat), "limit": _g("assistant.memory_tokens"), "running": bool(st.get("running")), "requested": bool(st.get("requested"))}
+    running = _list(st.get("running"))
+    return {"tokens": size(chat), "limit": _g("assistant.memory_tokens"),
+            "running": (chat in running) if chat else bool(running), "requested": bool(st.get("requested"))}
 
 
 def clear_failure():
-    _flag(failed_at=None)
+    _flag(failed_at={})
 
 
 def tokens(text):
@@ -87,9 +98,15 @@ def turns(m):
     return out
 
 
-def _work():
-    """(chats to summarize, summaries) in order: everything but the newest chats kept word for word."""
-    chats = live()
+def _chat_ids():
+    import ui_chat
+    return list(dict.fromkeys(ui_chat.chat_of(m) for m in live()))
+
+
+def _work(chat=""):
+    """(messages to summarize, summaries) of one chat in order: everything but its newest messages kept word for word."""
+    import ui_chat
+    chats = [x for x in live() if not chat or ui_chat.chat_of(x) == chat]
     plain, sums = [x for x in chats if not x.get("summary")], [x for x in chats if x.get("summary")]
     keep = _g("assistant.history")
     return (plain[:-keep] if keep else plain), sums
@@ -125,24 +142,12 @@ def _to_vault(x):
     ui_chat._save(x)
 
 
-def run(busy):
-    """Idle-time work for the chat watcher: start a compression when the memory passed its size, and carry one on.
-    busy() says a chat message is waiting; then this stops and comes back when the chat is idle again."""
+def _compress(cid, busy):
+    """Shrink one chat. False when it stopped before finishing (a message is waiting, the server was switched, or it failed)."""
     import ui_chat
-    if not ui_chat.assistant_on():
-        return
-    st = _flag()
-    old, sums = _work()
-    if not st.get("running"):
-        now = size()
-        asked = bool(st.get("requested"))
-        if not asked and (now <= _g("assistant.memory_tokens") or not (old or sums) or st.get("failed_at") == now):
-            return
-        _flag(running=True, requested=False)
-        agent.log(f"chat memory: {now:,} tokens; compressing in idle time" + (" (you asked for it)" if asked else f", over {_g('assistant.memory_tokens'):,}"))
-    for x in old:
+    for x in _work(cid)[0]:
         if busy():
-            return
+            return False
         try:
             text = _summarize(x)
             if not text:
@@ -150,21 +155,50 @@ def run(busy):
         except Exception as e:   # no retry timer: say why and wait for you
             import thinklog
             if isinstance(e, thinklog.Aborted):
-                return   # the server was switched; carry on next idle time
+                return False   # the server was switched; carry on next idle time
             why = f"{type(e).__name__}: {str(e)[:400]}"
-            _flag(running=False, failed_at=size())
+            _flag(running=[], failed_at={**_dict(_flag().get("failed_at")), cid: size(cid)})
             import questions
-            questions.ask(f"The Assistant could not compress its chat memory: {why}",
+            questions.ask(f"The Assistant could not compress the memory of a chat: {why}",
                           why="Try again runs it at the next idle time. Until then the memory just keeps growing; no chat is stopped.",
                           kind="memory", options=[{"label": "Try again", "value": "retry"}], payload={})
-            agent.log(f"chat memory: could not summarize {x['id']} ({why})")
-            return
+            agent.log(f"chat memory: could not summarize {x['id']} in chat {cid} ({why})")
+            return False
         x["summary"] = text
         ui_chat._save(x)
     target = _g("assistant.memory_tokens") * (1 - _g("assistant.memory_shrink") / 100)
-    for x in _work()[1]:   # not shrunk enough: the oldest summaries go to the vault
-        if size() <= target:
+    for x in _work(cid)[1]:   # not shrunk enough: this chat's oldest summaries go to the vault
+        if size(cid) <= target:
             break
         _to_vault(x)
-    _flag(running=False)
-    agent.log(f"chat memory: compressed to {size():,} tokens")
+    return True
+
+
+def run(busy):
+    """Idle-time work for the chat watcher: start a compression for each chat that passed its size, and carry on one that
+    was interrupted. busy() says a chat message is waiting; then this stops and comes back when the chat is idle again."""
+    import ui_chat
+    if not ui_chat.assistant_on():
+        return
+    st = _flag()
+    running, failed, asked = _list(st.get("running")), _dict(st.get("failed_at")), bool(st.get("requested"))
+    limit = _g("assistant.memory_tokens")
+    todo = []
+    for cid in _chat_ids():
+        old, sums = _work(cid)
+        now = size(cid)
+        if cid in running or (asked and (old or sums)) or (now > limit and (old or sums) and failed.get(cid) != now):
+            todo.append(cid)
+    if not todo:
+        if asked or running:
+            _flag(running=[], requested=False)
+        return
+    if todo != running or asked:
+        agent.log(f"chat memory: compressing {len(todo)} chat(s) in idle time" + (" (you asked for it)" if asked else f", over {limit:,}"))
+    _flag(running=todo, requested=False)
+    for cid in todo:
+        if not _compress(cid, busy):
+            return
+        todo = [c for c in todo if c != cid]
+        _flag(running=todo)
+        agent.log(f"chat memory: chat {cid} compressed to {size(cid):,} tokens")

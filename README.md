@@ -204,9 +204,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses
   (for example one that is too big) is not repeated; that fails with the server's reason.
-- **Its memory of earlier chats:** with every message the Assistant sees your earlier chats: the newest word for word, older
-  ones as one short summary each. When that memory passes **Chat memory size that starts compression** (30,000 tokens by
-  default), the Assistant is asked, in its idle time, to summarize the oldest chats until only **Chats kept word for word**
+- **Its memory of a chat:** with every message the Assistant sees the earlier messages of that chat only, never another chat's: the
+  newest word for word, older ones as one short summary each. Every chat is measured and compressed on its own. When one passes **Chat memory size that starts compression** (30,000 tokens by
+  default), the Assistant is asked, in its idle time, to summarize that chat's oldest messages until only **Chats kept word for word**
   (6) are left. If the memory is then not at least **Shrink the memory by** (25%) smaller than that size, the oldest
   summaries are moved to `raw/chat-summaries/` in the vault, one note per day, each summary linked to its chat in
   `raw/conversations`; the Assistant can still find them by search. Nothing stops a chat: the size only starts the
