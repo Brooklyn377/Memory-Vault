@@ -31,11 +31,14 @@ body{padding-top:52px}
 #dchat a.on{background:var(--acc,#6d9cff);color:#fff}
 #dchat a.on small{color:inherit}
 #dchat #dnew{text-align:center;font-weight:600;border:1px solid currentColor;margin:2px 0 8px}
-.crow{display:flex;align-items:center;gap:2px}
+.crow{display:flex;align-items:center;gap:2px;position:relative}
 #dchat .crow a{flex:1;min-width:0}
 #dchat .cm{display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:10px 12px;margin:0;font-size:20px;line-height:1;cursor:pointer;border-radius:50%}
-#dchat .cact{display:flex;gap:6px;padding:0 4px 6px}
-#dchat .cact button{flex:1;width:auto;margin:0;padding:6px 4px;font-size:14px}
+#dchat .cact{position:absolute;right:8px;top:100%;z-index:5;display:flex;flex-direction:column;min-width:130px;background:var(--card,#1b2029);border:1px solid var(--line,#2b3240);border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.45);overflow:hidden}
+#dchat .cact[hidden]{display:none}
+#dchat.mo .crow a,#dchat.mo .cm{pointer-events:none}
+#dchat .cact button{display:block;width:100%;margin:0;padding:12px 16px;text-align:left;font-size:15px;background:none;border:0;border-radius:0;color:inherit;cursor:pointer}
+#dchat .cact button+button{border-top:1px solid var(--line,#2b3240)}
 </style>
 <div id="dbar">
  <b>Memory vault</b>
@@ -84,9 +87,11 @@ body{padding-top:52px}
     var dots=document.createElement("button");dots.className="cm";dots.setAttribute("aria-label","Chat options");dots.textContent="⋮";
     var act=document.createElement("div");act.className="cact";act.hidden=true;
     [["Rename","rename"],["Archive","archive"],["Delete","delete"]].forEach(function(x){var b=document.createElement("button");b.textContent=x[0];b.addEventListener("click",function(){change(c,x[1])});act.append(b)});
-    dots.addEventListener("click",function(){act.hidden=!act.hidden});
-    row.append(a,dots);dl.append(row,act)})}
+    dots.addEventListener("click",function(e){e.stopPropagation();var was=act.hidden;closeMenus();if(was){act.hidden=false;ch.classList.add("mo")}});
+    row.append(a,dots,act);dl.append(row)})}
   catch(e){dl.textContent="Could not load your chats."}}
+ function closeMenus(){ch.classList.remove("mo");dl.querySelectorAll(".cact").forEach(function(m){m.hidden=true})}
+ ch.addEventListener("click",function(e){if(!e.target.closest(".cm"))closeMenus()});
  async function post(c,what,extra){var r=await fetch("/api/chat/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.assign({chat:c.id,do:what},extra||{}))});
   if(!r.ok){var j=await r.json().catch(function(){return{}});throw new Error(j.detail||"Could not do that")}}
  async function change(c,what){
