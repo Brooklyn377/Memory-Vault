@@ -138,17 +138,13 @@ def sweeper_next():
 
 
 def _chat_messages(assistant):
-    """Chat messages not answered yet: the ones the Assistant answers (assistant=True), or the ones the Reviewer does."""
-    try:
-        import ui_chat
-        pa_on = ui_chat.assistant_on()
-    except Exception:
-        pa_on = False
+    """Chat messages not answered yet: your questions, which the Assistant answers (assistant=True), or your /fix corrections,
+    which the Reviewer does."""
     out = []
     chat = STATE / "chat"
     for p in sorted(chat.glob("*.json")) if chat.is_dir() else []:
         m = jread(p, {})
-        if m.get("status") in ("queued", "working") and ((m.get("kind") == "lookup" and pa_on) == assistant):
+        if m.get("status") in ("queued", "working") and ((m.get("kind") == "lookup") == assistant):
             out.append(m)
     return out
 

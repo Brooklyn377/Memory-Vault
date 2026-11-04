@@ -172,14 +172,14 @@ device only, so your phone and your PC can differ.
 ## Chats
 **Chat** in the menu opens a list of your chats over the menu (the arrow at its top left goes back to the menu). Tap a chat to open it, or
 **+ New chat** to start another; the first message names a chat. Messages from before chats were separate are one chat, "Earlier
-messages". The chats are only a way to organise and find your conversations: the Assistant still carries its memory of all of them into every
-chat, and it has a `chats` tool to look at the list or read another chat when it needs something from there.
+messages". Each chat is separate: the Assistant remembers only the messages of the chat you are in, and compresses each chat's memory on its own.
+It has a `chats` tool to look at the list or read another chat when it needs something from there.
 
 ## Optional: the Assistant
 A fourth model you chat with. On its card on the Settings page, choose a model (local) or an external server. Like the other
 models it works when its slider is on or its server is up; there is no other switch. Plain chat messages then go to it;
 `/fix` corrections stay with the Reviewer. Your chat is also saved as a conversation, one file a day under `raw/conversations`
-in the same format as an imported chat, so the Sweeper reads it and the notes can find it. While it is not available, the Reviewer answers as before.
+in the same format as an imported chat, so the Sweeper reads it and the notes can find it. While it is not available your message waits for it; nothing else answers in its place.
 
 - **It looks things up before answering:** all vault notes and raw chats, the agent's own state and logs, and
   the Git servers it has a token for. Files named like keys, tokens, passwords or env files, and everything in

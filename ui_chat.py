@@ -1,7 +1,7 @@
 """Chat window. Messages are JSON files in <state>/chat/. The web page only queues and reads them;
 `ui_chat.py --watch` (one slow worker) answers them.
-  plain message   -> vault-only look-up: search note names and text, add linked notes, answer from those only.
-                     The Assistant answers when its switch is on and its server answers; otherwise the Reviewer.
+  plain message   -> the Assistant answers it, starting from a search of the note names and text and their linked notes.
+                     It waits for the Assistant like any call waits for its model; nothing else answers in its place.
   /fix <text>     -> the Reviewer restates what it understood; only your "Yes" files it to the inbox
 A failed Assistant answer is not retried by itself: the message is marked failed, an Ask card says why, and
 "Send again" on the Chat page queues it again.
@@ -34,10 +34,6 @@ STOP = set("the and for are was were what when where which who how why does did 
            "about into your you our not can could would should there their them they then than been being "
            "tell show give lab homelab server".split())
 
-LOOKUP_SYS = ("You answer one person's questions using ONLY the notes provided. "
-              "If the notes do not cover the question, say the vault has nothing on it. "
-              "After each fact, name the note it came from in square brackets, like [entities/foo.md]. "
-              "Be short and plain. Never guess.")
 FIX_SYS = ("The person is correcting something in their notes. Using the notes provided, restate in one or "
            "two plain sentences what you understood the correction to be and which note it affects. Then ask "
            "whether that is right. Do not say anything has been changed.")
@@ -490,9 +486,6 @@ def handle(m, who="gpt"):
         raise Cancelled()
     v = _vault()
     top, extra = retrieve(m["text"])
-    if not top and m["kind"] == "lookup" and who == "gpt":
-        m["reply"], m["sources"], m["by"] = "The vault has no notes that match that.", [], "Reviewer"
-        return
     parts = [f"NOTE {r}:\n{v.body[r][:__import__('tuning').get('chat.note_chars')]}" for r in top]
     parts += [f"LINKED NOTE {r} (start only):\n{v.body[r][:__import__('tuning').get('chat.linked_chars')]}" for r in extra]
     context = "\n\n".join(parts) or "(no matching notes found)"
@@ -504,9 +497,7 @@ def handle(m, who="gpt"):
         import assistant_tools
         m["web"] = assistant_tools.web_note()
     else:
-        system = LOOKUP_SYS if m["kind"] == "lookup" else FIX_SYS
-        kind = "QUESTION" if m["kind"] == "lookup" else "CORRECTION"
-        reply = _ask(system, f"{context}\n\n{kind}: {m['text']}", m)
+        reply = _ask(FIX_SYS, f"{context}\n\nCORRECTION: {m['text']}", m)
     if not reply:
         raise RuntimeError("empty reply")
     m["reply"], m["sources"], m["by"] = reply, top + extra, "Assistant" if who == "pa" else "Reviewer"
@@ -584,6 +575,7 @@ def archive(m):
 
 
 def watch():
+    import applier
     import reviewer
     agent.log("chat worker started")
     for m in _all():
@@ -608,10 +600,16 @@ def watch():
             time.sleep(10)
             continue
         m = todo[0]
-        who = "pa" if m["kind"] == "lookup" and assistant_on() else "gpt"
-        if who == "gpt" and not reviewer.ready():
+        who = "pa" if m["kind"] == "lookup" else "gpt"   # your questions go to the Assistant, a /fix correction to the Reviewer
+        if not (applier.usable("pa") if who == "pa" else reviewer.ready()):
+            note = ("The Assistant is not available yet: choose its model or server on the Settings page, and turn it on."
+                    if who == "pa" else "The Reviewer is not available yet.")
+            if m.get("note") != note:
+                m["note"] = note
+                _save(m)
             time.sleep(30)
             continue
+        m["note"] = ""
         m["status"] = "working"
         _save(m)
         try:
@@ -640,7 +638,7 @@ def watch():
                 import questions
                 questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',
                               why="Try again queues the message again. Skip leaves it failed in the chat. Check the Assistant's server on "
-                                  "the Settings page; with the Assistant's switch off, the Reviewer answers it.",
+                                  "the Settings page.",
                               kind="assistant", options=[{"label": "Try again", "value": "retry"}], payload={"chat": m["id"]})
                 agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
             else:

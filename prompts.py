@@ -36,7 +36,6 @@ REG = [
     ("task_update", "gpt", "To-do update reader", "Reads an update you typed on a task.", "reviewer", "UPDATE_SYS"),
     ("task_check", "gpt", "Task check", "After each chunk, closes or updates open tasks that the new facts answer.", "taskcheck", "SYS"),
     ("file_changes", "gpt", "File change tracker", "Reads chats about a saved file and records edits to its changed copy.", "filechanges", "SYS"),
-    ("chat_lookup", "gpt", "Chat: answer a question", "Answers your chat questions from the notes only.", "ui_chat", "LOOKUP_SYS"),
     ("chat_fix", "gpt", "Chat: restate a correction", "Restates a /fix correction before it is filed.", "ui_chat", "FIX_SYS"),
     ("publish_judge", "gpt", "Publish judge", "Decides whether a note is published to the shared repository.", "publisher", "PUBLISH_SYS"),
     ("curator_intro", "cur", "Note review: intro", "Opens every note-review prompt.", None, None),
