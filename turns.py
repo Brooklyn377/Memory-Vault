@@ -39,8 +39,9 @@ PRIORITY = ("pa", "gpt", "qwen", "cur")   # the default order of the queue; you 
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
 FRESH = 30         # seconds a want counts after it was last made (a waiting call repeats it every few seconds)
 QUIET = 30         # seconds after its last call that a model still counts as busy: its group is not given away between two calls
-BEAT_FRESH = 20    # seconds the manager's heartbeat counts
 STALL = 45         # seconds without a pass after which the manager is taken to be stuck and a new one is started
+BEAT_FRESH = STALL   # the same number: until then the manager is running (a slow pass on a busy machine is not a dead manager)
+_BEAT_ERROR = [""]   # why the manager could not write its heartbeat, for the Settings page
 STEP = 2           # seconds between the manager's looks
 _started = False
 _WAIT = {}   # the last reason logged for each model that is waiting
@@ -210,6 +211,10 @@ def alive():
         return time.time() - BEAT.stat().st_mtime < BEAT_FRESH
     except OSError:
         return False
+
+
+def beat_error():
+    return _BEAT_ERROR[0]
 
 
 def managed(model):
@@ -509,7 +514,12 @@ def step(now=None):
     try:
         DIR.mkdir(parents=True, exist_ok=True)
         BEAT.write_text(str(now))
-    except OSError:
+        _BEAT_ERROR[0] = ""
+    except OSError as e:
+        why = f"{type(e).__name__}: {e}"
+        if _BEAT_ERROR[0] != why:
+            agent.log(f"turns: the manager cannot write its heartbeat ({why})")
+        _BEAT_ERROR[0] = why
         return did
     stop, start = [], []
     for m in MODELS:   # a local server of a model that runs on another machine only uses memory: stop it

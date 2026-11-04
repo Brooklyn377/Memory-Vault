@@ -164,6 +164,10 @@ class _AuthHandler(urllib.request.BaseHandler):
 urllib.request.install_opener(urllib.request.build_opener(_AuthHandler))
 
 
+class Loading(RuntimeError):
+    """The server is up but still loading its model (503): not a failure, the call waits and is sent again."""
+
+
 class Aborted(RuntimeError):
     """The call was cut off because you switched or stopped its server. Callers queue the work again; not a failure."""
 
@@ -233,10 +237,15 @@ def chat(model, endpoint, body, label, slot=None, cancel=None):
     def give_up():   # while waiting for its turn: the server was switched or stopped, or the answer is no longer wanted
         if _aborted_since(model, began) or (cancel and cancel()):
             raise Aborted(f"{model} was switched or stopped, or the call was cancelled")
-    with turns.lease(model, stop=give_up):   # waits for the model's turn (model groups), local or external
-        if external:
-            return _chat_remote(model, body, label, cancel)
-        return _chat_local(model, endpoint, body, label, slot, cancel)
+    while True:
+        try:
+            with turns.lease(model, stop=give_up):   # waits for the model's turn (model groups), local or external
+                if external:
+                    return _chat_remote(model, body, label, cancel)
+                return _chat_local(model, endpoint, body, label, slot, cancel)
+        except Loading:   # its server is still loading the model: wait for it, then send the call again
+            give_up()
+            time.sleep(5)
 
 
 def _chat_local(model, endpoint, body, label, slot=None, cancel=None):
@@ -302,6 +311,8 @@ def _chat_local(model, endpoint, body, label, slot=None, cancel=None):
         except Exception:
             msg = e.reason
         failed["why"] = f"{e.code} {' '.join(str(msg).split())[:300]}"
+        if e.code == 503 and "loading" in str(msg).lower():
+            raise Loading(failed["why"]) from None
         raise RuntimeError(f"the model server refused the call ({failed['why']})") from None
     except Exception:
         if not cut.is_set():

@@ -461,9 +461,9 @@ def server_down(e):
 
 
 def retry_server_failures():
-    """Notes parked only because the server was not answering are tried again: their cards are answered with Try again."""
+    """Notes parked only because the server was down or still loading are tried again: their cards are answered with Try again."""
     for q in questions.list_questions("open"):
-        if q["kind"] == "curatecheck" and any(s in q.get("why", "") for s in ("URLError", "urlopen error", "Connection refused")):
+        if q["kind"] == "curatecheck" and any(s in q.get("why", "") for s in ("URLError", "urlopen error", "Connection refused", "503 Loading model")):
             questions.answer(q["id"], "retry")
 
 

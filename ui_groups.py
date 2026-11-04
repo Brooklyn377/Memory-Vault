@@ -23,7 +23,7 @@ def info():
                        for m in turns.MODELS],
             "loaded": [m for m in turns.MODELS if (applier.health(m) == "ready" if _external(m) else applier._active(m))],
             "turn": st["group"], "waiting": [m for m in turns.wants() if m not in st["group"] or m in st["draining"]], "why": st["why"],
-            "manager": turns.alive()}
+            "manager": turns.alive(), "manager_error": turns.beat_error()}
 
 
 def register(app, authed):
@@ -85,7 +85,7 @@ function collect(){return boxes.map(function(b){return{models:Object.keys(b.cb).
 function showStatus(d){
  const nm=function(a){return a.map(function(k){return(MODELS.find(function(m){return m.key===k})||{}).name||k}).join(", ")||"none"};
  const why=Object.keys(d.why||{}).filter(function(k){return d.waiting.indexOf(k)>=0}).map(function(k){return"The "+nm([k])+" "+d.why[k]+"."});
- status.replaceChildren(h("div",{},(d.manager?"":"The turn manager is not running yet, so models are not switched. ")+"Loaded now: "+nm(d.loaded)+(d.waiting.length?" · waiting for a turn: "+nm(d.waiting):"")+"."),...why.map(function(t){return h("div",{},t)}))}
+ status.replaceChildren(h("div",{},(d.manager?"":"The turn manager is not running yet, so models are not switched"+(d.manager_error?" ("+d.manager_error+")":"")+". ")+"Loaded now: "+nm(d.loaded)+(d.waiting.length?" · waiting for a turn: "+nm(d.waiting):"")+"."),...why.map(function(t){return h("div",{},t)}))}
 async function load(){try{const d=await api("/api/groups");MODELS=d.models;mins.value=d.turn_minutes;boxes=[];order=d.priority;drawPrio();
  list.replaceChildren(...d.groups.map(function(g){return groupBox(g.models)}));
  showStatus(d)}catch(e){}}
