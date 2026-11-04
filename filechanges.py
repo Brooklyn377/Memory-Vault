@@ -194,13 +194,9 @@ def main(args):
 
 def _idle():
     import urllib.request
-    import swap
     import turns
     if turns.managed("qwen"):   # taking turns: the call itself waits for the Sweeper's turn
         return True
-    if swap.holding():
-        turns.want("qwen")
-        return False
     try:
         with urllib.request.urlopen("http://127.0.0.1:8080/slots", timeout=3) as r:
             return not any(x.get("is_processing") for x in json.load(r))

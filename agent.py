@@ -3,7 +3,6 @@ import json
 import re
 import sys
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -176,35 +175,9 @@ def run(note_path):
 
 
 def model_ready():
-    """llama-server answers /health with 200 only once the model is fully loaded."""
-    import swap
-    try:
-        import remote
-        if remote.enabled("qwen"):
-            return remote.health("qwen") == "ready"
-    except Exception:
-        pass
-    if swap.holding():
-        return True
-    try:
-        import turns
-        if turns.managed("qwen"):   # local and taking turns: a call waits for its turn
-            return True
-    except Exception:
-        pass
-    try:
-        import power
-        if power.off("qwen"):
-            return True
-    except Exception:
-        pass
-    base = M["endpoint"].rstrip("/")
-    try:
-        with urllib.request.urlopen(base[:-3] + "/health" if base.endswith("/v1")
-                                    else base + "/health", timeout=5) as r:
-            return r.status == 200
-    except Exception:
-        return False
+    """The Sweeper's server answers, or a call to it can wait for it (applier.usable)."""
+    import applier
+    return applier.usable("qwen")
 
 
 def watch():

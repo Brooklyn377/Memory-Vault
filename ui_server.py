@@ -439,7 +439,7 @@ addEventListener("beforeunload",function(ev){if(dirty||[...ownEdits].some(functi
 async function stat(){clearTimeout(T);
  const [d,st]=await Promise.all([api("/api/server/info"),api("/api/server/status")]);let busy=false;
  for(const m of IDS){const s=Object.assign({},d.servers[m],st[m]),e=E[m];if(!e)continue;
-  e.st.textContent="Server: "+(m==="cur"&&s.health==="down"?"unloaded (loads when the curator runs)":m==="pa"&&s.health==="down"?"not loaded":s.health)+(s.pending?" · change queued, waiting for idle":"");
+  e.st.textContent="Server: "+(s.health==="down"?"not loaded (loads when it has work)":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
   // llama.cpp rounds the context up to a multiple of 256, so only a real difference is shown
   if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
@@ -448,7 +448,7 @@ async function stat(){clearTimeout(T);
    e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
    if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
   e.cancel.style.display=s.pending?"":"none";
-  if((s.health!=="ready"&&!((m==="cur"||m==="pa")&&s.health==="down"))||s.pending)busy=true}
+  if((s.health!=="ready"&&s.health!=="down")||s.pending)busy=true}
  const l=d.last;
  lastEl.textContent=!l?"No server change made yet.":l.error?"Last change ("+NM[l.model]+") failed and was rolled back: "+l.error:"Last change, "+NM[l.model]+": "+fmt(l.before)+"  →  "+fmt(l.after);
  if(busy)T=setTimeout(stat,2000)}

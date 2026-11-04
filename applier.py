@@ -79,13 +79,21 @@ def health(model):
 
 
 def usable(model):
-    """True if calls to this model can go ahead: it answers now, or it is local and takes turns (a call then waits for
-    its turn and the model is loaded for it)."""
+    """True if calls to this model can go ahead: its server answers now; or it is switched off (its calls wait until you
+    load it or turn it on); or it is local and takes turns (a call waits for its turn and the model is loaded for it).
+    The same test for all four models."""
     if health(model) == "ready":
         return True
     try:
+        import remote
+        if remote.enabled(model):
+            return False
+    except Exception:
+        pass
+    try:
+        import power
         import turns
-        return turns.managed(model)
+        return power.off(model) or turns.managed(model)
     except Exception:
         return False
 

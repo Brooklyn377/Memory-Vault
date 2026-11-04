@@ -269,13 +269,6 @@ def wants(now=None):
                 out[m] = d
         except (OSError, ValueError, KeyError):
             continue
-    try:
-        import power
-        import swap
-        if swap.holding():
-            out.setdefault("cur", {"at": now})
-    except Exception:
-        pass
     return {m: d for m, d in out.items() if not _off(m)}
 
 

@@ -3,13 +3,12 @@ It works through the notes the Sweeper was least sure about, verifies facts agai
 connections, asks about doubts and prunes notes that hold nothing useful. Like every model it simply asks for its
 turn when it has a note to review (turns.py); wherever its server runs, the manager and the groups decide when.
 A note is never aborted.
-  curator.py --watch | --release | --once | --show REL | --rank"""
+  curator.py --watch | --once | --show REL | --rank"""
 import hashlib
 import json
 import os
 import re
 import signal
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -24,7 +23,6 @@ import questions
 import reviewer
 import reviewgate
 import settings
-import swap
 import thinklog
 from bootstrap import slug
 from graph import Vault, as_list
@@ -32,7 +30,7 @@ from graph import Vault, as_list
 VAULT, STATE = agent.VAULT, agent.STATE
 CFG_FILE, DATA = STATE / "curator_cfg.json", STATE / "curator.json"
 STATUS, LOG, QUEUE = STATE / "curator_status.json", STATE / "curator_log.jsonl", STATE / "curator_queue"
-ENDPOINT, UNIT = "http://127.0.0.1:8082/v1", applier.UNIT["cur"]
+ENDPOINT = "http://127.0.0.1:8082/v1"
 POLL = 20
 START, END = "<!-- curator:start -->", "<!-- curator:end -->"
 CHARS_PER_TOKEN = 2.2  # notes full of IPs and paths use many short tokens; measure with the tokenize check
@@ -97,18 +95,6 @@ def status(state, why="", note=""):
 def log(row):
     with open(LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": datetime.now().isoformat(timespec="seconds"), **row}, ensure_ascii=False) + "\n")
-
-
-# ---------- swapping the models ----------
-def unit_active():
-    return subprocess.run(["systemctl", "is-active", "--quiet", UNIT], timeout=10).returncode == 0
-
-
-def release():
-    if swap.holding():
-        status("loading", "unloading the curator; the next local model is loaded when it is wanted")
-    swap.restore()   # first: the turn is given back, so the manager does not start the curator's server again
-    subprocess.run(["systemctl", "stop", UNIT], timeout=300)
 
 
 # ---------- notes and how unsure the Sweeper was ----------
@@ -574,8 +560,6 @@ def summary():
 def watch():
     agent.log("curator started")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
-    if swap.holding():   # a hold left by an older version would keep the other models waiting
-        swap.restore()
     import power
     while True:
         cfg = load_cfg()
@@ -597,9 +581,6 @@ if __name__ == "__main__":
     a = sys.argv
     if "--watch" in a:
         watch()
-    elif "--release" in a:
-        if swap.holding() or unit_active():
-            release()
     elif "--once" in a:
         if applier.health("cur") != "ready":
             sys.exit("the curator server is not running: systemctl start memory-curator-llm")

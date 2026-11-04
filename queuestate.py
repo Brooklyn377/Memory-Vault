@@ -79,8 +79,7 @@ def _alive(pid):
 
 
 def now_state():
-    import swap
-    calls, held = inflight(), swap.holding()
+    calls = inflight()
     marker = jread(STATE / "sweep_now.json", {})
     out = {}
     for m in KEY:
@@ -91,12 +90,7 @@ def now_state():
             ext = False
         b = (min(8, sum(1 for x in calls if x["m"] == KEY[m] and time.time() - x["t"] / 1e9 < 10800)) if ext else busy(PORT[m]))
         if b is None:
-            if m == "curator":
-                state = "unloaded (loads when it runs)"
-            elif m == "assistant":
-                state = "not loaded (loads when you chat)" if not __import__("power").off("pa") else "unloaded by you"
-            else:
-                state = "unloaded while the curator works" if held else ("unloaded by you" if __import__("power").off(KEY[m]) else "not answering")
+            state = "unloaded by you" if __import__("power").off(KEY[m]) else "not loaded (loads when it has work)"
             out[m] = {"state": state, "calls": []}
             continue
         items = []

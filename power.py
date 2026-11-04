@@ -60,13 +60,11 @@ def enabled(m):
 
 def state(m):
     import remote
-    import swap
     en = enabled(m)
     if remote.enabled(m):
         loaded = applier.health(m) == "ready"
         return {"enabled": en, "state": "loaded" if loaded else "unloaded", "external": True,
-                "detail": f"External server {remote.base(m)}" + ("" if en else ". Turned off: its calls wait until you turn it on.")
-                + (" Chat answers with the Reviewer meanwhile." if m == "pa" and not en else "")}
+                "detail": f"External server {remote.base(m)}" + ("" if en else ". Turned off: its calls wait until you turn it on.")}
     h = applier.health(m)
     if h == "ready":
         return {"enabled": en, "state": "loaded", "detail": ""}
@@ -76,12 +74,11 @@ def state(m):
     if en and turns.managed(m) and m in turns.wants():
         held = [turns.NICE[x] for x in turns.active()["group"] if x != m]
         return {"enabled": en, "state": "waiting", "detail": "Waiting for its turn" + (f": {', '.join(held)} {'has' if len(held) == 1 else 'have'} it now." if held else ".")}
-    if m == "pa" and not settings.get("pa")["model_file"]:
+    if not settings.get(m)["model_file"]:
         return {"enabled": en, "state": "unloaded", "detail": "No model yet. To run it here: choose its model file under Server and press "
                 "Apply all. To run it on another machine: set Where it runs to a server and press Apply all."}
     if not en:
-        return {"enabled": en, "state": "unloaded", "detail": "Off. It takes no turns and its calls wait until you turn it on."
-                + (" Unloaded while the Curator works." if swap.holding() and m != "cur" else "")}
+        return {"enabled": en, "state": "unloaded", "detail": "Off. It takes no turns and its calls wait until you turn it on."}
     return {"enabled": en, "state": "unloaded", "detail": "Not loaded. It is loaded when it has work and its turn comes (Settings, Model groups)."}
 
 
@@ -111,8 +108,8 @@ def load(m):
         remote.runner(m, "POST", "/start", {})
         agent.log(f"settings: {NICE[m]} (external server) started by you")
         return
-    if m == "pa" and not settings.get("pa")["model_file"]:
-        raise ValueError("Choose the Assistant's model file under Server and press Apply all first.")
+    if not settings.get(m)["model_file"]:
+        raise ValueError(f"Choose the {NICE[m]}'s model file under Server and press Apply all first.")
     if applier._active(m):
         return
     applier.write_env(m, settings.load()[m])
@@ -127,7 +124,6 @@ def unload(m):
         if time.time() - k.stat().st_mtime > 120:
             k.unlink(missing_ok=True)
     import remote
-    import swap
     import thinklog
     thinklog.abort(m)
     if remote.enabled(m):
@@ -141,12 +137,8 @@ def unload(m):
         agent.log(f"settings: {NICE[m]} (external server) stopped by you; its running calls were cut off")
         return note
     note = ""
-    if m == "cur":
-        if applier._active(m) or swap.holding():
-            _flag(m, "killed").write_text("1")   # the Curator does not count this as a failure
-        if swap.holding():
-            swap.restore()
-            note = "The Curator's turn was given back."
+    if applier._active(m):
+        _flag(m, "killed").write_text("1")   # the caller does not count this as a failure
     subprocess.run(["systemctl", "stop", "--no-block", UNIT[m]], timeout=30)
     subprocess.run(["systemctl", "kill", "--signal=SIGKILL", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} unloaded by you")

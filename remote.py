@@ -21,7 +21,6 @@ KEYDIR = Path("/etc/memory-agent")
 PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082, "pa": 8083}
 UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm", "pa": "memory-assistant-llm"}
 NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
-ON_DEMAND = ("cur", "pa")   # no local server is kept running for these: nothing to wait for or start when going back
 NAME = re.compile(r"[\w.:/@\-]{1,200}")
 _cache = {}
 
@@ -436,9 +435,7 @@ def save(model, d):
         subprocess.run(["systemctl", "stop", "--no-block", UNIT[model]], timeout=30)
         agent.log(f"settings: {NICE[model]} now uses the external server {cfg['url']}")
     elif not cfg["enabled"] and was:
-        if model not in ON_DEMAND:
-            subprocess.run(["systemctl", "start", "--no-block", UNIT[model]], timeout=30)
-        agent.log(f"settings: {NICE[model]} switched back to its local model")
+        agent.log(f"settings: {NICE[model]} switched back to its local model; the manager loads it when it has work")
 
 
 def public(model):

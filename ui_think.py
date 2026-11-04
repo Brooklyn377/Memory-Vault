@@ -182,14 +182,13 @@ def _state(model, whole_server=False):
         with urllib.request.urlopen(req, timeout=2) as r:
             sl = json.load(r)
     except Exception:
-        import swap
         try:
             import remote
             if remote.enabled(model):   # no /slots from that server: what this agent sent it, from the log
                 return _from_log(model)
         except Exception:
             pass
-        return {"up": False, "swapped": swap.holding()}
+        return {"up": False}
     busy = [x for x in sl if x.get("is_processing")]
 
     def dec(x):
@@ -365,7 +364,7 @@ async function boot(){
 function show(m,s){
   const e=E[m],q=S[m];
   if(!e||!e.st||!s)return;   // a model without a row on this page
-  if(!s.up){e.st.textContent=m==="pa"?"not loaded":m==="cur"?(s.swapped?"loading":"unloaded"):(s.swapped?"unloaded (curator is working)":"server down");e.st.className="st";e.nm.innerHTML="this call <b>0</b> · <b>–</b> tok/s · context <b>–</b>";return;}
+  if(!s.up){e.st.textContent="not loaded";e.st.className="st";e.nm.innerHTML="this call <b>0</b> · <b>–</b> tok/s · context <b>–</b>";return;}
   const d=s.busy?s.decoded:0;
   let ph="idle";
   if(s.busy)ph=s.decoded>0?(q.kind==="r"?"thinking":q.kind==="o"?"answering":"generating"):"reading prompt";

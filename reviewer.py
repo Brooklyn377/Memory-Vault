@@ -9,7 +9,6 @@ import json
 import re
 import sys
 import time
-import urllib.request
 from datetime import datetime
 
 import agent
@@ -41,32 +40,9 @@ UPDATE_SYS = (
 
 
 def ready():
-    import swap
-    try:
-        import remote
-        if remote.enabled("gpt"):
-            return remote.health("gpt") == "ready"
-    except Exception:
-        pass
-    if swap.holding():
-        return True
-    try:
-        import turns
-        if turns.managed("gpt"):   # local and taking turns: a call waits for its turn
-            return True
-    except Exception:
-        pass
-    try:
-        import power
-        if power.off("gpt"):
-            return True
-    except Exception:
-        pass
-    try:
-        with urllib.request.urlopen(ENDPOINT[:-3] + "/health", timeout=5) as r:
-            return r.status == 200
-    except Exception:
-        return False
+    """The Reviewer's server answers, or a call to it can wait for it (applier.usable)."""
+    import applier
+    return applier.usable("gpt")
 
 
 def rask(system, user, tokens=None):
