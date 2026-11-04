@@ -35,9 +35,10 @@ def request():
     _flag(requested=True, failed_at=None)
 
 
-def status():
+def status(chat=""):
+    """The memory bar: with a chat, how much of the memory is that chat's own (all that the Assistant sees in it)."""
     st = _flag()
-    return {"tokens": size(), "limit": _g("assistant.memory_tokens"), "running": bool(st.get("running")), "requested": bool(st.get("requested"))}
+    return {"tokens": size(chat), "limit": _g("assistant.memory_tokens"), "running": bool(st.get("running")), "requested": bool(st.get("requested"))}
 
 
 def clear_failure():
@@ -59,8 +60,9 @@ def live(before=None):
             and not m.get("vaulted") and (before is None or m["id"] < before)]
 
 
-def size():
-    return sum(cost(m) for m in live())
+def size(chat=""):
+    import ui_chat
+    return sum(cost(m) for m in live() if not chat or ui_chat.chat_of(m) == chat)
 
 
 def _when(m):

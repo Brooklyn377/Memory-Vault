@@ -667,7 +667,7 @@ def register(app, authed):
         if before:
             return {"messages": page, "more": len(msgs) > len(page)}
         import chatmemory
-        return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(), "server": usage_info()}
+        return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(chat), "server": usage_info()}
 
     @router.get("/api/chat/list")
     def chat_chats(request: Request):
