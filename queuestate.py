@@ -11,8 +11,7 @@ from history import chat_name
 STATE, VAULT = agent.STATE, agent.VAULT
 KEY = {"sweeper": "qwen", "reviewer": "gpt", "curator": "cur", "assistant": "pa"}
 PORT = {"sweeper": 8080, "reviewer": 8081, "curator": 8082, "assistant": 8083}
-JOB = {"sweep": "Reading a chat part", "ask": "Reading an inbox note", "review": "Reviewing",
-       "chat": "Answering a chat message", "assist": "Looking something up for a chat answer", "curate": "Reviewing in depth"}
+JOB = __import__("thinklog").LABELS
 LIMIT = 200
 _cache = {}
 

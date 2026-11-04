@@ -117,6 +117,12 @@ def _with_sampling(model, label, body):
         return body
 
 
+# What each kind of call is, in plain words: the Thinking, Queue and History pages show these instead of the short label.
+LABELS = {"sweep": "Reading a chat part", "ask": "Reading a note or file", "review": "Reviewing",
+          "chat": "Answering a chat message", "assist": "Looking something up for a chat answer",
+          "curate": "Reviewing a note in depth", "job": "Doing a job for the Assistant", "memory": "Summarizing a chat for memory"}
+
+
 def describe(label, body):
     """A short plain description of what a call is about, for the Queue and History pages."""
     import re

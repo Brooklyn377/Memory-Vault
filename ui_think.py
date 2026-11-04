@@ -40,7 +40,7 @@ def _records(path, model):
 def _row(r):
     # t and c go out as strings: nanosecond times are too big for a JavaScript number
     return {"t": str(r["t"]), "m": r["m"], "c": str(r.get("c", "")), "k": r.get("k"),
-            "s": r.get("s", ""), "n": r.get("n", 0)}
+            "s": r.get("s", ""), "n": r.get("n", 0), "w": r.get("w", "")}
 
 
 def _older_for(model, before, limit):
@@ -246,7 +246,7 @@ def register(app, authed):
     def think_page(request: Request):
         if not authed(request):
             return RedirectResponse(_login_path(app), status_code=303)
-        return ui_extra.PAGE.replace("__BODY__", THINK_HTML).replace("__ACTIVE__", "think")
+        return ui_extra.PAGE.replace("__BODY__", THINK_HTML.replace("__LABELS__", json.dumps(thinklog.LABELS))).replace("__ACTIVE__", "think")
 
     app.include_router(router)
 
@@ -257,7 +257,8 @@ THINK_HTML = r"""
 .chat{flex:none;height:60vh;overflow-y:auto;overflow-anchor:none;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
 .chat .more{color:var(--mut);text-align:center;font-size:12px;padding:2px 0 8px}
 .blk{border-left:3px solid var(--c);padding:2px 0 2px 10px;margin:0 0 14px}
-.bh{font:700 12px sans-serif;color:var(--c);margin-bottom:3px}
+.bh{font:700 12px sans-serif;color:var(--c);margin-bottom:3px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ba{font:12px sans-serif;color:var(--mut);margin:0 0 4px;white-space:pre-wrap;word-break:break-word}
 .bb{white-space:pre-wrap;word-break:break-word}
 .bb .r{color:var(--mut);font-style:italic}
 .bot{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:8px 10px}
@@ -287,6 +288,7 @@ THINK_HTML = r"""
 (function(){
 const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"},pa:{name:"Assistant",color:"#e879f9"}};
 const IDS=Object.keys(M);
+const LABELS=__LABELS__;
 const chat=document.getElementById("chat"),head=document.getElementById("head"),cv=document.getElementById("cv"),tot=document.getElementById("tot");
 const B={},S={qwen:{kind:"",prev:null},gpt:{kind:"",prev:null},cur:{kind:"",prev:null},pa:{kind:"",prev:null}},E={};
 let oldest="0",newest="0",more=false,loading=false,ticking=false,rates={qwen:[],gpt:[],cur:[],pa:[]};
@@ -297,18 +299,20 @@ const fmt=n=>Number(n||0).toLocaleString();
 function headText(){head.textContent=more?"↑ scroll up for older":(oldest==="0"?"waiting for the first model call…":"— start of log —");}
 
 function hdr(o){
-  o.h.textContent=M[o.m].name+(o.lab?" · "+o.lab:"")+" · "+new Date(o.t).toLocaleTimeString()+(o.tok!=null?" · "+fmt(o.tok)+" tokens":"")+(o.why?" · "+o.why:"");
+  o.h.textContent=(o.a.hidden?"▸ ":"▾ ")+M[o.m].name+(o.lab?" · "+(LABELS[o.lab]||o.lab):"")+" · "+new Date(o.t).toLocaleTimeString()+(o.tok!=null?" · "+fmt(o.tok)+" tokens":"")+(o.why?" · "+o.why:"");
 }
 function mk(r){
   const el=document.createElement("div");el.className="blk";el.style.setProperty("--c",M[r.m].color);
   const h=document.createElement("div");h.className="bh";
+  const a=document.createElement("div");a.className="ba";a.hidden=true;a.textContent="Nothing was recorded about what this call was for.";
   const b=document.createElement("div");b.className="bb";
-  el.append(h,b);
-  const o={el:el,h:h,b:b,m:r.m,t:Math.floor(Number(r.c)/1e6),lab:"",tok:null,kind:""};
+  el.append(h,a,b);
+  const o={el:el,h:h,a:a,b:b,m:r.m,t:Math.floor(Number(r.c)/1e6),lab:"",tok:null,kind:""};
+  h.onclick=function(){a.hidden=!a.hidden;hdr(o)};   // tap the heading: what the call is about
   hdr(o);B[r.c]=o;return o;
 }
 function line(o,r){
-  if(r.k==="start"){o.lab=r.s;hdr(o);return null;}
+  if(r.k==="start"){o.lab=r.s;o.a.textContent=(r.w||"Nothing was recorded about what this call was for.")+"\n(kind of call: "+r.s+")";hdr(o);return null;}
   if(r.k==="end"){o.tok=r.n;const s=r.s||"",i=s.search(/\((failed|cut off)/);o.why=i<0?"":s.slice(i+1,-1);hdr(o);return null;}
   const s=document.createElement("span");s.textContent=r.s;if(r.k==="r")s.className="r";return s;
 }
