@@ -180,12 +180,12 @@ def repos():
     return "\n".join(out) or "No Git servers the Assistant has a token for."
 
 
-CHAT = {"id": "", "searched": False, "web": [], "web_calls": 0}   # the chat message being answered: its id (so a queued job
-# records where it came from), whether the vault and Git servers were searched yet, and the web looked at so far
+CHAT = {"id": "", "web": [], "web_calls": 0}   # the chat message being answered: its id (so a queued job
+# records where it came from), and the web looked at so far
 
 
 def start_message(mid):
-    CHAT.update(id=mid, searched=False, web=[], web_calls=0)
+    CHAT.update(id=mid, web=[], web_calls=0)
 
 
 def _web_ready():
@@ -193,9 +193,6 @@ def _web_ready():
     import webtools
     if not webtools.allowed("pa"):
         return "Web access is off. The person turns it on under Settings, Web access; until then answer from the notes and Git servers only."
-    if not CHAT["searched"]:
-        return ("Search the vault and the Git servers first (search with where \"all\") and use the web only if they have nothing "
-                "on it.")
     limit = _t("assistant.web_calls")
     if CHAT["web_calls"] >= limit:
         return f"That is the limit of {limit} web look-ups for one message. Answer from what you have."
@@ -203,9 +200,7 @@ def _web_ready():
 
 
 def do_search(a):
-    out = search(a.get("text", ""), a.get("where", "all"))
-    CHAT["searched"] = True
-    return out
+    return search(a.get("text", ""), a.get("where", "all"))
 
 
 def web_search(query):
@@ -278,8 +273,9 @@ def chats_tool(a):
     import ui_chat
     cid = str(a.get("id") or "").strip()
     if not cid:
-        rows = ui_chat.chats()
-        return "\n".join(f"- {c['id']}: {c['title']} ({c['count']} message{'s' if c['count'] != 1 else ''}, last {c['last'][:8]})" for c in rows) or "No chats yet."
+        rows = ui_chat.chats(True)
+        return "\n".join(f"- {c['id']}: {c['title']}{' (archived)' if c['archived'] else ''} ({c['count']} message{'s' if c['count'] != 1 else ''}, last {c['last'][:8]})"
+                         for c in rows) or "No chats yet."
     msgs = [m for m in ui_chat._all() if ui_chat.chat_of(m) == cid and m.get("reply")]
     if not msgs:
         raise ValueError(f"there is no chat {cid}, or it has no replies yet: list your chats first")

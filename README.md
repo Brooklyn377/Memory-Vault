@@ -222,7 +222,7 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   for one chat stops after **File look-up time per chat** (60 s). The Assistant can also propose an updated file, or an edit of one, with its
   `updated_file` tool; it waits for your approval and writes only to the vault. Nothing here pushes to Git.
 - **The web (Settings → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
-  own SearXNG) and read pages, but only after it has searched the vault and your Git servers and found nothing, and
+  own SearXNG) and read pages (its prompt says to try the vault and your Git servers first, but nothing enforces it), and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,
   N pages" with **See more** for every query and page; the reply itself names its sources. This container makes the
   requests: pages on your own network, this machine and link-local addresses are refused (also after a redirect),

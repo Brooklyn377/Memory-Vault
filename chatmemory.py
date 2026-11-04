@@ -69,8 +69,10 @@ def _when(m):
 
 
 def turns(m):
-    """The earlier chats as messages for the model: the summaries together first, then the chats word for word."""
-    chats = live(m["id"])
+    """The earlier messages of THIS chat as messages for the model: the summaries together first, then word for word.
+    Other chats are not shown; a new chat starts empty."""
+    import ui_chat
+    chats = [x for x in live(m["id"]) if ui_chat.chat_of(x) == ui_chat.chat_of(m)]
     sums = [x for x in chats if x.get("summary")]
     out = []
     if sums:

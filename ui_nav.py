@@ -31,6 +31,11 @@ body{padding-top:52px}
 #dchat a.on{background:var(--acc,#6d9cff);color:#fff}
 #dchat a.on small{color:inherit}
 #dchat #dnew{text-align:center;font-weight:600;border:1px solid currentColor;margin:2px 0 8px}
+.crow{display:flex;align-items:center;gap:2px}
+#dchat .crow a{flex:1;min-width:0}
+#dchat .cm{display:block;width:auto;flex:none;background:none;border:0;color:inherit;padding:10px 12px;margin:0;font-size:20px;line-height:1;cursor:pointer;border-radius:50%}
+#dchat .cact{display:flex;gap:6px;padding:0 4px 6px}
+#dchat .cact button{flex:1;width:auto;margin:0;padding:6px 4px;font-size:14px}
 </style>
 <div id="dbar">
  <b>Memory vault</b>
@@ -72,10 +77,26 @@ body{padding-top:52px}
   ch.classList.add("open");dl.textContent="Loading your chats...";
   try{var r=await fetch("/api/chat/list");if(!r.ok)throw 0;var d=await r.json();dl.textContent="";
    if(!d.chats.length)dl.textContent="No chats yet.";
-   d.chats.forEach(function(c){var a=document.createElement("a");a.href="/chat#"+encodeURIComponent(c.id);
+   d.chats.forEach(function(c){var row=document.createElement("div");row.className="crow";
+    var a=document.createElement("a");a.href="/chat#"+encodeURIComponent(c.id);
     a.append(c.title||"Chat");var sm=document.createElement("small");sm.textContent=day(c.last)+" · "+c.count+(c.count===1?" message":" messages");a.append(sm);
-    if(here()===c.id)a.classList.add("on");dl.append(a)})}
+    if(here()===c.id)a.classList.add("on");
+    var dots=document.createElement("button");dots.className="cm";dots.setAttribute("aria-label","Chat options");dots.textContent="⋮";
+    var act=document.createElement("div");act.className="cact";act.hidden=true;
+    [["Rename","rename"],["Archive","archive"],["Delete","delete"]].forEach(function(x){var b=document.createElement("button");b.textContent=x[0];b.addEventListener("click",function(){change(c,x[1])});act.append(b)});
+    dots.addEventListener("click",function(){act.hidden=!act.hidden});
+    row.append(a,dots);dl.append(row,act)})}
   catch(e){dl.textContent="Could not load your chats."}}
+ async function post(c,what,extra){var r=await fetch("/api/chat/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.assign({chat:c.id,do:what},extra||{}))});
+  if(!r.ok){var j=await r.json().catch(function(){return{}});throw new Error(j.detail||"Could not do that")}}
+ async function change(c,what){
+  try{
+   if(what==="rename"){var t=prompt("Name for this chat (empty: named from its first message):",c.title||"");if(t===null)return;await post(c,"rename",{title:t})}
+   else if(what==="archive"){await post(c,"archive")}
+   else{var ok=window.holdConfirm?await window.holdConfirm("Delete this chat?","All its messages are deleted. The copy filed in the vault stays."):confirm("Delete this chat and all its messages? The copy filed in the vault stays.");
+    if(!ok)return;await post(c,"delete");if(here()===c.id){location.href="/chat#new";if(location.pathname==="/chat")location.reload()}}
+   openChats()}
+  catch(e){alert(e.message||"Could not do that")}}
  var chatLink=dr.querySelector('a[href="/chat"]');
  chatLink.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openChats()});
  document.getElementById("dback").addEventListener("click",function(){ch.classList.remove("open")});

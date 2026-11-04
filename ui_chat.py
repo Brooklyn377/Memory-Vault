@@ -116,15 +116,67 @@ def chat_of(m):
     return m.get("chat") or "earlier"
 
 
-def chats():
-    """Your chats, the one you wrote in last first: [{"id", "title", "last" (the newest message's id), "count"}]."""
-    out = {}
+META = STATE / "chat_meta.json"   # {chat id: {"title": a name you gave it, "archived": true}}
+
+
+def _meta():
+    try:
+        d = json.loads(META.read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _set_meta(cid, **kv):
+    d = _meta()
+    e = {**d.get(cid, {}), **kv}
+    e = {k: v for k, v in e.items() if v}   # an empty name or archived=False is no entry at all
+    if e:
+        d[cid] = e
+    else:
+        d.pop(cid, None)
+    tmp = META.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, indent=1, ensure_ascii=False))
+    tmp.replace(META)
+
+
+def chats(archived=False):
+    """Your chats, the one you wrote in last first: [{"id", "title", "last" (the newest message's id), "count", "archived"}].
+    Archived ones are left out unless archived=True."""
+    out, meta = {}, _meta()
     for m in _all():
         c = out.setdefault(chat_of(m), {"id": chat_of(m), "title": "", "last": "", "count": 0})
         if not c["title"]:
             c["title"] = "Earlier messages" if c["id"] == "earlier" else " ".join(m["text"].split())[:60]
         c["last"], c["count"] = m["id"], c["count"] + 1
-    return sorted(out.values(), key=lambda c: c["last"], reverse=True)
+    for c in out.values():
+        e = meta.get(c["id"], {})
+        c["title"], c["archived"] = e.get("title") or c["title"], bool(e.get("archived"))
+    return sorted((c for c in out.values() if archived or not c["archived"]), key=lambda c: c["last"], reverse=True)
+
+
+def rename_chat(cid, title):
+    if not any(c["id"] == cid for c in chats(True)):
+        raise ValueError("there is no such chat")
+    _set_meta(cid, title=" ".join(str(title or "").split())[:80])   # empty: back to the name from its first message
+
+
+def archive_chat(cid):
+    """Take a chat out of the Chats panel. Its messages stay, the Assistant still remembers it, and it stays in the vault."""
+    if not any(c["id"] == cid for c in chats(True)):
+        raise ValueError("there is no such chat")
+    _set_meta(cid, archived=True)
+
+
+def delete_chat(cid):
+    """Delete every message of a chat, as removing each one would. A copy filed in raw/conversations stays there."""
+    mine = [m for m in _all() if chat_of(m) == cid]
+    if not mine:
+        raise ValueError("there is no such chat")
+    for m in mine:
+        remove(m["id"])
+    _set_meta(cid, title="", archived=False)
+    return len(mine)
 
 
 def send(text, chat=""):
@@ -621,6 +673,25 @@ def register(app, authed):
     def chat_chats(request: Request):
         need(request)
         return {"chats": chats()}
+
+    @router.post("/api/chat/chat")
+    async def chat_change(request: Request):
+        """One chat: rename it, archive it, or delete it with all its messages."""
+        need(request)
+        d = await request.json()
+        cid, what = str(d.get("chat", "")), str(d.get("do", ""))
+        try:
+            if what == "rename":
+                rename_chat(cid, d.get("title"))
+            elif what == "archive":
+                archive_chat(cid)
+            elif what == "delete":
+                return {"ok": True, "deleted": delete_chat(cid)}
+            else:
+                raise ValueError("rename, archive or delete")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
 
     @router.post("/api/chat/compress")
     async def chat_compress(request: Request):
