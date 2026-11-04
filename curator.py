@@ -572,7 +572,7 @@ def sig():
             parts.append("x")
     for f in (CFG_FILE, settings.FILE):
         parts.append(str(f.stat().st_mtime_ns if f.exists() else 0))
-    parts.append("manual" if _mine(load_cfg()) else "-")
+    parts.append("manual" if _mine() else "-")
     return "|".join(parts)
 
 
@@ -588,24 +588,10 @@ def summary():
     return {"cfg": load_cfg(), "status": load_status(), "stats": d["stats"], "checked": len(d["notes"]), "total": n}
 
 
-def _manual():
-    try:
-        import power
-        return power.manual("cur") and power.off("cur")   # only a server you loaded while the Curator is switched off is yours
-    except Exception:
-        return False
-
-
-def _mine(cfg):
-    """True when the Curator works with the server that is loaded, without waiting for its own switch or for the idle swap:
-    the slider is off and you loaded it, or the Curator's own switch is off but the slider is on and a server is up."""
-    if _manual():
-        return True
-    try:
-        import power
-        return not cfg["enabled"] and power.enabled("cur")
-    except Exception:
-        return False
+def _mine():
+    """True when a Curator server here is running that this watcher did not swap in: you loaded it. Same rule as for the
+    other models: a loaded server works, whatever the slider or the Curator's own switch say."""
+    return unit_active() and not swap.holding()
 
 
 def watch():
@@ -617,7 +603,7 @@ def watch():
     try:
         while True:
             cfg = load_cfg()
-            if _mine(cfg) and not swap.holding() and unit_active():
+            if _mine():
                 if applier.health("cur") != "ready":
                     status("loading", "the curator model you loaded is still loading")
                     time.sleep(SAMPLE)
@@ -632,7 +618,7 @@ def watch():
                     wait_change()
                 continue
             if not cfg["enabled"]:
-                if swap.holding() or (unit_active() and not _manual()):
+                if swap.holding():
                     status("off", "finished; unloading the curator and loading the Sweeper and Reviewer")
                     release()
                 status("off", "switched off")

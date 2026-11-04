@@ -1,5 +1,8 @@
 """Manual power for each model (for testing) and the one-card-per-model layout of the Settings page.
-Unloading is immediate and overrides everything. A model you unload stays off: its calls wait until you load it again."""
+Unloading is immediate and overrides everything. The same rule holds for all four models: with the slider off a model takes no
+turns, and a server on this machine that you loaded works anyway, its calls going straight to it; not loaded, its calls wait
+until you load it or turn it on. With the slider on the manager decides, and a model's own extra switch (the Curator's, the
+Assistant's) never stops a server that is already loaded."""
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,16 +41,23 @@ def consume_kill(m):
     return False
 
 
+def loaded(m):
+    """True when this model's server on this machine answers now (an external server is not meant)."""
+    import remote
+    return not remote.enabled(m) and applier.health(m) == "ready"
+
+
+def yours(m):
+    """Switched off but its server here is up: you loaded it, so it works and its calls go straight to it."""
+    return off(m) and loaded(m)
+
+
 def wait_on(m, cancel=None):
-    """Calls to an unloaded or stopped model wait here until you load or start it again. Not the Assistant (chat answers
-    with the Reviewer meanwhile), and the Curator only on an external server (locally it is loaded on demand)."""
+    """Calls to a switched-off model wait here until you load it or turn it on, unless it is loaded here (yours). Not the
+    Assistant: its chat answers with the Reviewer meanwhile."""
     if m == "pa":
         return
-    if m == "cur":
-        import remote
-        if not remote.enabled(m):
-            return
-    while off(m) and not (cancel and cancel()):   # cancel: the caller no longer wants the answer
+    while off(m) and not yours(m) and not (cancel and cancel()):   # cancel: the caller no longer wants the answer
         time.sleep(5)
 
 

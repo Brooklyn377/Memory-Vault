@@ -232,6 +232,14 @@ def twin(a, b):
         return False
 
 
+def _yours(model):
+    try:
+        import power
+        return power.yours(model)
+    except Exception:
+        return False
+
+
 def _off(model):
     try:
         import power
@@ -393,7 +401,7 @@ def lease(model, stop=None):
     """Hold this model's turn while a call runs. Waits (asking for the turn) until the model is loaded in the group that
     has it. stop(): called while waiting; raise from it to give up (a server switch or stop). Does nothing without the manager."""
     import applier
-    if not managed(model) or (model == "cur" and _off(model)):   # a Curator you switched off takes no turns: its calls run on the server you loaded
+    if not managed(model) or _yours(model):   # switched off but loaded by you: it takes no turns, its calls run on that server
         yield
         return
     _dirs()

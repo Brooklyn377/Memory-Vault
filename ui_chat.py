@@ -258,12 +258,19 @@ def _ask(system, user, m=None):
     return (thinklog.chat("gpt", reviewer.ENDPOINT, body, "chat", slot=1, cancel=(lambda: gone(m)) if m else None).get("content") or "").strip()
 
 
+def _pa_works():
+    """The Assistant works when its server here is up (its own switch and the slider cannot stop a loaded one), or when its
+    own switch is on and the slider is on."""
+    import power
+    return power.loaded("pa") or (bool(settings.get("pa").get("enabled")) and not power.off("pa"))
+
+
 def assistant_on():
     """True when the Assistant's switch is on, you have not stopped it, and its server (local or external) answers."""
     try:
         import applier
         import power
-        return bool(settings.get("pa").get("enabled")) and not power.off("pa") and applier.usable("pa")
+        return _pa_works() and applier.usable("pa")
     except Exception:
         return False
 
@@ -293,8 +300,7 @@ def _ask_assistant(system, messages, label="chat", m=None):
         except Exception as e:
             if m is not None and gone(m):
                 raise Cancelled() from None
-            on = bool(settings.get("pa").get("enabled")) and not power.off("pa")
-            if not (on and _transient(e)):
+            if not (_pa_works() and _transient(e)):
                 raise
             tries += 1
             wait = min(60, 5 * 2 ** min(tries - 1, 4))
