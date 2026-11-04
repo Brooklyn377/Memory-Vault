@@ -191,7 +191,7 @@ def start_message(mid):
 def _web_ready():
     """The reason the web tools cannot be used right now, or "" if they can."""
     import webtools
-    if not webtools.allowed("pa"):
+    if not webtools.allowed():
         return "Web access is off. The person turns it on under Settings, Web access; until then answer from the notes and Git servers only."
     limit = _t("assistant.web_calls")
     if CHAT["web_calls"] >= limit:

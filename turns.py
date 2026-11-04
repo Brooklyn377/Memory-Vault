@@ -43,7 +43,7 @@ STALL = 45         # seconds without a pass after which the manager is taken to 
 BEAT_FRESH = STALL   # the same number: until then the manager is running (a slow pass on a busy machine is not a dead manager)
 _BEAT_ERROR = [""]   # why the manager could not write its heartbeat, for the Settings page
 STEP = 2           # seconds between the manager's looks
-_started = False
+_manager_started = False   # (not `_started`: that is the function below, which would replace it)
 _WAIT = {}   # the last reason logged for each model that is waiting
 _UP = {}     # whether each external server answered at the last look
 _ADOPTED = [False]   # the manager has had its first look since it started: servers already up then (an update, a restart) are adopted
@@ -690,10 +690,10 @@ def _watch_servers():
 def start():
     """Run the manager in a thread of this process (the web service). It beats every few seconds. A watchdog starts a new one
     if the beat stops (one pass stuck on something slow), and says so in the log."""
-    global _started
-    if _started:
+    global _manager_started
+    if _manager_started:
         return
-    _started = True
+    _manager_started = True
     gen = [0]   # the number of the manager thread that is current: an older one that wakes up again stops
 
     def spawn():

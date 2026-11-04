@@ -21,13 +21,12 @@ import agent
 from scrub import scrub
 
 FILE = agent.STATE / "web_access.json"
-DEFAULT = {"enabled": False, "engine": "duckduckgo", "searxng_url": "", "models": {"pa": True}}
+DEFAULT = {"enabled": False, "engine": "duckduckgo", "searxng_url": ""}
 DDG_URL = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (compatible; memory-agent/1.0; +https://github.com/Brooklyn377/Memory-Vault)"
 MAX_BYTES = 1_500_000
 TIMEOUT = 15
 RESULTS = 6
-MODELS_WITH_TOOLS = ("pa",)   # only the Assistant has tools; the other models would have nothing to use it with
 
 
 # ---------- settings ----------
@@ -36,7 +35,8 @@ def config():
         d = json.loads(FILE.read_text())
     except (OSError, ValueError):
         d = {}
-    return {**DEFAULT, **(d if isinstance(d, dict) else {}), "models": {**DEFAULT["models"], **((d or {}).get("models") or {})}}
+    d = d if isinstance(d, dict) else {}
+    return {**DEFAULT, **{k: d[k] for k in DEFAULT if k in d}}
 
 
 def save_config(d):
@@ -49,8 +49,7 @@ def save_config(d):
         p = urllib.parse.urlparse(url)
         if p.scheme not in ("http", "https") or not p.hostname:
             raise ValueError("type the SearXNG address, for example http://192.168.1.60:8888")
-    new = {"enabled": bool(d.get("enabled", c["enabled"])), "engine": engine, "searxng_url": url,
-           "models": {m: bool((d.get("models") or {}).get(m, c["models"].get(m, False))) for m in MODELS_WITH_TOOLS}}
+    new = {"enabled": bool(d.get("enabled", c["enabled"])), "engine": engine, "searxng_url": url}
     tmp = FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(new, indent=1))
     os.replace(tmp, FILE)
@@ -58,9 +57,8 @@ def save_config(d):
     return new
 
 
-def allowed(model):
-    c = config()
-    return bool(c["enabled"] and c["models"].get(model))
+def allowed():
+    return bool(config()["enabled"])
 
 
 # ---------- a connection that only reaches the public internet ----------
