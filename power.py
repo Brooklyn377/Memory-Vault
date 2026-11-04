@@ -26,10 +26,6 @@ def off(m):
     return _flag(m, "off").exists()
 
 
-def manual(m):
-    return _flag(m, "on").exists()
-
-
 def consume_kill(m):
     """True once after you killed this model with the power button, so the caller does not treat it as a failure."""
     f = _flag(m, "killed")
@@ -120,8 +116,6 @@ def load(m):
     if applier._active(m):
         return
     applier.write_env(m, settings.load()[m])
-    if m == "cur" and off(m):
-        _flag(m, "on").write_text("1")   # switched off, it is yours: the Curator works with a server you loaded. Switched on, the manager decides
     subprocess.run(["systemctl", "start", "--no-block", UNIT[m]], timeout=30)
     agent.log(f"settings: {NICE[m]} loaded by you")
 
@@ -147,7 +141,6 @@ def unload(m):
         agent.log(f"settings: {NICE[m]} (external server) stopped by you; its running calls were cut off")
         return note
     note = ""
-    _flag(m, "on").unlink(missing_ok=True)
     if m == "cur":
         if applier._active(m) or swap.holding():
             _flag(m, "killed").write_text("1")   # the Curator does not count this as a failure
@@ -284,7 +277,7 @@ function fillOne(secEl,sel,pre){if(secEl.dataset.filled)return;const c=find(sel,
 function fill(){let all=true;
  M.forEach(function(a){const key=a[0],name=a[1],u=UI[key];
   fillOne(u.secGen,"#sp .card",name+": ");fillOne(u.secSrv,"#sv .card",name+" server");fillOne(u.secPr,"#pp .card",name+" prompts");
-  if(key==="cur")fillOne(u.secCur,"#cu .card","Curator (swaps");
+  if(key==="cur")fillOne(u.secCur,"#cu .card","Curator settings");
   if(!(u.secGen.dataset.filled&&u.secSrv.dataset.filled&&u.secPr.dataset.filled&&(key!=="cur"||u.secCur.dataset.filled)))all=false});
  if(all)mo.disconnect()}
 function merge(){

@@ -1,7 +1,8 @@
 """Curator: its own model (port 8082) reads entity notes in depth while the Sweeper and Reviewer are idle.
-It takes their memory (swap.py), works through the notes the Sweeper was least sure about, verifies facts against
-the source chats, finds missed connections, asks about doubts and prunes notes that hold nothing useful.
-A note is never aborted. When another job needs the models it finishes its note and swaps them back.
+It works through the notes the Sweeper was least sure about, verifies facts against the source chats, finds missed
+connections, asks about doubts and prunes notes that hold nothing useful. Like every model it simply asks for its
+turn when it has a note to review (turns.py); wherever its server runs, the manager and the groups decide when.
+A note is never aborted.
   curator.py --watch | --release | --once | --show REL | --rank"""
 import hashlib
 import json
@@ -32,7 +33,7 @@ VAULT, STATE = agent.VAULT, agent.STATE
 CFG_FILE, DATA = STATE / "curator_cfg.json", STATE / "curator.json"
 STATUS, LOG, QUEUE = STATE / "curator_status.json", STATE / "curator_log.jsonl", STATE / "curator_queue"
 ENDPOINT, UNIT = "http://127.0.0.1:8082/v1", applier.UNIT["cur"]
-IDLE_FOR, SAMPLE, POLL = 60, 5, 20
+POLL = 20
 START, END = "<!-- curator:start -->", "<!-- curator:end -->"
 CHARS_PER_TOKEN = 2.2  # notes full of IPs and paths use many short tokens; measure with the tokenize check
 BLOCK = re.compile(re.escape(START) + r".*?" + re.escape(END) + r"\n?", re.S)
@@ -101,27 +102,6 @@ def log(row):
 # ---------- swapping the models ----------
 def unit_active():
     return subprocess.run(["systemctl", "is-active", "--quiet", UNIT], timeout=10).returncode == 0
-
-
-def give_up(why):
-    import power
-    power.disable("cur")   # the slider goes off, like any model you turn off
-    status("off", why + " The slider was turned off.")
-    agent.log("curator: " + why)
-    return False
-
-
-def acquire():
-    if not swap.take():
-        return False
-    status("loading", "the other local models give way; loading the curator model")
-    end = time.time() + 900
-    while time.time() < end:
-        if applier.health("cur") == "ready":
-            return True
-        time.sleep(5)
-    release()
-    return give_up("The curator model did not load in 15 minutes (journalctl -u memory-curator-llm).")
 
 
 def release():
@@ -576,7 +556,6 @@ def sig():
         parts.append(("on" if power.enabled("cur") else "off") + ("-up" if power.loaded("cur") else ""))   # the slider and the server
     except Exception:
         parts.append("?")
-    parts.append("manual" if _mine() else "-")
     return "|".join(parts)
 
 
@@ -592,96 +571,26 @@ def summary():
     return {"cfg": load_cfg(), "status": load_status(), "stats": d["stats"], "checked": len(d["notes"]), "total": n}
 
 
-def _mine():
-    """True when a Curator server here is running that this watcher did not swap in: you loaded it. Same rule as for the
-    other models: a loaded server works, whatever the slider or the Curator's own switch say."""
-    return unit_active() and not swap.holding()
-
-
 def watch():
     agent.log("curator started")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
-    if swap.holding():   # a server you loaded yourself is left alone
-        release()
-    idle_since = None
-    try:
-        while True:
-            cfg = load_cfg()
-            if _mine():
-                if applier.health("cur") != "ready":
-                    status("loading", "the curator model you loaded is still loading")
-                    time.sleep(SAMPLE)
-                    continue
-                try:
-                    did = unit(cfg)
-                except Exception as e:
-                    agent.log(f"curator error: {type(e).__name__}: {str(e)[:100]}")
-                    status("waiting", f"error: {type(e).__name__}")
-                    did = False
-                if not did:
-                    wait_change()
-                continue
-            import power
-            try:
-                import remote
-                ext = remote.enabled("cur")
-            except Exception:
-                ext = False
-            if ext and (power.enabled("cur") or power.loaded("cur")):   # an external server works whenever it is on or up
-                try:
-                    did = unit(cfg)
-                except Exception as e:
-                    agent.log(f"curator error: {type(e).__name__}: {str(e)[:100]}")
-                    status("waiting", f"error: {type(e).__name__}")
-                    did = False
-                if not did:
-                    wait_change()
-                continue
-            if not power.enabled("cur"):   # the slider is the only switch
-                if swap.holding():
-                    status("off", "finished; unloading the curator and loading the Sweeper and Reviewer")
-                    release()
-                status("off", "the slider is off")
-                idle_since = None
-                wait_change()
-                continue
-            if swap.holding():
-                if swap.wanted():
-                    status("waiting", "another job needs the Sweeper or Reviewer; swapping back")
-                    release()
-                    idle_since = None
-                    continue
-                try:
-                    did = unit(cfg)
-                except Exception as e:
-                    agent.log(f"curator error: {type(e).__name__}: {str(e)[:100]}")
-                    status("waiting", f"error: {type(e).__name__}")
-                    did = False
-                if not did:
-                    release()
-                    wait_change()
-                continue
-            if swap.others_idle():
-                idle_since = idle_since or time.time()
-            else:
-                idle_since = None
-            if idle_since is None:
-                status("waiting", "the Sweeper or Reviewer is working")
-                time.sleep(SAMPLE)
-                continue
-            left = __import__("tuning").get("curator.idle_seconds") - (time.time() - idle_since)
-            if left > 0:
-                status("waiting", f"both idle, swapping in {int(left)}s if they stay idle")
-                time.sleep(SAMPLE)
-                continue
-            if not acquire():
-                idle_since = None
-                time.sleep(SAMPLE)
-    finally:
+    if swap.holding():   # a hold left by an older version would keep the other models waiting
+        swap.restore()
+    import power
+    while True:
+        cfg = load_cfg()
+        if not (power.enabled("cur") or power.loaded("cur")):   # the slider is the only switch; a server that is up works anyway
+            status("off", "the slider is off and no server of it is up")
+            wait_change()
+            continue
         try:
-            release()
+            did = unit(cfg)
         except Exception as e:
-            agent.log(f"curator: release failed: {type(e).__name__}")
+            agent.log(f"curator error: {type(e).__name__}: {str(e)[:100]}")
+            status("waiting", f"error: {type(e).__name__}")
+            did = False
+        if not did:
+            wait_change()
 
 
 if __name__ == "__main__":

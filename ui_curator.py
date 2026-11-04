@@ -63,7 +63,7 @@ async function load(first){const d=await api("/api/curator");
  const s=d.status||{},t=d.stats||{};
  st.textContent="Status: "+(s.state||"unknown")+(s.why?" - "+s.why:"")+(s.note?" - reading "+s.note:"");
  sm.textContent=d.checked+" of "+d.total+" entity notes checked, "+(t.links||0)+" links added, "+(t.asked||0)+" questions asked, "+(t.pruned||0)+" pruned, "+(t.verified||0)+" facts verified"}
-$("#cu").replaceChildren(h("div",{class:"card"},h("h3",{},"Curator (swaps in for the Sweeper and Reviewer when both are idle)"),...rows,
+$("#cu").replaceChildren(h("div",{class:"card"},h("h3",{},"Curator settings"),...rows,
  h("div",{class:"fld"},h("label",{},"Prompt size per note (tokens)"),pt),st,sm,msg));
 load(true);setInterval(()=>load(false),5000);
 })();

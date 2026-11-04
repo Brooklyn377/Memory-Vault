@@ -34,7 +34,6 @@ REG = [
     ("curator.questions_per_note", "cur", "Questions asked per note", "Most Ask cards one note can raise about its facts.", 3, 0, 20, ""),
     ("curator.links_per_note", "cur", "Links added per note", "Most links it can add to one note in one review.", 6, 0, 50, ""),
     ("curator.conflicts_per_note", "cur", "Conflicts raised per note", "Most conflicts between notes it can ask about per review.", 2, 0, 20, ""),
-    ("curator.idle_seconds", "cur", "Idle time before it swaps in (seconds)", "How long the Sweeper and Reviewer must both be idle before the curator starts.", 60, 0, 3600, ""),
     ("map.links_per_call", "cur", "Map pass: links per call", "Most links accepted from one map-pass call.", 25, 0, 200, ""),
     ("map.hubs_per_call", "cur", "Map pass: hubs per call", "Most hub notes accepted from one call.", 5, 0, 30, ""),
     ("map.hub_members", "cur", "Map pass: notes per hub", "Most notes listed in one hub.", 30, 3, 100, ""),
@@ -95,7 +94,6 @@ OFF_AS = {
     "sweep.min_quote_chars": (1, "no length minimum; a quote is still required"),
     "review.min_quote_chars": (1, "no length minimum; a quote is still required"),
     "map.hub_min_members": (1, "no minimum; a hub still needs one note"),
-    "curator.idle_seconds": (0, "no wait"),
 }
 # Limits that stop a retry loop: with no limit, something the model cannot handle is retried without end.
 LOOPS = ("sweep.attempts", "review.retries", "agent.max_tool_calls")

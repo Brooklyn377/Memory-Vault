@@ -11,8 +11,8 @@ The models run locally through llama.cpp. Everything is in one Proxmox container
 ## Requirements
 - A Proxmox VE 8 host (x86_64) with internet access. CPUs without AVX work; llama.cpp is built for the CPU it runs on.
 - Memory and disk for the models you pick. The installer's defaults, 24 GB of memory and 80 GB of disk, are an
-  estimate for the original three models (a 9B sweeper, gpt-oss-20b as reviewer, a 24B curator that swaps in
-  while the other two are idle). The test install (`--small`) defaults to 6 GB and 16 GB, mostly for building
+  estimate for the original three models (a 9B sweeper, gpt-oss-20b as reviewer, a 24B curator that takes its turn
+  when the other two have nothing to do). The test install (`--small`) defaults to 6 GB and 16 GB, mostly for building
   llama.cpp. Size the container for the models you choose.
 - Models are not included; the installer downloads the ones you choose.
 
