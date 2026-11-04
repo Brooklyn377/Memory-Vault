@@ -259,10 +259,9 @@ def _ask(system, user, m=None):
 
 
 def _pa_works():
-    """The Assistant works when its server here is up (its own switch and the slider cannot stop a loaded one), or when its
-    own switch is on and the slider is on."""
+    """The Assistant works like every model: when the slider is on, or when its server is up."""
     import power
-    return power.loaded("pa") or (bool(settings.get("pa").get("enabled")) and not power.off("pa"))
+    return power.enabled("pa") or power.loaded("pa")
 
 
 def assistant_on():

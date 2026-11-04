@@ -37,7 +37,7 @@ START, END = "<!-- curator:start -->", "<!-- curator:end -->"
 CHARS_PER_TOKEN = 2.2  # notes full of IPs and paths use many short tokens; measure with the tokenize check
 BLOCK = re.compile(re.escape(START) + r".*?" + re.escape(END) + r"\n?", re.S)
 MENTION = re.compile(r"^- \[\[([^\]|]+)(?:\|[^\]]*)?\]\]:\s*(.*)$", re.M)
-DEFAULT = {"enabled": False, "verify": True, "connect": True, "prune": True, "cycle": True, "map": True, "prompt_tokens": 40000}
+DEFAULT = {"verify": True, "connect": True, "prune": True, "cycle": True, "map": True, "prompt_tokens": 40000}
 STOP = set("this that with from have what when which about there their them they then than been were was are "
            "and for the not can could would should into your you our auto generated document low confidence "
            "until reviewed mentioned".split())
@@ -104,10 +104,9 @@ def unit_active():
 
 
 def give_up(why):
-    c = load_cfg()
-    c["enabled"] = False
-    save_cfg(c)
-    status("off", why + " The switch was turned off.")
+    import power
+    power.disable("cur")   # the slider goes off, like any model you turn off
+    status("off", why + " The slider was turned off.")
     agent.log("curator: " + why)
     return False
 
@@ -572,6 +571,11 @@ def sig():
             parts.append("x")
     for f in (CFG_FILE, settings.FILE):
         parts.append(str(f.stat().st_mtime_ns if f.exists() else 0))
+    try:
+        import power
+        parts.append(("on" if power.enabled("cur") else "off") + ("-up" if power.loaded("cur") else ""))   # the slider and the server
+    except Exception:
+        parts.append("?")
     parts.append("manual" if _mine() else "-")
     return "|".join(parts)
 
@@ -597,7 +601,7 @@ def _mine():
 def watch():
     agent.log("curator started")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
-    if swap.holding() or unit_active():
+    if swap.holding():   # a server you loaded yourself is left alone
         release()
     idle_since = None
     try:
@@ -617,20 +621,13 @@ def watch():
                 if not did:
                     wait_change()
                 continue
-            if not cfg["enabled"]:
-                if swap.holding():
-                    status("off", "finished; unloading the curator and loading the Sweeper and Reviewer")
-                    release()
-                status("off", "switched off")
-                idle_since = None
-                wait_change()
-                continue
+            import power
             try:
                 import remote
                 ext = remote.enabled("cur")
             except Exception:
                 ext = False
-            if ext:
+            if ext and (power.enabled("cur") or power.loaded("cur")):   # an external server works whenever it is on or up
                 try:
                     did = unit(cfg)
                 except Exception as e:
@@ -639,6 +636,14 @@ def watch():
                     did = False
                 if not did:
                     wait_change()
+                continue
+            if not power.enabled("cur"):   # the slider is the only switch
+                if swap.holding():
+                    status("off", "finished; unloading the curator and loading the Sweeper and Reviewer")
+                    release()
+                status("off", "the slider is off")
+                idle_since = None
+                wait_change()
                 continue
             if swap.holding():
                 if swap.wanted():

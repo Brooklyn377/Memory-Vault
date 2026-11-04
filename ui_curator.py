@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import settings
 
-FLAGS = ("enabled", "verify", "connect", "prune", "cycle", "map")
+FLAGS = ("verify", "connect", "prune", "cycle", "map")
 
 
 def register(app, authed):
@@ -48,14 +48,14 @@ HTML = r"""
 <div id="cu"></div>
 <script>
 (function(){
-const F=[["enabled","Run when the Sweeper and Reviewer are idle"],["verify","Verify facts against the chats"],["connect","Find new connections between notes"],["prune","Prune notes that hold nothing useful"],["cycle","Keep going with new pairs after every note is checked"],["map","Map pass: link and group the whole vault once per-note review has nothing left"]];
+const F=[["verify","Verify facts against the chats"],["connect","Find new connections between notes"],["prune","Prune notes that hold nothing useful"],["cycle","Keep going with new pairs after every note is checked"],["map","Map pass: link and group the whole vault once per-note review has nothing left"]];
 const E={};
 const pt=h("input",{type:"number","data-instant":"1"});
 const st=h("div",{class:"mut"}),sm=h("div",{class:"mut"}),msg=h("div",{class:"mut"});
 async function save(){msg.textContent="";const b={prompt_tokens:pt.value};for(const [k] of F)b[k]=E[k].checked;
  const r=await fetch("/api/curator/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
  const j=await r.json().catch(()=>({}));
- msg.textContent=r.ok?"Saved. Switching off finishes the current note, then swaps the Sweeper and Reviewer back in.":(j.detail||"Could not save")}
+ msg.textContent=r.ok?"Saved.":(j.detail||"Could not save")}
 const rows=F.map(([k,l])=>{const e=h("input",{type:"checkbox","data-instant":"1"});E[k]=e;e.onchange=save;return h("div",{class:"fld"},h("label",{},l),e)});
 pt.onchange=save;
 async function load(first){const d=await api("/api/curator");

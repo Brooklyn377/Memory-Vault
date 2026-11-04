@@ -98,8 +98,6 @@ def apply(model, data, ctx=None, dry=False):
         cur["sampling"] = check_sampling(data["sampling"], cur.get("sampling"), warn)
     if "json_mode" in data:
         cur["json_mode"] = bool(data["json_mode"])
-    if "enabled" in data and "enabled" in cur:   # only the Assistant has this switch
-        cur["enabled"] = bool(data["enabled"])
     if not dry:
         settings.save(new)
     return new, warn
@@ -218,7 +216,6 @@ function card(m,s,cp){
  const sp={},sr=[],sv=s.sampling||{};
  SP.forEach(function(a){const e=h("input",{type:"number",step:a[3],placeholder:"default"});e.value=sv[a[0]]==null?"":sv[a[0]];sp[a[0]]=e;sr.push(fld(a[1]+" ("+a[2]+")",e,false))});
  const jm=h("input",{type:"checkbox"});jm.checked=!!s.json_mode;
- const en="enabled" in s?h("input",{type:"checkbox"}):null;if(en)en.checked=!!s.enabled;
  const tb=num(s.thinking_budget==null?"":s.thinking_budget);tb.disabled=!cp.thinking_budget;
  function mir(){const on=Number(sp.mirostat.value||0)>0;["top_k","top_p","min_p","typical_p"].forEach(function(k){sp[k].disabled=on});["mirostat_tau","mirostat_eta"].forEach(function(k){sp[k].disabled=!on})}
  sp.mirostat.oninput=mir;mir();
@@ -229,10 +226,9 @@ function card(m,s,cp){
   if(cp.reasoning_effort)b.reasoning_effort=re.value;
   try{await api("/api/settings/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});msg.textContent="Saved."}
   catch(e){msg.textContent=e.message}};
- (window.COLS=window.COLS||{})["m_"+m]=()=>{const b={model:m,temperature:t.value,max_tokens:{}};for(const k in mt)b.max_tokens[k]=mt[k].value;if(cp.thinking)b.thinking=th.checked;if(cp.reasoning_effort)b.reasoning_effort=re.value;b.sampling={};for(const k in sp)b.sampling[k]=sp[k].value;b.json_mode=jm.checked;if(cp.thinking_budget)b.thinking_budget=tb.value;if(en)b.enabled=en.checked;return b};
+ (window.COLS=window.COLS||{})["m_"+m]=()=>{const b={model:m,temperature:t.value,max_tokens:{}};for(const k in mt)b.max_tokens[k]=mt[k].value;if(cp.thinking)b.thinking=th.checked;if(cp.reasoning_effort)b.reasoning_effort=re.value;b.sampling={};for(const k in sp)b.sampling[k]=sp[k].value;b.json_mode=jm.checked;if(cp.thinking_budget)b.thinking_budget=tb.value;return b};
  return h("div",{class:"card"},h("h3",{},NAMES[m]),
   h("div",{class:"mut"},s.model_file+" · context "+s.context.toLocaleString()),
-  en?fld("Use the Assistant for chat (off: the Reviewer answers, as before)",en,false):null,
   fld("Temperature",t,false),...rows,
   fld("Thinking",th,!cp.thinking),
   fld("Reasoning effort",re,!cp.reasoning_effort),fld("Thinking budget (tokens, -1 unlimited)",tb,!cp.thinking_budget),fld("Force valid JSON (experimental)",jm,false),h("details",{},h("summary",{class:"mut"},"Sampling (blank uses the server default)"),...sr),

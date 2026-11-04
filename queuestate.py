@@ -219,7 +219,7 @@ def curator_next():
     fresh.sort()
     st = curator.load_status()
     m = mapper.load()
-    notes = ["Switched off." if not cfg["enabled"] else "Status: " + str(st.get("state", "")) + (" - " + st["why"] if st.get("why") else ""),
+    notes = ["Switched off." if not __import__("power").enabled("cur") else "Status: " + str(st.get("state", "")) + (" - " + st["why"] if st.get("why") else ""),
              "Least sure first. Once every note is checked it starts map passes." if cfg.get("map") else "Map pass is switched off."]
     p = m["pass"]
     if p.get("n"):

@@ -1,8 +1,7 @@
 """Manual power for each model (for testing) and the one-card-per-model layout of the Settings page.
 Unloading is immediate and overrides everything. The same rule holds for all four models: with the slider off a model takes no
-turns, and a server on this machine that you loaded works anyway, its calls going straight to it; not loaded, its calls wait
-until you load it or turn it on. With the slider on the manager decides, and a model's own extra switch (the Curator's, the
-Assistant's) never stops a server that is already loaded."""
+turns, and a server of it that is up (loaded here or running on its external machine) works anyway, its calls going straight to
+it; not up, its calls wait until you load it or turn it on. With the slider on the manager decides. There is no other switch."""
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -42,21 +41,18 @@ def consume_kill(m):
 
 
 def loaded(m):
-    """True when this model's server on this machine answers now (an external server is not meant)."""
-    import remote
-    return not remote.enabled(m) and applier.health(m) == "ready"
+    """True when this model's server answers now, on this machine or on an external one."""
+    return applier.health(m) == "ready"
 
 
 def yours(m):
-    """Switched off but its server here is up: you loaded it, so it works and its calls go straight to it."""
+    """Switched off but its server is up: you loaded it, so it works and its calls go straight to it."""
     return off(m) and loaded(m)
 
 
 def wait_on(m, cancel=None):
-    """Calls to a switched-off model wait here until you load it or turn it on, unless it is loaded here (yours). Not the
-    Assistant: its chat answers with the Reviewer meanwhile."""
-    if m == "pa":
-        return
+    """Calls to a switched-off model wait here until you load it or turn it on, unless its server is up (yours). The same
+    for all four models."""
     while off(m) and not yours(m) and not (cancel and cancel()):   # cancel: the caller no longer wants the answer
         time.sleep(5)
 
