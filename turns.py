@@ -393,7 +393,7 @@ def lease(model, stop=None):
     """Hold this model's turn while a call runs. Waits (asking for the turn) until the model is loaded in the group that
     has it. stop(): called while waiting; raise from it to give up (a server switch or stop). Does nothing without the manager."""
     import applier
-    if not managed(model):
+    if not managed(model) or (model == "cur" and _off(model)):   # a Curator you switched off takes no turns: its calls run on the server you loaded
         yield
         return
     _dirs()

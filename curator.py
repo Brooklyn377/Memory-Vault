@@ -572,7 +572,7 @@ def sig():
             parts.append("x")
     for f in (CFG_FILE, settings.FILE):
         parts.append(str(f.stat().st_mtime_ns if f.exists() else 0))
-    parts.append("manual" if _manual() else "-")
+    parts.append("manual" if _mine(load_cfg()) else "-")
     return "|".join(parts)
 
 
@@ -596,6 +596,18 @@ def _manual():
         return False
 
 
+def _mine(cfg):
+    """True when the Curator works with the server that is loaded, without waiting for its own switch or for the idle swap:
+    the slider is off and you loaded it, or the Curator's own switch is off but the slider is on and a server is up."""
+    if _manual():
+        return True
+    try:
+        import power
+        return not cfg["enabled"] and power.enabled("cur")
+    except Exception:
+        return False
+
+
 def watch():
     agent.log("curator started")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
@@ -605,7 +617,7 @@ def watch():
     try:
         while True:
             cfg = load_cfg()
-            if _manual() and not swap.holding() and unit_active():
+            if _mine(cfg) and not swap.holding() and unit_active():
                 if applier.health("cur") != "ready":
                     status("loading", "the curator model you loaded is still loading")
                     time.sleep(SAMPLE)
