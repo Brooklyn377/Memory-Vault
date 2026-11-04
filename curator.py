@@ -5,12 +5,14 @@ turn when it has a note to review (turns.py); wherever its server runs, the mana
 A note is never aborted.
   curator.py --watch | --once | --show REL | --rank"""
 import hashlib
+import http.client
 import json
 import os
 import re
 import signal
 import sys
 import time
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -450,6 +452,21 @@ def apply_result(v, rel, out, cfg, data, blob, cset, cconf, lines):
     return full
 
 
+class Unavailable(Exception):
+    """The model's server did not answer: not the note's fault, so nothing is parked and no card is asked."""
+
+
+def server_down(e):
+    return isinstance(e, (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException))
+
+
+def retry_server_failures():
+    """Notes parked only because the server was not answering are tried again: their cards are answered with Try again."""
+    for q in questions.list_questions("open"):
+        if q["kind"] == "curatecheck" and any(s in q.get("why", "") for s in ("URLError", "urlopen error", "Connection refused")):
+            questions.answer(q["id"], "retry")
+
+
 def park(rel, why):
     QUEUE.mkdir(parents=True, exist_ok=True)
     at = datetime.now().isoformat(timespec="seconds")
@@ -512,6 +529,9 @@ def unit(cfg):
                 return False
         except Exception:
             pass
+        if server_down(e):
+            status("waiting", "its server is not answering yet; trying again shortly")
+            raise Unavailable() from None
         park(rel, f"{type(e).__name__}: {str(e)[:100]}")
         return True
     if full:
@@ -561,6 +581,7 @@ def watch():
     agent.log("curator started")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
     import power
+    retry_server_failures()
     while True:
         cfg = load_cfg()
         if not (power.enabled("cur") or power.loaded("cur")):   # the slider is the only switch; a server that is up works anyway
@@ -569,6 +590,9 @@ def watch():
             continue
         try:
             did = unit(cfg)
+        except Unavailable:   # the manager has not loaded its server yet, or it is down: wait, then try the same note again
+            time.sleep(POLL)
+            continue
         except Exception as e:
             agent.log(f"curator error: {type(e).__name__}: {str(e)[:100]}")
             status("waiting", f"error: {type(e).__name__}")
