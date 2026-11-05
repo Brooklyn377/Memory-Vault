@@ -24,9 +24,6 @@ FILE = agent.STATE / "web_access.json"
 DEFAULT = {"enabled": False, "engine": "duckduckgo", "searxng_url": ""}
 DDG_URL = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (compatible; memory-agent/1.0; +https://github.com/Brooklyn377/Memory-Vault)"
-MAX_BYTES = 1_500_000
-TIMEOUT = 15
-RESULTS = 6
 
 
 # ---------- settings ----------
@@ -100,6 +97,12 @@ class _HTTPSHandler(urllib.request.HTTPSHandler):
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _HTTPHandler, _HTTPSHandler)
 
 
+def _slow():
+    import tuning
+    return (f"the site sent nothing for {tuning.get('web.timeout')} seconds, so the request was given up. It may only be slow: "
+            "the person can raise 'Web request timeout' on the Tuning page, or set it to -1 for no limit")
+
+
 def _get(url, data=None, accept="text/html,text/plain,application/json;q=0.9,*/*;q=0.1"):
     p = urllib.parse.urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname or p.username or p.password:
@@ -112,13 +115,21 @@ def _get(url, data=None, accept="text/html,text/plain,application/json;q=0.9,*/*
                          "An address cannot contain it: send it again without it, written out in one piece")
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
-        with _opener.open(req, timeout=TIMEOUT) as r:
-            body = r.read(MAX_BYTES + 1)
-            return r.geturl(), r.headers.get_content_type(), r.headers.get_content_charset() or "utf-8", body[:MAX_BYTES], len(body) > MAX_BYTES
+        import tuning
+        wait, mb = tuning.get("web.timeout"), tuning.get("web.max_mb")   # -1 on the Tuning page: no limit
+        cap = None if mb >= tuning.NO_LIMIT else mb * 1_000_000
+        with _opener.open(req, timeout=None if wait >= tuning.NO_LIMIT else wait) as r:
+            body = r.read() if cap is None else r.read(cap + 1)
+            cut = cap is not None and len(body) > cap
+            return r.geturl(), r.headers.get_content_type(), r.headers.get_content_charset() or "utf-8", body[:cap] if cut else body, cut
     except urllib.error.HTTPError as e:
         raise ValueError(f"the site answered {e.code} {e.reason}")
     except urllib.error.URLError as e:
+        if isinstance(e.reason, TimeoutError):
+            raise ValueError(_slow())
         raise ValueError(str(e.reason) if isinstance(e.reason, ValueError) else f"could not reach it ({e.reason})")
+    except TimeoutError:
+        raise ValueError(_slow())
     except http.client.HTTPException as e:   # the request itself was not valid
         raise ValueError(f"the request was not valid: {e}")
     except (OSError, ValueError) as e:
@@ -173,9 +184,11 @@ def page_text(body, ctype, charset):
 # ---------- the two tools ----------
 def search(query):
     """-> [{"title","url","snippet"}], and the engine's name. Raises ValueError with a plain reason."""
-    q = scrub(" ".join(str(query or "").split()))[0][:200]
+    q = scrub(" ".join(str(query or "").split()))[0]   # always redacted: a search leaves this machine
     if not q:
         raise ValueError("give the words to search for")
+    import tuning
+    cap = tuning.get("web.search_results")   # -1 on the Tuning page: every result the engine gives
     c = config()
     if c["engine"] == "searxng":
         url, ctype, cs, body, _ = _get(c["searxng_url"] + "/search?" + urllib.parse.urlencode({"q": q, "format": "json"}), accept="application/json")
@@ -185,7 +198,7 @@ def search(query):
             raise ValueError("that SearXNG did not answer in JSON; its settings must allow format=json")
         out = [{"title": " ".join(str(r.get("title", "")).split())[:120], "url": str(r.get("url", "")),
                 "snippet": " ".join(str(r.get("content", "")).split())[:240]} for r in rows if str(r.get("url", "")).startswith(("http://", "https://"))]
-        return out[:RESULTS], "SearXNG"
+        return out[:cap], "SearXNG"
     url, ctype, cs, body, _ = _get(DDG_URL, data=urllib.parse.urlencode({"q": q}).encode())
     page = body.decode(cs, errors="replace")
     out = []
@@ -205,7 +218,7 @@ def search(query):
         sn = re.search(r'class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>', page[end:end + 4000], re.S)
         out.append({"title": " ".join(html.unescape(re.sub(r"<[^>]+>", "", page[m.end():end])).split())[:120], "url": link,
                     "snippet": " ".join(html.unescape(re.sub(r"<[^>]+>", "", sn.group(1))).split())[:240] if sn else ""})
-        if len(out) >= RESULTS:
+        if len(out) >= cap:
             break
     return out, "DuckDuckGo"
 

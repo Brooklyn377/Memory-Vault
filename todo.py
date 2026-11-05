@@ -14,7 +14,6 @@ from bootstrap import clean, slug
 
 VAULT, STATE = agent.VAULT, agent.STATE
 TODO = STATE / "todo"
-MAX_TEXT = 4000
 
 
 def _path(tid):
@@ -63,7 +62,7 @@ def add_update(tid, text, finished=False):
     t = get(tid)
     if not t:
         raise FileNotFoundError(tid)
-    text = str(text).strip()[:MAX_TEXT]
+    text = str(text).strip()
     if not text and not finished:
         raise ValueError("empty update")
     t["updates"].append({"at": datetime.now().isoformat(timespec="seconds"),

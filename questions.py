@@ -22,7 +22,6 @@ QDIR = STATE / "questions"
 NOT_SAME = STATE / "not_same.json"
 MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
-MAX_ANSWER = 4000
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
 KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "jobmerge", "memory")
 
@@ -92,7 +91,7 @@ def answer(qid, text):
     q = _load(_path(qid))
     if q["status"] != "open":
         raise ValueError("question is not open")
-    text = str(text).strip()[:MAX_ANSWER]
+    text = str(text).strip()
     if not text:
         raise ValueError("empty answer")
     if q["kind"] == "merge":

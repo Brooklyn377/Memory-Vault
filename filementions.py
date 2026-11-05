@@ -100,21 +100,22 @@ def judge(excerpts, commit):
     h, who, when, subject, diff = commit
     limit = tuning.get("files.excerpt_chars")
     user = f"EXCERPTS:\n{chr(10).join(excerpts)[:limit]}\n\nCOMMIT {h[:10]} by {who} on {when[:10]}: {subject}\n{diff[:limit]}"
-    budget = agent.Budget(2)
-    for _ in range(2):
-        v = agent.ask(JUDGE_SYS, user, budget)
+    attempt = 0
+    while True:   # asked again, with what was wrong, until the answer is usable
+        v = agent.ask(JUDGE_SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON with a \"match\" key. Reply with the JSON only.")
         if isinstance(v, dict) and "match" in v:
             return v
-    return None
+        attempt += 1
 
 
 def check(v, commit):
     user = f"QUOTE: {v.get('quote', '')}\nSWEEPER SAYS: {v.get('what', '')}\n\nDIFF:\n{commit[4][:tuning.get('files.excerpt_chars')]}"
-    for _ in range(2):
-        r = reviewer.rask(CHECK_SYS, user, tokens=2000)
+    attempt = 0
+    while True:
+        r = reviewer.rask(CHECK_SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON with a true or false \"ok\". Reply with the JSON only.", tokens=2000)
         if isinstance(r, dict) and isinstance(r.get("ok"), bool):
             return r["ok"], str(r.get("why", ""))
-    return None, "the Reviewer gave no usable answer"
+        attempt += 1
 
 
 def write_updated(name, e, path, commit, v, why, chat_stem):

@@ -30,6 +30,12 @@ def scrub(text):
             counts[name] = n
     return text, counts
 
+def chat_text(text):
+    """Chat text as it goes on: redacted like everything else, unless Settings, Chats turns that off (then exactly as written)."""
+    import tuning
+    return text if tuning.get("chat.scrub") == 0 else scrub(text)[0]
+
+
 def main():
     src, dst = Path(sys.argv[1]), Path(sys.argv[2])
     cleaned, counts = scrub(src.read_text(encoding="utf-8"))

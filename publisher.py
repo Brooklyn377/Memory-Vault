@@ -17,7 +17,6 @@ from scrub import scrub
 VAULT, STATE, G = agent.VAULT, agent.STATE, commit.G
 P = agent.CFG.get("publish", {})
 DECISIONS = STATE / "publish_decisions.json"
-MAX_BYTES = 200 * 1024
 TOP_LEVEL_OK = (".yaml", ".yml", ".toml", ".conf", ".ini")
 
 PUBLISH_SYS = (
@@ -50,8 +49,6 @@ def classify(rel, text):
 
 
 def gates(rel, data):
-    if len(data) > MAX_BYTES:
-        return "file larger than 200 KB"
     text = data.decode("utf-8", errors="replace")
     if scrub(text)[0] != text:
         return "contains secret-looking text"
@@ -60,7 +57,7 @@ def gates(rel, data):
 
 def verdict_from_reviewer(rel, text, cache):
     h = hashlib.sha1(text.encode()).hexdigest()
-    data = reviewer.rask(PUBLISH_SYS, f"NOTE ({rel}):\n{text[:6000]}")
+    data = reviewer.rask(PUBLISH_SYS, f"NOTE ({rel}):\n{text}")
     if not data or data.get("decision") not in ("publish", "local"):
         return None, "reviewer gave no usable answer"
     cache[rel] = {"hash": h, "decision": data["decision"], "reason": str(data.get("reason", ""))[:200]}

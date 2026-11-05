@@ -10,7 +10,7 @@ from pathlib import Path
 
 import agent
 import gitrepos
-from scrub import scrub
+from scrub import chat_text, scrub
 
 VAULT, STATE = agent.VAULT, agent.STATE
 CODE = Path(__file__).resolve().parent
@@ -145,7 +145,7 @@ def open_file(path, start=1):
     label, p = resolve(path)
     if p.is_dir():
         names = sorted(x.name + ("/" if x.is_dir() else "") for x in p.iterdir() if not SECRET.search(x.name))
-        return f"{label}/ holds:\n" + "\n".join(names[:200])
+        return f"{label}/ holds:\n" + "\n".join(names)
     if not _is_text(p):
         raise ValueError(f"{label} is not a text file")
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -179,7 +179,7 @@ def questions():
 
 def queue():
     import queuestate
-    return json.dumps(queuestate.snapshot(), default=str)[:20000]
+    return json.dumps(queuestate.snapshot(), default=str)
 
 
 def repos():
@@ -200,7 +200,7 @@ def _web_ready():
     """The reason the web tools cannot be used right now, or "" if they can."""
     import webtools
     if not webtools.allowed():
-        return "Web access is off. The person turns it on under Settings, Web access; until then answer from the notes and Git servers only."
+        return "Web access is off. The person turns it on under Settings, Chats, Web access; until then answer from the notes and Git servers only."
     limit = _t("assistant.web_calls")
     if CHAT["web_calls"] >= limit:
         return f"That is the limit of {limit} web look-ups for one message. Answer from what you have."
@@ -259,7 +259,7 @@ def edit_file(path, old, new, why):
     r = j["result"]
     if r["access"] != "write":
         return (f"NOT pushed, and nothing is waiting for the person: {r['server']} is set to Read only. Tell them exactly that, and "
-                f"show them this change for {r['path']} in your answer, in a code block, so they can apply it themselves:\n\n{r['diff'][:3000]}\n\n"
+                f"show them this change for {r['path']} in your answer, in a code block, so they can apply it themselves:\n\n{r['diff']}\n\n"
                 f"If they want you to push it instead, they set {r['server']} to Read and write under Settings > Git servers (a read "
                 "and write key alone does not change that setting) and ask you again.")
     return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
@@ -321,7 +321,7 @@ def run(name, args):
         text = f"{name} failed: {e}"
     except Exception as e:   # anything else a tool hits: the model is told what, and tries again, instead of the answer failing
         text = f"{name} failed ({type(e).__name__}): {e}"
-    text = scrub(str(text))[0]
+    text = chat_text(str(text))
     try:   # every tool call is in the activity log, so the History tab shows what the Assistant looked at and did
         said = " ".join(scrub(json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else "")[0].split())[:200]
         agent.log(f"assistant: {name} {said} -> {' '.join(text.split())[:140]}")

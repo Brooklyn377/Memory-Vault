@@ -511,15 +511,13 @@ def unit(cfg):
     status("working", why, rel)
     try:
         user, blob, cset, cconf, lines = build(v, rel, cands, cfg)
-        out = None
-        for attempt in range(2):
+        attempt = 0
+        while True:   # asked again, with what was wrong, until the answer is usable
             u = user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only."
             out = ask_model(system(cfg), u)
             if isinstance(out, dict):
                 break
-        else:
-            park(rel, "the model gave no usable answer twice")
-            return True
+            attempt += 1
         full = apply_result(v, rel, out, cfg, data, blob, cset, cconf, lines)
     except Exception as e:
         try:

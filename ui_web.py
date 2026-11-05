@@ -28,7 +28,6 @@ def register(app, authed):
 
 
 HTML = r"""
-<div id="web"></div>
 <script>
 (function(){
 const msg=h("div",{class:"mut"});
@@ -44,10 +43,11 @@ async function save(){
  if(on.checked&&!await window.warnPop("Turn on web access?",["The Assistant can then search the web and open pages when the vault and your Git servers have nothing on a question. Its search words and the page addresses it opens leave this container for the internet; your notes are not sent, only the words it chooses to search for (keys and tokens are removed).","Addresses on your own network, this machine and link-local addresses are never opened.","Every reply that used the web lists what it searched and opened, and gives its sources."],"Turn on","Not now")){on.checked=false;return}
  const r=await fetch("/api/web/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on.checked,engine:eng.value,searxng_url:sx.value})});
  const j=await r.json().catch(function(){return{}});msg.textContent=r.ok?"Saved.":(j.detail||"Could not save");if(!r.ok)window.warnPop("Could not save",[j.detail||"Could not save"])}
-$("#web").replaceChildren(h("div",{class:"card"},h("h3",{},"Web access"),
+// The controls are held by the Chats card (ui_chats.py), as its Web access section.
+window.webAccessNode=h("div",{},
  h("div",{class:"mut"},"Off by default. The Assistant looks in the vault and your Git servers first, and uses the web only for what they do not have."),
  fld2("Allow web access",on),fld2("Search engine",eng),sxrow,
- h("button",{class:"pri",style:"margin-top:8px",onclick:save},"Save"),msg));
+ h("button",{class:"pri",style:"margin-top:8px",onclick:save},"Save"),msg);
 load();
 })();
 </script>

@@ -86,7 +86,7 @@ def create(kind, target, instructions, chat=""):
     """Queue a job (the Assistant's queue_job tool). Checks the target now, so a bad one is refused in the chat."""
     if kind not in WORKER:
         raise ValueError("kind must be doc_draft, note_update or sort_note")
-    target, instructions = str(target or "").strip(), scrub(str(instructions or "").strip())[0][:4000]
+    target, instructions = str(target or "").strip(), scrub(str(instructions or "").strip())[0]
     if not instructions:
         raise ValueError("say what the job should do")
     if kind == "doc_draft":
@@ -256,7 +256,7 @@ def _doc_draft(j):
     if not diff:
         raise RuntimeError("the draft is the same as the file: nothing to change")
     (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
-    j["result"] = {"summary": str(out.get("summary") or "")[:500], "diff": diff[:60000], "sources": ok,
+    j["result"] = {"summary": str(out.get("summary") or "")[:500], "diff": diff, "sources": ok,
                    "dropped": len(sources) - len(ok), "server": e["name"], "server_id": e["id"], "url": e["url"],
                    "branch": e["branch"], "path": inner, "access": e["access"], "base": gitrepos.content_sha(f),
                    "new_file": not f.is_file()}
@@ -305,7 +305,7 @@ def _sort_note(j):
     from graph import Vault
     v = Vault(a.VAULT)
     cands = [r for r, _ in _notes_for(text[:2000] + " " + j["instructions"], 12) if r.startswith("entities/")]
-    user = (f"TEXT ({label}):\n{text[:12000]}\n\nWHAT THE PERSON WANTS: {j['instructions']}\n\nCANDIDATES:\n"
+    user = (f"TEXT ({label}):\n{text}\n\nWHAT THE PERSON WANTS: {j['instructions']}\n\nCANDIDATES:\n"
             + "\n".join(f"- {r}: {v.title(r)}" for r in cands))
     out = _call("qwen", SORT_SYS, user)
     claims = [c for c in out.get("claims") or [] if isinstance(c, dict) and c.get("note") in cands
@@ -384,7 +384,7 @@ def propose_edit(target, old, new, why="", chat=""):
     why = " ".join(str(why or "").split())[:300] or f"Edit {inner}"
     j = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": "file_edit", "worker": "pa", "target": target,
          "instructions": why, "chat": chat, "status": "waiting", "created": datetime.now().isoformat(timespec="seconds"),
-         "error": "", "result": {"summary": why, "diff": diff[:60000], "sources": [], "dropped": 0, "server": e["name"],
+         "error": "", "result": {"summary": why, "diff": diff, "sources": [], "dropped": 0, "server": e["name"],
                                  "server_id": e["id"], "url": e["url"], "branch": e["branch"], "path": inner, "access": e["access"],
                                  "base": gitrepos.content_sha(f), "new_file": not f.is_file()}}
     if e["access"] != "write":   # nothing could be pushed, so nothing is kept or asked: the Assistant shows the change in its reply
@@ -528,7 +528,7 @@ def merge(jid):
     if not diff:
         raise ValueError(f"{r['path']} already contains the draft's changes: nothing to commit")
     (DIR / f"{jid}.draft").write_text(merged, encoding="utf-8")
-    r.update(diff=diff[:60000], base=gitrepos.content_sha(f), merged=True)
+    r.update(diff=diff, base=gitrepos.content_sha(f), merged=True)
     j.update(status="waiting", error="")
     _save(j)
     _card(j, f"Commit the merged change to {r['path']} in {r['server']}? {r.get('summary') or ''}".strip(),

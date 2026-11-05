@@ -24,12 +24,10 @@ import chatfiles
 import settings
 import ui_extra
 from graph import Vault, as_list
-from scrub import scrub
+from scrub import chat_text, scrub
 
 STATE, VAULT = agent.STATE, agent.VAULT
 CHAT = STATE / "chat"
-MAX_TEXT = 4000
-MAX_TRIES = 3
 SKIP = ("raw/", "inbox/")
 STOP = set("the and for are was were what when where which who how why does did this that with from have has "
            "about into your you our not can could would should there their them they then than been being "
@@ -183,7 +181,7 @@ def send(text, chat="", files=None):
     kind = "correction" if re.match(r"(?i)/fix\b", text) else "lookup"
     if kind == "correction":
         text = re.sub(r"(?i)^/fix\s*", "", text)
-    text = scrub(text)[0][:MAX_TEXT].strip()
+    text = chat_text(text).strip()
     if not text:
         raise ValueError("empty message")
     chat = str(chat or "").strip()
@@ -613,7 +611,7 @@ def archive(m):
     day = f"{m['id'][:4]}-{m['id'][4:6]}-{m['id'][6:8]}"
     stamp = f"{day} {m['id'][9:11]}:{m['id'][11:13]}:{m['id'][13:15]}"
     name = conv_name(day)
-    clean = lambda t: scrub(str(t))[0].replace("[[", "[ [")
+    clean = lambda t: chat_text(str(t)).replace("[[", "[ [")
     turn = lambda who, t: f"### {who} ({stamp})\n\n{clean(t)}\n"
     pages = [w["url"] for w in m.get("web") or [] if w.get("kind") == "page"]
     reply = m["reply"] + ("\n\nWeb pages used: " + ", ".join(pages) if pages and "http" not in m["reply"] else "")
@@ -707,7 +705,7 @@ def watch():
                 agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
             else:
                 m["tries"] += 1
-                m["status"] = "error" if m["tries"] >= MAX_TRIES else "queued"
+                m["status"] = "error" if m["tries"] >= __import__("tuning").get("chat.fix_tries") else "queued"
                 if m["status"] == "error":
                     m["reply"] = f"Could not answer: {type(e).__name__}"
                 agent.log(f"chat: {m['id']} failed ({why}), try {m['tries']}")

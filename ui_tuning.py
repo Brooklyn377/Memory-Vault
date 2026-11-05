@@ -37,7 +37,7 @@ HTML = r"""
 (function(){
 const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
 const SEC={},placed={};
-function build(m,items){
+function build(items,title){
  const inp={};
  const rows=items.map(function(it){
   const e=h("input",{type:"number",step:"1",min:"-1",placeholder:String(it.default)});
@@ -58,11 +58,14 @@ function build(m,items){
   msg.textContent="Saved."+(j.restart&&j.restart.length?" Restart to apply: "+j.restart.join(", ")+".":" Live now.")+(j.notes&&j.notes.length?" Heads up: "+j.notes.join(" "):"");
   if(window.offerRetry)window.offerRetry()}
  function values(){const o={};for(const k in inp)o[k]=inp[k].value;return o}
- const d=h("details",{class:"sec","data-saves":"1"},h("summary",{},"Limits and guardrails"),...rows,
+ const d=h("details",{class:"sec","data-saves":"1"},h("summary",{},title||"Limits and guardrails"),...rows,
   h("div",{class:"mut",style:"margin-top:6px"},"A blank box uses the default; -1 turns a limit off. These are separate from Apply all: they save here and never restart a model server."),
   h("button",{class:"pri",style:"margin-top:8px",onclick:function(){save(values())}},"Save limits"),
   h("button",{style:"margin-top:8px",onclick:function(){const o={};for(const k in inp){inp[k].value="";o[k]=""}save(o)}},"Reset these to defaults"),msg);
  return d}
+// The Chats card builds its own sections out of the same rows: a section with the limits whose keys it names.
+window.buildTuning=async function(keys,title){const d=await api("/api/tuning");
+ return build(keys.map(function(k){return d.items.find(function(x){return x.key===k})}).filter(Boolean),title)};
 function place(){
  let left=0;
  Object.keys(MN).forEach(function(m){
@@ -75,7 +78,7 @@ function place(){
  return left}
 (async function(){
  const d=await api("/api/tuning");
- Object.keys(MN).forEach(function(m){SEC[m]=build(m,d.items.filter(function(x){return x.model===m}))});
+ Object.keys(MN).forEach(function(m){const rows=d.items.filter(function(x){return x.model===m});if(rows.length)SEC[m]=build(rows);else placed[m]=true});
  if(place()===0)return;
  const mo=new MutationObserver(function(){if(place()===0)mo.disconnect()});
  mo.observe(document.body,{childList:true,subtree:true});

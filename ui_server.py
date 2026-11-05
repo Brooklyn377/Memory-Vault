@@ -16,7 +16,7 @@ import serverflags
 import settings
 
 MIN_CTX = 2048        # the usual lowest context; below it is a warning
-HARD_MIN_CTX = 512    # below this nothing fits, so it is refused
+HARD_MIN_CTX = 512    # below this almost nothing fits: a stronger warning (never a refusal)
 MAX_SLOTS = 8
 NAME = re.compile(r"[\w.\-]+\.gguf")
 

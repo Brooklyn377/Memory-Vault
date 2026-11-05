@@ -232,19 +232,6 @@ function powerButton(key,u){
    refresh()},1500)};
  btn.onpointerup=stop;btn.onpointerleave=stop;btn.onpointercancel=stop;btn.oncontextmenu=function(e){e.preventDefault()};
  u.btn=btn;u.txt=txt;return btn}
-// The Assistant's chat memory controls, under its drop-downs: the manual compression and the server token count toggle.
-function memoryBlock(){
- const KEY="assistant.show_server_tokens",msg=h("div",{class:"mut"}),box=h("input",{type:"checkbox","data-instant":"1"});   // saves by itself: not an unsaved change
- api("/api/tuning").then(function(d){const r=d.items.find(function(x){return x.key===KEY});if(r)box.checked=Number(r.saved==null?r.default:r.saved)===1}).catch(function(){});
- box.onchange=async function(){msg.textContent="";box.disabled=true;
-  try{await api("/api/tuning/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:{[KEY]:box.checked?1:0},confirmed:true})});msg.textContent="Saved."}
-  catch(e){msg.textContent=e.message;box.checked=!box.checked}box.disabled=false};
- const b=h("button",{style:"padding:4px 10px;font-size:13px"},"Compress chat memory now");
- b.onclick=async function(){
-  if(!await window.warnPop("Compress the chat memory now?",["The Assistant summarizes your older chats in its idle time, the same way as when the memory passes its size. If the memory is still too big afterwards, the oldest summaries are moved to the vault.","Your chats stay in the chat history and in raw/conversations."],"Compress now","Cancel"))return;
-  b.disabled=true;msg.textContent="";
-  try{await api("/api/chat/compress",{method:"POST"});msg.textContent="Queued: it runs in the Assistant's idle time."}catch(e){msg.textContent=e.message}b.disabled=false};
- return h("div",{style:"margin-top:10px"},h("label",{class:"mut",style:"display:flex;gap:8px;align-items:center"},box,"Show the server's token count above the chat"),h("div",{style:"margin-top:6px"},b),msg)}
 // The slider: on = the model takes part in the turns; off = its server is stopped and it takes no turns.
 function enableSlider(key,u){
  const box=h("input",{type:"checkbox","data-instant":"1",title:"On: takes part in the turns. Off: stopped, takes no turns."});
@@ -285,7 +272,6 @@ function merge(){
   card.append(u.secSrv,u.secGen);
   if(key==="cur")card.append(u.secCur);
   card.append(u.secPr);
-  if(key==="pa")card.append(memoryBlock());
   card.append(h("button",{class:"pri",style:"margin-top:10px",onclick:function(){window.applyAll()}},"Apply all models"));
   mm.append(card)});
  refresh();setInterval(function(){if(!document.hidden)refresh()},3000)}

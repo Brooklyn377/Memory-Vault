@@ -126,7 +126,7 @@ def _to_vault(x):
     import ui_chat
     day = f"{x['id'][:4]}-{x['id'][4:6]}-{x['id'][6:8]}"
     link = f"[[raw/conversations/{ui_chat.conv_name(day)[:-3]}]]"
-    summary = scrub(x["summary"])[0].replace("[[", "[ [")
+    summary = __import__("scrub").chat_text(x["summary"]).replace("[[", "[ [")
     section = f"### {_when(x)} (summary of {link})\n\n{summary}\n"
     path = SUMMARIES / f"{day}-chat-summaries.md"
     SUMMARIES.mkdir(parents=True, exist_ok=True)

@@ -35,7 +35,6 @@ def _key(rel, chunk_hash, clarification):
 
 
 SEEN = STATE / "review_seen.json"   # verdicts the Sweeper has already picked up: key -> the verdict's time
-UNUSABLE_LIMIT = 3                  # unusable answers for one chunk before you are told, and it is left until you say
 
 
 def _entry(key):
@@ -108,20 +107,23 @@ def mark_seen(key):
 
 
 def _review(data):
-    """The reviewer's verdict dict, or None if it is down or gave no usable answer."""
+    """The reviewer's verdict dict, or None if it is down. An unusable answer is asked for again until it is usable."""
     facts = [f for f in (data.get("facts") or []) if isinstance(f, dict)]
     if not reviewer.ready():
         return None
     lines = [f"{i}. [{f.get('kind', 'info')}] {f.get('entity')}: {f.get('fact')}\n   quote: \"{str(f.get('quote', ''))[:__import__('tuning').get('review.quote_chars')]}\""
              for i, f in enumerate(facts)]
     user = f"RECAP: {str(data.get('recap', ''))[:__import__('tuning').get('review.recap_chars')]}\n\nFACTS:\n" + "\n".join(lines)
-    try:
-        v = reviewer.rask(GATE_SYS, user, tokens=6000)
-    except Exception as e:
-        agent.log(f"review gate error: {type(e).__name__}: {str(e)[:80]}")
-        return None
-    if not v or v.get("verdict") not in ("accept", "reject"):
-        return None
+    attempt = 0
+    while True:   # asked again, with what was wrong, until the answer is usable
+        try:
+            v = reviewer.rask(GATE_SYS, user if attempt == 0 else user + '\n\nYour last answer was not valid JSON with a "verdict" of accept or reject. Reply with the JSON only.', tokens=6000)
+        except Exception as e:
+            agent.log(f"review gate error: {type(e).__name__}: {str(e)[:80]}")
+            return None
+        if v and v.get("verdict") in ("accept", "reject"):
+            break
+        attempt += 1
     v["drop"] = sorted({int(n) for n in (v.get("drop") or []) if str(n).lstrip("-").isdigit()})
     return v
 
@@ -137,19 +139,7 @@ def review_next():
         if not now or now.get("data") != e["data"]:   # replaced or removed while the Reviewer was thinking
             return 1
         if v is None:
-            if not reviewer.ready():
-                return 0   # the Reviewer is not available: nothing to do until it is
-            now["unusable"] = now.get("unusable", 0) + 1
-            if now["unusable"] >= UNUSABLE_LIMIT:   # tell the person, and leave it until they say so
-                now["stuck"] = True
-                import questions
-                questions.ask(f'The Reviewer gave no usable answer {UNUSABLE_LIMIT} times for a part of "{str(e.get("rel", "")).split("/")[-1][:50]}"',
-                              why="Its facts are not written until a review comes back. Try again once the Reviewer is working, "
-                                  "or skip it: that part of the chat is then read again.",
-                              kind="reviewstuck", payload={"key": key},
-                              options=[{"label": "Try again", "value": "retry"}, {"label": "Skip these facts", "value": "skip"}])
-            _write(key, now)
-            continue
+            return 0   # the Reviewer is not available (or failed): try again later
         now["verdict"] = dict(v, at=datetime.now().isoformat(timespec="seconds"))
         _write(key, now)
         return 1

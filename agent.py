@@ -21,7 +21,6 @@ EVIDENCE = CFG["evidence"]
 import settings
 
 SKIP_PREFIXES = ("raw/", "inbox/")  # raw sources and inbox are evidence, never edit targets
-MAX_NOTE_CHARS = 6000
 
 
 def log(msg):
@@ -41,8 +40,9 @@ class Budget:
         self.left -= 1
 
 
-def ask(system, user, budget):
-    budget.spend()
+def ask(system, user, budget=None):
+    if budget:
+        budget.spend()
     body = {
         "model": M["name"],
         "temperature": settings.get("qwen")["temperature"],
@@ -141,7 +141,7 @@ def run(note_path):
            "created": datetime.now().isoformat(timespec="seconds"),
            "claims": [], "proposals": [], "rejected": [], "stopped": None}
 
-    extracted = ask(EXTRACT_SYS, body[:MAX_NOTE_CHARS], budget)
+    extracted = ask(EXTRACT_SYS, body, budget)
     claims = (extracted or {}).get("claims") or []
     out["claims"] = claims[:3]
     log(f"{note_path}: {len(out['claims'])} claim(s), confidence {conf}")
@@ -152,7 +152,7 @@ def run(note_path):
             if not entity:
                 continue
             for rel, why in candidates(vault, entity, __import__("tuning").get("agent.max_candidates")):
-                text = vault.body[rel][:MAX_NOTE_CHARS]
+                text = vault.body[rel]
                 verdict = ask(JUDGE_SYS, f"NEW FACT: {statement}\n\nNOTE ({rel}):\n{text}", budget)
                 if not verdict or not verdict.get("needs_change"):
                     continue

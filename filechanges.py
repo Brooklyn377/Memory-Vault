@@ -94,18 +94,19 @@ VERIFY_SYS = ("You check edits that another model says were made to one saved fi
 
 
 def verify(name, blob, cands):
-    """The Reviewer's check of what the Sweeper proposed. {index: (approved, reason)}, or None if it never answered."""
+    """The Reviewer's check of what the Sweeper proposed: {index: (approved, reason)}. It is asked again until it answers properly."""
     listing = "\n".join(f"[{i}] {c.get('what', '')}\nOLD:\n{old}\nNEW:\n{new}\nQUOTE: {rec['quote']}\n" for i, (c, old, new, rec) in enumerate(cands))
     user = f"FILE: {name}\n\nEXCERPTS:\n{blob}\n\nCHANGES:\n{listing}"
-    for attempt in range(2):
-        v = reviewer.rask(VERIFY_SYS, user if attempt == 0 else user + "\n\nReply with the JSON only.", tokens=4000)
+    attempt = 0
+    while True:
+        v = reviewer.rask(VERIFY_SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON with a \"verdicts\" list. Reply with the JSON only.", tokens=4000)
         if isinstance(v, dict) and isinstance(v.get("verdicts"), list):
             out = {}
             for x in v["verdicts"]:
                 if isinstance(x, dict) and isinstance(x.get("n"), int):
                     out[x["n"]] = (x.get("ok") is True, str(x.get("why", "")))
             return out
-    return None
+        attempt += 1
 
 
 def process(name):
@@ -127,14 +128,13 @@ def process(name):
     if not stems:
         return "nothing new to read"
     blob = "\n".join(ex)
-    user = f"CURRENT FILE ({name}):\n{cur[:9000]}\n\nEXCERPTS:\n{blob}"
-    budget = agent.Budget(2)
-    for attempt in range(2):
-        v = agent.ask(SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only.", budget)
+    user = f"CURRENT FILE ({name}):\n{cur}\n\nEXCERPTS:\n{blob}"
+    attempt = 0
+    while True:   # asked again, with what was wrong, until the answer is usable
+        v = agent.ask(SYS, user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only.")
         if isinstance(v, dict) and isinstance(v.get("changes"), list):
             break
-    else:
-        return park(name, stems, "the Sweeper gave no usable answer twice")
+        attempt += 1
     now = datetime.now().isoformat(timespec="seconds")
     ok = bad = 0
     cands = []   # passed the code's checks: the Reviewer decides which are applied
@@ -154,8 +154,6 @@ def process(name):
         bad += 1
     if cands:
         verdicts = verify(name, blob, cands)
-        if verdicts is None:
-            return park(name, stems, "the Reviewer gave no usable answer twice")
         for i, (c, old, new, rec) in enumerate(cands):
             yes, why = verdicts.get(i, (False, "the Reviewer gave no verdict"))
             if yes and cur.count(old) == 1:

@@ -208,7 +208,7 @@ def finish(m, st):
     st["done"] = True
     m["stats"]["passes"] += 1
     save(m)
-    curator.log({"act": "map_pass", "pass": st["n"], "added": st["added"], "failed_parts": st.get("failed", 0)})
+    curator.log({"act": "map_pass", "pass": st["n"], "added": st["added"]})
     if st["added"]:
         curator.status("working", f"map pass {st['n']} added {st['added']}; starting another")
     else:
@@ -221,7 +221,7 @@ def step(cfg, data, v):
     sig, st = vault_sig(ids), m["pass"]
     titles, chats, parts = slices(v, ids, int(curator.prompt_tokens(cfg) * curator.CHARS_PER_TOKEN))
     if st.get("sig") != sig or st.get("done"):
-        st = m["pass"] = {"sig": sig, "slice": 0, "added": 0, "done": False, "failed": 0, "n": st.get("n", 0) + 1}
+        st = m["pass"] = {"sig": sig, "slice": 0, "added": 0, "done": False, "n": st.get("n", 0) + 1}
     i = st["slice"]
     if i >= len(parts):
         return finish(m, st)
@@ -230,23 +230,21 @@ def step(cfg, data, v):
     user = (f"LIMITS: a hub needs at least {hub_min} note{'s' if hub_min != 1 else ''}.\n\n"
             f"ALL NOTES (path | title):\n{titles}\n\nSOURCE CHATS (titles only, not linkable):\n{chats}\n\n"
             f"DETAILED NOTES, part {i + 1} of {len(parts)} (path | type | title | links | gist):\n" + "\n".join(parts[i]))
-    out = None
-    for attempt in range(2):
+    attempt = 0
+    while True:   # asked again, with what was wrong, until the answer is usable; a server that does not answer is waited for
         u = user if attempt == 0 else user + "\n\nYour last answer was not valid JSON in the required shape. Reply with the JSON only."
         try:
             out = curator.ask_model(SYS, u)
         except Exception as e:
-            agent.log(f"curator: map call failed ({type(e).__name__})")
+            if curator.server_down(e):
+                raise curator.Unavailable() from None
+            raise
         if isinstance(out, dict):
             break
-    if isinstance(out, dict):
-        st["added"] += apply(v, ids, out, data, m)
-        regen(m)
-        curator.save_data(data)
-    else:
-        st["failed"] += 1
-        curator.log({"act": "map_part_failed", "pass": st["n"], "part": i + 1})
-        agent.log(f"curator: map pass part {i + 1} gave no usable answer; skipped")
+        attempt += 1
+    st["added"] += apply(v, ids, out, data, m)
+    regen(m)
+    curator.save_data(data)
     st["slice"] = i + 1
     save(m)
     return True

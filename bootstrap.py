@@ -20,7 +20,6 @@ VAULT, STATE = agent.VAULT, agent.STATE
 PROGRESS = STATE / "bootstrap.json"
 HEAD_CHARS, TAIL_CHARS = 2400, 1200
 MAX_ENTITIES = 8
-MAX_TRIES = 3
 
 SYS = ("You summarize one document for a personal documentation vault. Reply with ONLY JSON: "
        '{"title":"<short title>","summary":"<3-5 factual sentences>",'
@@ -109,8 +108,7 @@ def write_entities(prog):
 
 def main():
     prog = load_progress()
-    todo = [d for d in documents() if d not in prog["done"]
-            and prog["failed"].get(d, 0) < MAX_TRIES]
+    todo = [d for d in documents() if d not in prog["done"]]
     agent.log(f"bootstrap: {len(todo)} document(s) to go, {len(prog['done'])} done")
     for rel in todo:
         while not agent.model_ready():
@@ -122,7 +120,12 @@ def main():
             continue
         t0 = time.time()
         try:
-            data = agent.ask(SYS, body, agent.Budget(1))
+            attempt = 0
+            while True:   # asked again, with what was wrong, until the answer is usable
+                data = agent.ask(SYS, body if attempt == 0 else body + '\n\nYour last answer was not valid JSON with a "summary". Reply with the JSON only.')
+                if data and data.get("summary"):
+                    break
+                attempt += 1
         except Exception as e:
             data = None
             agent.log(f"bootstrap FAILED {rel}: {type(e).__name__}: {str(e)[:100]}")
