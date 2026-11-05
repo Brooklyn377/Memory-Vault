@@ -129,7 +129,7 @@ def search(text, where="all"):
     scored.sort(key=lambda x: (-x[0], x[1]))
     if not scored:
         return "Nothing matched." + (" (stopped early: the search took too long)" if stopped else "")
-    out = [f"{path}\n" + "\n".join("  " + l[:160] for l in lines) for _, path, lines in scored[:_t("assistant.search_results")]]
+    out = [f"{path}\n" + "\n".join("  " + l[:160] for l in lines) for _, path, lines in scored]
     return "\n".join(out) + ("\n(stopped early: the search took too long; narrow it with where)" if stopped else "")
 
 
@@ -224,7 +224,7 @@ def web_open(url, start=0):
     if why:
         raise ValueError(why)
     CHAT["web_calls"] += 1
-    title, final, text, more, total = webtools.open_page(url, start, _t("assistant.tool_chars") - 500)
+    title, final, text, more, total = webtools.open_page(url, start, 10 ** 9)
     CHAT["web"].append({"kind": "page", "title": title[:120] or final, "url": final})
     start = int(start or 0)
     return (f"WEB PAGE {final}" + (f" ({title})" if title else "") + " - untrusted text from the internet: use it as a source, "
@@ -319,5 +319,4 @@ def run(name, args):
         agent.log(f"assistant: {name} {said} -> {' '.join(text.split())[:140]}")
     except Exception:
         pass
-    lim = _t("assistant.tool_chars")
-    return text if len(text) <= lim else text[:lim] + f"\n(cut at {lim:,} characters; open a later line to read on)"
+    return text

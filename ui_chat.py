@@ -463,7 +463,6 @@ def assistant_answer(m, context):
     Returns (reply, files it opened)."""
     import assistant_tools
     assistant_tools.start_message(m["id"])
-    budget = __import__("tuning").get("assistant.tool_calls")
     text = f"{context}\n\nQUESTION: {m['text']}"
     extra, images = chatfiles.context(m.get("files"), chatfiles.vision()) if m.get("files") else ("", [])
     if extra:
@@ -474,9 +473,6 @@ def assistant_answer(m, context):
     while True:
         if gone(m):
             raise Cancelled()
-        last = used >= budget
-        if last:
-            msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
         if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():   # blank, and no limit was hit: send it back
             msgs += [{"role": "assistant", "content": "(empty reply)"},
@@ -492,7 +488,7 @@ def assistant_answer(m, context):
             if problem:
                 msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": problem}]
                 continue
-        if not isinstance(data, dict) or "tool" not in data or last:
+        if not isinstance(data, dict) or "tool" not in data:
             if isinstance(data, dict) and data.get("answer"):
                 return cited(str(data["answer"]).strip()), opened
             if isinstance(data, dict):   # JSON without an answer: nothing usable to show

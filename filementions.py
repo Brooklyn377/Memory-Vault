@@ -8,7 +8,6 @@ Nothing is changed in Git: this only reads. The look-up for one chat stops after
 Limits and guardrails (File look-up time per chat)."""
 import json
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -70,17 +69,16 @@ def locate(name):
     return out
 
 
-def commits_after(e, path, since, deadline):
+def commits_after(e, path, since):
     """The commits to one file made since a date, oldest first: (hash, author, date, subject, diff)."""
     d, tok = gitrepos.copy(e["id"], "qwen"), gitrepos.token(e["id"], "qwen")
-    left = lambda: max(5, int(deadline - time.time()))
     for args in (["fetch", "-q", f"--shallow-since={since}", "origin", e["branch"]], ["fetch", "-q", "--deepen=1", "origin", e["branch"]]):
         try:
-            gitrepos._git(args, tok, cwd=d, timeout=left())
+            gitrepos._git(args, tok, cwd=d)
         except Exception as ex:   # use the history there is
             agent.log(f"file look-up: could not read the history of {e['name']}: {str(ex)[:120]}")
             break
-    out = gitrepos._git(["log", f"--since={since}", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "-p", "--", path], tok, cwd=d, timeout=left())
+    out = gitrepos._git(["log", f"--since={since}", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "-p", "--", path], tok, cwd=d)
     res = []
     for rec in out.split("\x1e")[1:]:
         head, _, diff = rec.partition("\n")
@@ -146,16 +144,11 @@ def look(chat):
     """One chat: returns what happened, in a few words."""
     text = chat.read_text(encoding="utf-8", errors="replace")
     since = chat.name[:10]
-    deadline = time.time() + tuning.get("files.lookup_seconds")
     made, tried = 0, 0
     for name, excerpts in mentioned(text):
-        if time.time() > deadline:
-            return f"{made} updated file(s); stopped at the time limit"
         for e, path in locate(name):
-            if time.time() > deadline:
-                break
             try:
-                commits = commits_after(e, path, since, deadline)
+                commits = commits_after(e, path, since)
             except Exception as ex:
                 agent.log(f"file look-up: {name} in {e['name']}: {type(ex).__name__}: {str(ex)[:120]}")
                 continue
@@ -163,8 +156,6 @@ def look(chat):
                 out = UPDATED / f"{name}-{c[0][:7]}.md"
                 if out.exists():
                     continue
-                if time.time() > deadline:
-                    break
                 tried += 1
                 v = judge(excerpts, c)
                 if not v or v.get("match") is not True or not reviewer.grounded(str(v.get("quote", "")), "\n".join(excerpts)):
