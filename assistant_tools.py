@@ -6,7 +6,6 @@ Paths look like vault/entities/foo.md, state/review_log.jsonl, code/sweep.py or 
 note path such as entities/foo.md means the vault."""
 import json
 import re
-import time
 from pathlib import Path
 
 import agent
@@ -28,8 +27,6 @@ class _Secret:
 
 SECRET = _Secret()
 SKIP_DIRS = {".git", "venv", "__pycache__", "node_modules", "think"}   # think: model logs, searched only with where=logs
-MAX_FILE = 2_000_000
-SEARCH_SECONDS = 8
 
 
 def _t(key):
@@ -100,37 +97,48 @@ def _where(where):
     raise ValueError("where must be all, notes, raw, inbox, vault, state, code, logs, git, or a Git server's name")
 
 
+def _is_text(p):
+    """False for a binary file (a NUL byte near its start): it is not read, whatever its size."""
+    try:
+        with open(p, "rb") as f:
+            return b"\0" not in f.read(8192)
+    except OSError:
+        return False
+
+
 def search(text, where="all"):
     terms = [t for t in dict.fromkeys(re.findall(r"[a-z0-9][a-z0-9._-]{1,}", str(text).lower()))][:10]
     if not terms:
         raise ValueError("give some words to search for")
-    end, scored, stopped = time.time() + SEARCH_SECONDS, [], False
+    scored = []
     for label, root, under in _where(where):
         if under and not (root / under).is_dir():
             continue
         for p in _files(root, under):
-            if time.time() > end:
-                stopped = True
-                break
             if where == "notes" and p.relative_to(root).parts[:1] in (("raw",), ("inbox",)):
                 continue
-            try:
-                if p.stat().st_size > MAX_FILE:
-                    continue
-                body = p.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            if not _is_text(p):
                 continue
             rel = str(p.relative_to(root)).lower()
-            low = body.lower()
-            score = sum(3 for t in terms if t in rel) + sum(min(low.count(t), 5) for t in terms)
+            counts, lines = {t: 0 for t in terms}, []
+            try:
+                with open(p, encoding="utf-8") as f:   # a line at a time: a big file is searched whole without being held in memory
+                    for line in f:
+                        low = line.lower()
+                        hit = [t for t in terms if t in low]
+                        for t in hit:
+                            counts[t] += low.count(t)
+                        if hit and len(lines) < 2:
+                            lines.append(line.strip())
+            except (OSError, UnicodeDecodeError):
+                continue
+            score = sum(3 for t in terms if t in rel) + sum(min(c, 5) for c in counts.values())
             if score:
-                lines = [l.strip() for l in body.splitlines() if any(t in l.lower() for t in terms)][:2]
                 scored.append((score, f"{label}/{p.relative_to(root)}", lines))
     scored.sort(key=lambda x: (-x[0], x[1]))
     if not scored:
-        return "Nothing matched." + (" (stopped early: the search took too long)" if stopped else "")
-    out = [f"{path}\n" + "\n".join("  " + l[:160] for l in lines) for _, path, lines in scored]
-    return "\n".join(out) + ("\n(stopped early: the search took too long; narrow it with where)" if stopped else "")
+        return "Nothing matched."
+    return "\n".join(f"{path}\n" + "\n".join("  " + l[:160] for l in lines) for _, path, lines in scored)
 
 
 def open_file(path, start=1):
@@ -138,8 +146,8 @@ def open_file(path, start=1):
     if p.is_dir():
         names = sorted(x.name + ("/" if x.is_dir() else "") for x in p.iterdir() if not SECRET.search(x.name))
         return f"{label}/ holds:\n" + "\n".join(names[:200])
-    if p.stat().st_size > MAX_FILE * 5:
-        raise ValueError(f"{label} is too big to open")
+    if not _is_text(p):
+        raise ValueError(f"{label} is not a text file")
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     start = max(1, int(start or 1))
     body = "\n".join(f"{n}: {l}" for n, l in enumerate(lines[start - 1:], start))
