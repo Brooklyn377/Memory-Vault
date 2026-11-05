@@ -94,7 +94,7 @@ def turns(m):
                 {"role": "assistant", "content": "Understood."}]
     for x in chats:
         if not x.get("summary"):
-            out += [{"role": "user", "content": x["text"]}, {"role": "assistant", "content": x["reply"]}]
+            out += [{"role": "user", "content": x["text"] + __import__("chatfiles").names(x)}, {"role": "assistant", "content": x["reply"]}]
     return out
 
 

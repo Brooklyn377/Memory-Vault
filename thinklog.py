@@ -127,7 +127,10 @@ def describe(label, body):
     """A short plain description of what a call is about, for the Queue and History pages."""
     import re
     try:
-        user = str(body["messages"][-1]["content"])
+        user = body["messages"][-1]["content"]
+        if isinstance(user, list):   # a message with pictures: its text part
+            user = "".join(p.get("text", "") for p in user if p.get("type") == "text")
+        user = str(user)
     except Exception:
         return ""
     first = next((l.strip() for l in user.splitlines() if l.strip()), "")

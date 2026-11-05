@@ -25,6 +25,7 @@ REG = [
     ("chat.hop_notes", "gpt", "Chat: notes whose links are followed", "How many of those notes have their linked notes pulled in.", 2, 0, 8, ""),
     ("chat.linked", "gpt", "Chat: linked notes added", "Most linked notes added to the chat's context.", 4, 0, 20, ""),
     ("chat.note_chars", "gpt", "Chat: characters read per note", "Text taken from each full note.", 1500, 300, 8000, ""),
+    ("chat.attachment_chars", "pa", "Chat: characters read from an attached file", "How much of an attached text file is put in the message for the Assistant. For a longer file it is told where the saved original is and can open it for the rest.", 20000, 1000, 500000, ""),
     ("chat.linked_chars", "gpt", "Chat: characters read per linked note", "Text taken from each linked note.", 300, 50, 3000, ""),
     ("curator.note_chars", "cur", "Note text shown", "Characters of the note under review.", 8000, 1000, 40000, ""),
     ("curator.candidates", "cur", "Unlinked candidate notes shown", "Notes it could link to, shown with each note.", 60, 0, 300, ""),

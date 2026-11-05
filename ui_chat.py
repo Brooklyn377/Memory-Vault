@@ -16,10 +16,11 @@ from datetime import datetime
 
 import yaml
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 import agent
+import chatfiles
 import settings
 import ui_extra
 from graph import Vault, as_list
@@ -177,7 +178,7 @@ def delete_chat(cid):
     return len(mine)
 
 
-def send(text, chat=""):
+def send(text, chat="", files=None):
     text = str(text).strip()
     kind = "correction" if re.match(r"(?i)/fix\b", text) else "lookup"
     if kind == "correction":
@@ -188,8 +189,13 @@ def send(text, chat=""):
     chat = str(chat or "").strip()
     if chat not in ("", "new") and not any(c["id"] == chat for c in chats()):
         raise ValueError("there is no such chat")
-    m = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": kind, "text": text,
+    if files and kind == "correction":
+        raise ValueError("a /fix message cannot have files; the Reviewer would not see them")
+    mid = f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+    m = {"id": mid, "kind": kind, "text": text,
          "status": "queued", "reply": "", "sources": [], "confirm": "none", "tries": 0}
+    if files:
+        m["files"] = chatfiles.attach(files, mid)
     m["chat"] = chat if chat not in ("", "new") else m["id"]   # a new chat is named after its first message
     _save(m)
     return m
@@ -343,7 +349,8 @@ def _note_usage(body, r):
     """Keep what the server counted for the last call, with how many characters were sent, to compare with the estimate."""
     n = (r.get("usage") or {}).get("prompt_tokens")
     if n:
-        chars = sum(len(str(x.get("content") or "")) for x in body["messages"])
+        text = lambda c: "".join(p.get("text", "") for p in c if p.get("type") == "text") if isinstance(c, list) else str(c or "")
+        chars = sum(len(text(x.get("content"))) for x in body["messages"])
         try:
             USAGE.write_text(json.dumps({"prompt_tokens": n, "chars": chars, "at": time.time()}))
         except OSError:
@@ -435,7 +442,12 @@ def assistant_answer(m, context):
     import assistant_tools
     assistant_tools.start_message(m["id"])
     budget = __import__("tuning").get("assistant.tool_calls")
-    msgs = earlier_turns(m) + [{"role": "user", "content": f"{context}\n\nQUESTION: {m['text']}"}]
+    text = f"{context}\n\nQUESTION: {m['text']}"
+    extra, images = chatfiles.context(m.get("files"), chatfiles.vision()) if m.get("files") else ("", [])
+    if extra:
+        text += "\n\n" + extra
+    content = [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": u}} for u in images] if images else text
+    msgs = earlier_turns(m) + [{"role": "user", "content": content}]
     opened, used, repairs = [], 0, 0
     while True:
         if gone(m):
@@ -530,8 +542,10 @@ def retry(mid):
 def remove(mid):
     """Delete one message and its reply from the chat, so the Assistant no longer sees it as an earlier turn. A copy already
     added to raw/conversations stays there."""
-    if not _load(mid):
+    m = _load(mid)
+    if not m:
         raise ValueError("there is no such message")
+    chatfiles.remove(m.get("files"))   # the vault's original of a file stays, like the filed conversation
     GONE.mkdir(parents=True, exist_ok=True)
     (GONE / mid).write_text(str(time.time()))   # first, so a message being answered stops and cannot be saved again
     _path(mid).unlink(missing_ok=True)
@@ -556,7 +570,7 @@ def archive(m):
     turn = lambda who, t: f"### {who} ({stamp})\n\n{clean(t)}\n"
     pages = [w["url"] for w in m.get("web") or [] if w.get("kind") == "page"]
     reply = m["reply"] + ("\n\nWeb pages used: " + ", ".join(pages) if pages and "http" not in m["reply"] else "")
-    sections = turn("Human", ("/fix " if m["kind"] == "correction" else "") + m["text"]) + "\n" + turn("Assistant", reply)
+    sections = turn("Human", ("/fix " if m["kind"] == "correction" else "") + m["text"] + chatfiles.names(m)) + "\n" + turn("Assistant", reply)
     path = CONV / name
     CONV.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -597,6 +611,7 @@ def watch():
             try:   # idle: the chat memory is compressed here when it has grown past its size
                 import chatmemory
                 chatmemory.run(lambda: any(x["status"] == "queued" for x in _all()))
+                chatfiles.sweep(lambda: {f.get("id") for x in _all() for f in x.get("files") or []})
             except Exception as e:
                 agent.log(f"chat memory: {type(e).__name__}: {str(e)[:120]}")
             time.sleep(10)
@@ -705,12 +720,47 @@ def register(app, authed):
         chatmemory.request()
         return {"ok": True}
 
+    @router.get("/api/chat/capabilities")
+    def chat_capabilities(request: Request):
+        need(request)
+        return {"images": chatfiles.vision()}
+
+    @router.post("/api/chat/upload")
+    async def chat_upload(request: Request, file: UploadFile = File(...)):
+        """A file or image waits here until the message it belongs to is sent. Nothing limits its size."""
+        need(request)
+        uid, path = chatfiles.new_upload(file.filename)
+        with open(path, "wb") as f:
+            while True:
+                chunk = await file.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return chatfiles.info(uid)
+
+    @router.post("/api/chat/upload/discard")
+    async def chat_discard(request: Request):
+        need(request)
+        uid = str((await request.json()).get("id", ""))
+        if any(f.get("id") == uid for m in _all() for f in m.get("files") or []):
+            raise HTTPException(status_code=400, detail="that file belongs to a message")
+        chatfiles.discard(uid)
+        return {"ok": True}
+
+    @router.get("/api/chat/file/{uid}/{name}")
+    def chat_file(request: Request, uid: str, name: str):
+        need(request)
+        p = chatfiles.path_of(uid, name)
+        if not p:
+            raise HTTPException(status_code=404, detail="no such file")
+        return FileResponse(p, filename=name, content_disposition_type="inline")
+
     @router.post("/api/chat/send")
     async def chat_send(request: Request):
         need(request)
         data = await request.json()
         try:
-            m = send(data.get("text", ""), data.get("chat", ""))
+            m = send(data.get("text", ""), data.get("chat", ""), data.get("files") or [])
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"id": m["id"], "chat": m["chat"]}
@@ -763,13 +813,33 @@ CHAT_HTML = r"""
 #cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
 #cs svg{width:18px;height:18px;background:none;border-radius:0}
-.cwrap{position:relative}.cwrap textarea{padding-right:56px;box-sizing:border-box;width:100%}
+#cp{position:absolute;right:54px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center}
+#cp svg{width:18px;height:18px;background:none;border-radius:0}
+#cmenu{position:absolute;right:0;bottom:calc(100% + 6px);z-index:8;min-width:230px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.3);overflow:hidden}
+#cmenu[hidden]{display:none}
+#cmenu .mi{display:flex;align-items:center;gap:12px;width:100%;margin:0;padding:12px 16px;text-align:left;border:0;border-radius:0;background:none;color:var(--ink)}
+#cmenu .mi+.mi{border-top:1px solid var(--line)}#cmenu .mi svg{width:20px;height:20px;flex:none;background:none;border-radius:0}
+#cmenu .mi[aria-disabled=true]{opacity:.4;cursor:not-allowed}#cmenu small{display:block;font-size:12px;color:var(--mut)}#cmenu small:empty{display:none}
+#catt{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}#catt:empty{display:none}
+.chip2{display:flex;align-items:center;gap:6px;max-width:100%;padding:4px 6px 4px 10px;border:1px solid var(--line);border-radius:14px;background:var(--card);font-size:13px}
+.chip2 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chip2 button{margin:0;padding:0 6px;border:0;background:none;font-size:16px;line-height:1}
+.chip2.bad{border-color:#f87171}.fl{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin:4px 0}
+.fl img{max-width:160px;max-height:160px;border-radius:10px;display:block}.fl a{font-size:13px;padding:4px 10px;border:1px solid var(--line);border-radius:14px;color:inherit;text-decoration:none}
+.cwrap{position:relative}.cwrap textarea{display:block;padding-right:100px;box-sizing:border-box;width:100%;min-height:56px;max-height:calc(8 * 1.4em + 26px);line-height:1.4;resize:none;overflow-y:auto}
 #cs{position:absolute;right:10px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center}
 </style>
 <div id="thread"></div>
-<div id="cbox"><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"></span></div>
-<div class="cwrap"><textarea id="ct" rows="3" placeholder="Ask about your notes. Start with /fix to correct a note."></textarea>
-<button class="pri" id="cs" title="Send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div><span id="ce" class="mut"></span></div>
+<div id="cbox"><div id="catt"></div><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"></span></div>
+<div class="cwrap"><textarea id="ct" rows="1" placeholder="Type to chat"></textarea>
+<button type="button" id="cp" title="Add an image or a file" aria-label="Add an image or a file" aria-haspopup="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+<div id="cmenu" hidden role="menu">
+<button type="button" class="mi" id="mimg" role="menuitem" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Upload an image<small></small></span></button>
+<button type="button" class="mi" id="mcam" role="menuitem" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg><span>Take a picture<small></small></span></button>
+<button type="button" class="mi" id="mfile" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12l-8.5 8.5a5 5 0 01-7-7L14 5a3.3 3.3 0 014.7 4.7L10 18.4a1.7 1.7 0 01-2.4-2.4L15 8.6"/></svg><span>Upload a file</span></button>
+</div>
+<button class="pri" id="cs" title="Send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+<input type="file" id="cfin" multiple hidden><input type="file" id="ciin" accept="image/*" multiple hidden><input type="file" id="ccam" accept="image/*" capture="environment" hidden>
+<span id="ce" class="mut"></span></div>
 <script>
 const LABEL={queued:"Queued",working:"Working (this can take a while)",replied:"Replied",error:"Failed",skipped:"Skipped"};
 function webList(w){
@@ -791,6 +861,8 @@ function notesList(src){
  return h("div",{class:"mut"},line,btn,more)}
 function bubble(m){
  const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:"")+" ",h("button",{class:"del",onclick:()=>removeOne(m.id)},"Delete"))];
+ if(m.files&&m.files.length)out.splice(1,0,h("div",{class:"fl"},...m.files.map(f=>{const u="/api/chat/file/"+f.id+"/"+encodeURIComponent(f.name);
+  return f.image?h("a",{href:u,target:"_blank",rel:"noopener"},h("img",{src:u,alt:f.name})):h("a",{href:u,target:"_blank",rel:"noopener"},f.name+" · "+kb(f.size))})));
  if(m.status==="error")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
@@ -827,8 +899,41 @@ async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
-$("#cs").onclick=async()=>{const t=$("#ct").value.trim();if(!t)return;$("#cs").disabled=true;$("#ce").textContent="";
- try{const r=await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t,chat:chatId})});$("#ct").value="";
+// The on-screen keyboard covers the bottom of the page without shrinking it: lift the box by the height of the keyboard
+const vv=window.visualViewport;
+function lift(){if(vv)$("#cbox").style.bottom=Math.max(0,Math.round(window.innerHeight-vv.height-vv.offsetTop))+"px"}
+if(vv){vv.addEventListener("resize",lift);vv.addEventListener("scroll",lift);lift()}
+const ct=$("#ct");
+function fit(){ct.style.height="auto";ct.style.height=Math.min(ct.scrollHeight+2,parseFloat(getComputedStyle(ct).maxHeight))+"px"}   // one line, then grows to its maximum and scrolls
+ct.addEventListener("input",fit);fit();
+let pend=[],caps={images:false};   // files waiting to go with the next message
+const kb=n=>n<1024?n+" B":n<1048576?(n/1024).toFixed(0)+" KB":(n/1048576).toFixed(1)+" MB";
+function chips(){$("#catt").replaceChildren(...pend.map(p=>h("div",{class:"chip2"+(p.err?" bad":"")},
+ h("span",{},p.name+(p.err?" · "+p.err:p.id?" · "+kb(p.size):" · uploading...")),
+ h("button",{type:"button","aria-label":"Remove "+p.name,onclick:()=>dropPend(p)},"×"))))}
+async function dropPend(p){pend=pend.filter(x=>x!==p);chips();
+ if(p.id)try{await api("/api/chat/upload/discard",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})}catch(e){}}
+async function addFiles(list){for(const f of list){
+ const p={name:f.name};pend.push(p);
+ if(f.type.startsWith("image/")&&!caps.images){p.err="the Assistant's server cannot read images";chips();continue}
+ chips();
+ try{const fd=new FormData();fd.append("file",f,f.name);Object.assign(p,await api("/api/chat/upload",{method:"POST",body:fd}))}catch(e){p.err=e.message}
+ chips()}}
+const menu=$("#cmenu"),NOIMG="The Assistant's server does not support images";
+$("#cp").onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden};
+document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.hidden=true});
+$("#mfile").onclick=()=>{menu.hidden=true;$("#cfin").click()};
+$("#mimg").onclick=()=>{if($("#mimg").getAttribute("aria-disabled")==="true")return;menu.hidden=true;$("#ciin").click()};
+$("#mcam").onclick=()=>{if($("#mcam").getAttribute("aria-disabled")==="true")return;menu.hidden=true;$("#ccam").click()};
+for(const id of ["cfin","ciin","ccam"])$("#"+id).onchange=e=>{addFiles([...e.target.files]);e.target.value=""};
+async function refreshCaps(){try{caps=await api("/api/chat/capabilities")}catch(e){}
+ for(const id of ["mimg","mcam"]){$("#"+id).setAttribute("aria-disabled",String(!caps.images));$("#"+id).querySelector("small").textContent=caps.images?"":NOIMG}}
+refreshCaps();setInterval(refreshCaps,30000);
+$("#cs").onclick=async()=>{const t=$("#ct").value.trim(),ids=pend.filter(p=>p.id).map(p=>p.id);
+ if(pend.some(p=>!p.id&&!p.err)){$("#ce").textContent="Wait for the files to finish uploading.";return}
+ if(!t){if(ids.length)$("#ce").textContent="Type a message to go with the files.";return}
+ $("#cs").disabled=true;$("#ce").textContent="";
+ try{const r=await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t,chat:chatId,files:ids})});$("#ct").value="";fit();pend=[];chips();
   if(chatId==="new"){chatId=r.chat;location.hash=r.chat}   // the first message names the chat
   await load()}
  catch(e){$("#ce").textContent=e.message}$("#cs").disabled=false};

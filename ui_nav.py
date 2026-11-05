@@ -4,6 +4,7 @@ so it can be dropped into any page template."""
 DRAWER = r"""
 <style>
 body{padding-top:52px}
+textarea{resize:none;overflow-y:auto}
 #dbar{position:fixed;top:0;left:0;right:0;height:52px;display:flex;align-items:center;gap:6px;padding:0 12px;background:var(--head,var(--card,#1b2029));color:var(--headink,var(--ink,#e6e9f0));border-bottom:1px solid var(--line,#2b3240);z-index:30}
 #dtheme{margin:0 0 0 auto;padding:4px 6px;font-size:13px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;width:auto}
 #dtheme option{color:#111;background:#fff}
