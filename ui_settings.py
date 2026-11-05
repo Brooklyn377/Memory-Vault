@@ -182,11 +182,10 @@ input,select{background:var(--bg);color:var(--ink);border:1px solid var(--line);
 .fld input[type=checkbox]{flex:none}
 .fld select{flex:1;min-width:0;max-width:100%}
 .fld input[type=text],.fld input[type=password]{flex:1;min-width:0}
-#ac input,#dl input[type=text]{display:block;width:100%;margin:0 0 12px}
-#ac button,#dl button{display:block;margin-top:4px}
+#ac input{display:block;width:100%;margin:0 0 12px}
+#ac button{display:block;margin-top:4px}
 </style>
 <div id="sp"></div>
-<div id="dl"></div>
 <script>
 const NAMES={qwen:"Sweeper: sweep and ask",gpt:"Reviewer: review and chat",cur:"Curator: curate",pa:"Assistant: chat and jobs"};
 const LAB={sweep:"Sweep",ask:"Ask",review:"Review",chat:"Chat",curate:"Curate"};
@@ -246,7 +245,7 @@ async function dlDel(m){
  const r=await dlPost("/api/models/delete",{name:m.name});
  if(!r.ok)alert(r.detail||"Could not delete");
  dlLoad()}
-const dlUrl=h("input",{type:"text",placeholder:"https://huggingface.co/.../model.gguf"});
+const dlUrl=h("input",{type:"text",placeholder:"https://huggingface.co/.../model.gguf",style:"display:block;width:100%;margin:0 0 12px"});
 const dlModels=h("div"),dlList=h("div");
 async function dlPost(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  const j=await r.json().catch(()=>({}));return{ok:r.ok,status:r.status,detail:j.detail||""}}
@@ -257,8 +256,9 @@ async function dlStart(url,ok){const r=await dlPost("/api/download/start",{url:u
   return}
  if(!r.ok){alert(r.detail||"Could not start");return}
  dlUrl.value="";dlLoad()}
-$("#dl").replaceChildren(h("div",{class:"card"},h("h3",{},"Models"),dlModels,
- h("div",{style:"margin-top:12px"},dlUrl),h("button",{class:"pri",onclick:()=>dlUrl.value.trim()&&dlStart(dlUrl.value.trim(),false)},"Download"),dlList));
+// The model files on this server: held by the Servers card (ui_servers.py), under This server.
+window.modelsNode=h("div",{},dlModels,
+ h("div",{style:"margin-top:12px"},dlUrl),h("button",{class:"pri",style:"display:block;margin-top:4px",onclick:()=>dlUrl.value.trim()&&dlStart(dlUrl.value.trim(),false)},"Download"),dlList);
 async function dlLoad(){clearTimeout(dlT);const d=await api("/api/models");
  MODELS=d.models;if(window.refreshModelFiles)window.refreshModelFiles(d.models.map(x=>x.name));dlModels.replaceChildren(...d.models.map(m=>h("div",{class:"fld"},h("span",{style:"flex:1;min-width:0;overflow-wrap:anywhere"},m.name),h("span",{class:"mut",style:"white-space:nowrap;text-align:right"},gb(m.size)+(m.use&&m.use.length?" · in use":"")),h("button",{style:(m.use&&m.use.length?"opacity:.35;":"")+"flex:none;width:44px;margin-left:10px;padding:2px 0;min-width:0",title:m.use&&m.use.length?"In use by "+m.use.join(", "):"Delete",onclick:()=>{if(m.use&&m.use.length)alert("In use by "+m.use.join(", ")+". Pick another model there first.");else dlDel(m)}},"🗑"))));
  dlList.replaceChildren(...d.downloads.map(x=>{

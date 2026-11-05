@@ -14,7 +14,8 @@ const ghz=k=>(k/1e6).toFixed(2)+" GHz";
 const root=h("div",{class:"card"},h("h3",{},"Servers"));
 const notice=h("div",{});
 const hostBox=h("div",{}),extBox=h("div",{});
-const hostSum=h("summary",{},"This server"),extSum=h("summary",{},"External servers");   // both fold, closed at first, with the numbers in the heading
+const hostSum=h("summary",{},"This server"),extSum=h("summary",{},"External servers");
+const modelsSec=h("details",{class:"sec"},h("summary",{},"Model files on this server"),window.modelsNode||h("div",{class:"mut"},"Not available"));   // moved here from its own Models card   // both fold, closed at first, with the numbers in the heading
 let HW={backend:"cpu",gpus:[],vulkan:[],limits:{cpu:1,gpu:1},running:false};
 async function postJ(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(function(){return{}});return{ok:r.ok,detail:j.detail||"",data:j}}
 // A number of models at the same time: below 1 is treated as 1, said in a popup that lets you carry on.
@@ -42,7 +43,7 @@ function drawHost(){
   ...(gpu?[h("div",{class:"fld"},h("label",{},"GPU: models at the same time"),gpuLimit)]:[]),
   saveLimits,hwMsg,
   h("div",{style:"margin-top:12px"},gpuInfo,gpuBtn,gpuLog),
-  cpuSpeed)}
+  cpuSpeed,modelsSec)}
 async function loadHw(){try{HW=await api("/api/hardware");drawHost();if(HW.running)followHw()}catch(e){}}
 async function followHw(){gpuLog.style.display="";hwMsg.textContent="Switching. Building llama.cpp takes a while; the model servers restart at the end.";
  while(true){await new Promise(function(r){setTimeout(r,3000)});
