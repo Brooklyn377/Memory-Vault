@@ -418,26 +418,51 @@ def _find_call(text):
     return None
 
 
-def _not_a_call(text):
-    """A reply that is a JSON object but neither a tool call nor an answer (or one that does not parse): what is wrong with it, for
-    the model, or "" if it is not that. It is never shown as the answer and nothing in it is run."""
-    s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    if not s.startswith("{"):
-        return ""
-    try:
-        pairs, _ = json.JSONDecoder(object_pairs_hook=list).raw_decode(s)
-    except ValueError:
-        return _json_problem(text)
+def _misplaced_call(s):
+    """A tool call written the wrong way: the first JSON object anywhere in s whose keys are all tool names, each holding an object
+    (like {"web_search": {"query": "..."}}). -> its pairs, or None."""
+    import assistant_tools
+    dec, i = json.JSONDecoder(object_pairs_hook=list), s.find("{")
+    while i >= 0:
+        try:
+            pairs, end = dec.raw_decode(s, i)
+        except ValueError:
+            i = s.find("{", i + 1)
+            continue
+        if isinstance(pairs, list) and pairs and all(isinstance(p, tuple) and p[0] in assistant_tools.TOOLS and isinstance(p[1], list) and p[1] and all(isinstance(x, tuple) for x in p[1]) for p in pairs):
+            return pairs
+        i = s.find("{", end)
+    return None
+
+
+def _shape_message(pairs, in_answer=False):
+    """What is wrong with a JSON object that is neither a tool call nor an answer, in words the model can act on."""
     import assistant_tools
     keys = [k for k, _ in pairs]
     dup = sorted({k for k in keys if keys.count(k) > 1})
     tool = next((k for k in keys if k in assistant_tools.TOOLS), None)
-    return ("That reply is a JSON object that is neither a tool call nor an answer, so nothing ran and nothing was shown to the person. "
-            f"Its key{'s are' if len(set(keys)) != 1 else ' is'} {', '.join(repr(k) for k in dict.fromkeys(keys))}. "
+    return (("Your answer is a tool call written out as text, so nothing ran and it was not shown to the person. A tool call is not an answer: "
+             "send it as the reply itself. " if in_answer else
+             "That reply is a JSON object that is neither a tool call nor an answer, so nothing ran and nothing was shown to the person. ")
+            + f"Its key{'s are' if len(set(keys)) != 1 else ' is'} {', '.join(repr(k) for k in dict.fromkeys(keys))}. "
             + (f"The key {', '.join(repr(k) for k in dup)} is there more than once: send ONE tool call per reply, then wait for its result. " if dup else "")
             + 'A tool call is {"tool":"<name>","args":{...}} and an answer is {"answer":"<your reply>"}: the first key must be "tool" or "answer". '
             + (f'The tool name goes after "tool", for example {{"tool":"{tool}","args":{{...}}}}. ' if tool else "")
             + "Send one corrected JSON object.")
+
+
+def _not_a_call(text):
+    """A reply that is no tool call and no answer but looks like an attempt at one: what is wrong with it, for the model, or "" if it
+    is not that. It is never shown as the answer and nothing in it is run."""
+    s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if s.startswith("{"):
+        try:
+            pairs, _ = json.JSONDecoder(object_pairs_hook=list).raw_decode(s)
+        except ValueError:
+            return _json_problem(text)
+        return _shape_message(pairs)
+    pairs = _misplaced_call(s)   # after a sentence, or inside a code fence
+    return _shape_message(pairs) if pairs else ""
 
 
 def _json_problem(text):
@@ -483,11 +508,16 @@ def assistant_answer(m, context):
             msgs += [{"role": "assistant", "content": text},   # a tool call that will not parse is never shown as the answer
                      {"role": "user", "content": _json_problem(text)}]
             continue
-        if data is None:   # a JSON object that is no tool call and no answer is sent back, never shown as the answer
+        problem = ""   # a reply that is no tool call and no answer but tries to be one is sent back, never shown as the answer
+        if data is None:
             problem = _not_a_call(text)
-            if problem:
-                msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": problem}]
-                continue
+        elif "tool" not in data and data.get("answer"):   # an answer that is itself a tool call written out as text
+            pairs = _misplaced_call(str(data["answer"]))
+            problem = _shape_message(pairs, in_answer=True) if pairs else ""
+        if problem:
+            agent.log("chat: told the Assistant its reply was not a tool call or an answer: " + " ".join(problem.split())[:120])
+            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": problem}]
+            continue
         if not isinstance(data, dict) or "tool" not in data:
             if isinstance(data, dict) and data.get("answer"):
                 return cited(str(data["answer"]).strip()), opened
