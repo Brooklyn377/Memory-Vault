@@ -156,7 +156,7 @@ def main(write):
 
 
 def migrate():
-    """Notes written before files were told apart from notes about them were labelled type: file; relabel them."""
+    """Notes written before files were told apart from notes about them were labeled type: file; relabel them."""
     for d in sorted(ORIG.iterdir()) if ORIG.is_dir() else []:
         note = FILES / f"{d.name}.md"
         if d.is_dir() and note.exists() and "\ntype: file\n" in note.read_text(encoding="utf-8", errors="replace")[:300]:

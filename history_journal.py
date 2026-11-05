@@ -98,7 +98,7 @@ def attach(rows, evs):
         lo, hi, prefixes = rule
         picks = [e for e in evs if r["t"] - lo <= e["t"] <= r["t"] + hi and e["path"].startswith(prefixes)]
         if picks:
-            note = " (written around the same time, so it may include a neighbouring job)" if r["kind"] == "fact" else ""
+            note = " (written around the same time, so it may include a neighboring job)" if r["kind"] == "fact" else ""
             r["detail"] = (r.get("detail") or "") + f"\n\nWhat it changed{note}:\n" + "\n\n".join(block(e, 8) for e in picks[:8])
             lk = [x for x in (link_for(e["path"]) for e in picks[:8]) if x]
             r["open"] = (r.get("open") or []) + lk

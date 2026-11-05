@@ -164,8 +164,8 @@ Everything lives in the container. Stop it and delete it in the Proxmox web inte
 Nothing leaves the container unless you set up publishing (below), add Git servers, or point a model at an
 external server on the Settings page.
 
-## Colour themes
-A small drop-down in the top-right corner of every page picks the colours: **System** (the default: White when your device is
+## Color themes
+A small drop-down in the top-right corner of every page picks the colors: **System** (the default: White when your device is
 in light mode, Purple in dark mode), **White**, **Blue**, **Purple** or **Candy**. The choice is kept in the browser on that
 device only, so your phone and your PC can differ.
 
@@ -402,7 +402,7 @@ Keep both ports on your local network.
 Under **Settings → Servers → Add server**:
 - **Name:** anything, for example Gaming PC.
 - **Address:** `http://<that machine>:8080`, and its **API key** if llama-server has one.
-- **Runner address:** `http://<that machine>:8090`. Type it in full: the grey text in an empty box is only an
+- **Runner address:** `http://<that machine>:8090`. Type it in full: the gray text in an empty box is only an
   example.
 - **Runner token:** the token from step 3.
 - **Models that may work on it at the same time:** 1 unless that machine can serve more (see Model groups).

@@ -30,7 +30,7 @@ REG = [
     ("sweep_chunk", "qwen", "Chunk reader", "Reads each part of a chat and proposes facts, each with a quote.", "sweep", "SYS"),
     ("inbox_extract", "qwen", "Inbox note: claims", "Pulls claims out of a note you sent (inbox notes and confirmed chat corrections).", "agent", "EXTRACT_SYS"),
     ("inbox_judge", "qwen", "Inbox note: does a note change", "Decides whether an existing note should change because of a claim.", "agent", "JUDGE_SYS"),
-    ("bootstrap_summary", "qwen", "Document summary (first import only)", "Summarises a document during the one-time bootstrap.", "bootstrap", "SYS"),
+    ("bootstrap_summary", "qwen", "Document summary (first import only)", "Summarizes a document during the one-time bootstrap.", "bootstrap", "SYS"),
     ("review_gate", "gpt", "Chunk gate", "Judges the Sweeper's facts for one chat part before anything is written.", "reviewgate", "GATE_SYS"),
     ("task_scan", "gpt", "Task scan", "Reads a summary and lists unfinished tasks for the To-do page.", "reviewer", "SCAN_SYS"),
     ("task_update", "gpt", "To-do update reader", "Reads an update you typed on a task.", "reviewer", "UPDATE_SYS"),

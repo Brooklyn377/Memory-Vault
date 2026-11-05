@@ -472,7 +472,8 @@ window.applyAll=async()=>{
   e.msg.textContent+=" Reload the page to update the thinking switches for "+(e.rn.value||"this model")+"."}}
  stat()};
 (async()=>{const d=await api("/api/server/info");
- FS=d.flagspec||[];SL=d.servers_list||[];HAS_GPU=!!d.gpu;$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)),lastEl);stat()})();
+ FS=d.flagspec||[];SL=d.servers_list||[];HAS_GPU=!!d.gpu;$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)));(function(){const put=function(){document.querySelector("main").append(lastEl)};   // the last change goes at the very bottom, under Updates, once the page is built
+ if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",put);else put()})();stat()})();
 })();
 </script>
 """

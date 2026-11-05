@@ -229,7 +229,7 @@ def watch():
     agent.log("file changes watcher started")
     seen = None
     while True:
-        try:   # notes about files still labelled type: file are relabelled and linked to their saved originals; needs no model
+        try:   # notes about files still labeled type: file are relabeled and linked to their saved originals; needs no model
             filestore.migrate()
         except Exception as e:
             agent.log(f"file notes: relabelling failed ({type(e).__name__}: {str(e)[:150]})")

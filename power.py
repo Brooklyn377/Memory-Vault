@@ -267,7 +267,7 @@ function merge(){
   const u=UI[key]={act:""};
   u.chip=h("span",{class:"mc"},"...");u.sub=h("div",{class:"mut"});u.msg=h("div",{class:"mut"});
   u.secSrv=sec("Server and where it runs",[],false);u.secGen=sec("Generation settings",[],false);u.secPr=sec("Prompts",[],false);
-  if(key==="cur")u.secCur=sec("Curator behaviour",[],false);
+  if(key==="cur")u.secCur=sec("Curator behavior",[],false);
   const card=h("div",{class:"card"},h("div",{class:"mh"},h("i",{style:"background:"+col}),h("b",{},name),u.chip,enableSlider(key,u),powerButton(key,u)),u.sub,u.msg);
   card.append(u.secSrv,u.secGen);
   if(key==="cur")card.append(u.secCur);

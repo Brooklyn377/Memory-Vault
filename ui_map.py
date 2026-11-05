@@ -51,7 +51,7 @@ main{max-width:none!important;padding:0!important}
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};
 let TOTAL=0,BUSY=6;const HUBPUSH=20;   // BUSY: how many links make a note a busy hub (set from the busiest note once loaded)
-const col=t=>COL[t]||COL.note;   // the colours are the ones set under Settings, Tag colours
+const col=t=>COL[t]||COL.note;   // the colors are the ones set under Settings, Tag colors
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let N=[],E=[],adj=[],W=0,H=0,dpr=1,view={x:0,y:0,k:1},sel=-1,hit=new Set(),off=new Set(),alpha=1,running=false;
 const rad=n=>2.2+Math.sqrt(n.d)*.8;

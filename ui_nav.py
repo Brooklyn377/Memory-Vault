@@ -47,7 +47,7 @@ textarea{resize:none;overflow-y:auto}
   <svg width="26" height="26" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
   <span id="dh" class="dn" hidden style="position:absolute;top:0;right:-2px;font-size:11px;padding:0 5px"></span>
  </button>
- <select id="dtheme" aria-label="Colour theme" title="Colour theme (this device only)">
+ <select id="dtheme" aria-label="Color theme" title="Color theme (this device only)">
   <option value="system">System</option><option value="white">White</option><option value="blue">Blue</option><option value="purple">Purple</option><option value="candy">Candy</option>
  </select>
 </div>
@@ -130,7 +130,7 @@ textarea{resize:none;overflow-y:auto}
 </script>
 """
 
-# The colour themes, shared by every page template: the choice (System, White, Blue, Purple, Candy) is kept in this browser.
+# The color themes, shared by every page template: the choice (System, White, Blue, Purple, Candy) is kept in this browser.
 THEME_JS = r'''<script>(function(){try{var t=localStorage.getItem("theme");if(t&&t!=="system")document.documentElement.dataset.theme=t}catch(e){}})()</script>'''
 THEME_CSS = r''':root{--bg:#f6f7f9;--card:#fff;--ink:#1c2230;--mut:#677084;--line:#dfe3ea;--acc:#2f6fed;--warn:#c2410c;--head:var(--card);--headink:var(--ink)}
 @media (prefers-color-scheme:dark){:root{--bg:#131313;--card:#2b2b2b;--ink:#eaeaea;--mut:#a8a8a8;--line:rgba(255,255,255,.14);--acc:#8508BF;--warn:#fb923c;--head:#691B54;--headink:#fff}}

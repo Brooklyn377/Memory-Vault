@@ -102,7 +102,7 @@ JUDGE_SYS = (
 
 
 def candidates(vault, entity, limit):
-    """Notes that might be affected: the entity's own note, its link neighbours, and unlinked mentions."""
+    """Notes that might be affected: the entity's own note, its link neighbors, and unlinked mentions."""
     ranked, seen = [], set()
 
     def add(rel, why):

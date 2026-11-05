@@ -95,7 +95,7 @@ async function save(){
  const j=await r.json().catch(function(){return{}});
  if(!r.ok){msg.textContent=j.detail||"Could not save";window.warnPop("Could not save",[j.detail||"Could not save"]);return}
  msg.textContent="Saved."+((j.notes||[]).length?" "+j.notes.join(" "):"");load()}
-$("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
+$("#grp").replaceChildren(h("div",{class:"card"},h("details",{},h("summary",{style:"cursor:pointer;font-size:17px;font-weight:700"},"Model groups"),
  h("div",{class:"mut"},"A group is a list of models that are allowed to work at the same time, wherever they run. A model can be in several groups. The models working at one time must all be in one group: models that no group lists together take turns, even on different machines. With no groups, one model works at a time. A server's number (on the Servers card) also caps how many may work on that server; groups never raise it."),
  h("div",{style:"margin:12px 0 4px;font-weight:600"},"Priority (drag to reorder)"),
  h("div",{class:"mut"},"The first goes first when several wait for the same hardware. It never takes the turn from a model that is working."),
@@ -103,7 +103,7 @@ $("#grp").replaceChildren(h("div",{class:"card"},h("h3",{},"Model groups"),
  status,list,
  h("button",{onclick:function(){list.append(groupBox([]))}},"Add group"),
  h("div",{class:"fld",style:"margin-top:8px"},h("label",{},"Minutes a model keeps its turn while others wait (0: give way as soon as it is idle)"),mins),
- h("button",{class:"pri",style:"margin-top:8px",onclick:save},"Save groups"),msg));
+ h("button",{class:"pri",style:"margin-top:8px",onclick:save},"Save groups"),msg)));
 load();setInterval(function(){if(!document.hidden)api("/api/groups").then(function(d){showStatus(d)}).catch(function(){})},5000);
 })();
 </script>

@@ -336,7 +336,7 @@ GRAPH_HTML = r"""
 <div id="tags"></div>
 <div id="list"></div>
 <script>
-const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colours set under Settings, Tag colours replace them
+const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colors set under Settings, Tag colors replace them
 const col=t=>COL[t]||COL.note;
 function row(n){return h("div",{class:"lrow",onclick:()=>openNote(n.path)},h("div",{class:"lt"},h("div",{},n.title),h("div",{class:"mut lp"},n.path)),h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}

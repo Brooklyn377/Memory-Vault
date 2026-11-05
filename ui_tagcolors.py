@@ -1,5 +1,5 @@
-"""Settings > Tag colours: the colour of each kind of note on the Map and the List. One list, kept on the server, so every device
-shows the same. A kind with no colour of its own uses the colour of "note". Only the colours you pick are saved."""
+"""Settings > Tag colors: the color of each kind of note on the Map and the List. One list, kept on the server, so every device
+shows the same. A kind with no color of its own uses the color of "note". Only the colors you pick are saved."""
 import json
 import re
 
@@ -55,13 +55,13 @@ def register(app, authed):
         mine = saved()
         for tag, color in (d.get("colors") or {}).items():
             if not isinstance(tag, str) or not tag.strip() or not isinstance(color, str) or not HEX.fullmatch(color):
-                raise HTTPException(status_code=400, detail="a colour looks like #aabbcc")
+                raise HTTPException(status_code=400, detail="a color looks like #aabbcc")
             mine[tag.strip()] = color.lower()
         for tag in d.get("reset") or []:
             mine.pop(str(tag), None)
         FILE.parent.mkdir(parents=True, exist_ok=True)
         FILE.write_text(json.dumps(mine, indent=1))
-        agent.log(f"settings: tag colours changed ({', '.join(sorted((d.get('colors') or {}).keys() | set(d.get('reset') or []))) or 'none'})")
+        agent.log(f"settings: tag colors changed ({', '.join(sorted((d.get('colors') or {}).keys() | set(d.get('reset') or []))) or 'none'})")
         return listing()
 
     app.include_router(router)
@@ -79,8 +79,8 @@ function row(r){
  pick.onchange=function(){send({colors:{[r.tag]:pick.value}})};rs.onclick=function(){send({reset:[r.tag]})};
  return h("div",{style:"display:flex;align-items:center;padding:4px 0"},pick,h("span",{style:"flex:1"},r.tag+" ",h("span",{class:"mut"},"("+r.count+(r.count===1?" note":" notes")+")")),rs)}
 function draw(d){box.replaceChildren(...d.tags.map(row))}
-$("#tc").replaceChildren(h("div",{class:"card"},h("h3",{},"Tag colours"),
- h("div",{class:"mut"},"The colour of each kind of note on the Map and the List. A kind that has no colour of its own uses the colour of note. Colours are saved as you pick them and are the same on every device."),box,msg));
+$("#tc").replaceChildren(h("div",{class:"card"},h("details",{"data-saves":"1"},h("summary",{style:"cursor:pointer;font-size:17px;font-weight:700"},"Tag colors"),
+ h("div",{class:"mut",style:"margin-top:6px"},"The color of each kind of note on the Map and the List. A kind that has no color of its own uses the color of note. Colors are saved as you pick them and are the same on every device."),box,msg)));
 api("/api/tagcolors").then(draw).catch(function(e){msg.textContent=e.message});
 })();
 </script>

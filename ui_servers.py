@@ -14,6 +14,7 @@ const ghz=k=>(k/1e6).toFixed(2)+" GHz";
 const root=h("div",{class:"card"},h("h3",{},"Servers"));
 const notice=h("div",{});
 const hostBox=h("div",{}),extBox=h("div",{});
+const hostSum=h("summary",{},"This server"),extSum=h("summary",{},"External servers");   // both fold, closed at first, with the numbers in the heading
 let HW={backend:"cpu",gpus:[],vulkan:[],limits:{cpu:1,gpu:1},running:false};
 async function postJ(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(function(){return{}});return{ok:r.ok,detail:j.detail||"",data:j}}
 // A number of models at the same time: below 1 is treated as 1, said in a popup that lets you carry on.
@@ -31,12 +32,12 @@ const saveLimits=h("button",{class:"pri",onclick:async function(){
 function drawHost(){
  const gpu=HW.backend!=="cpu";gpuTarget=gpu?"cpu":"vulkan";
  cpuLimit.value=HW.limits.cpu;gpuLimit.value=HW.limits.gpu;
+ hostSum.textContent="This server · CPU: "+HW.limits.cpu+" at a time"+(gpu?" · GPU: "+HW.limits.gpu+" at a time":"");
  gpuInfo.textContent=HW.gpus.length?"GPU in this container: "+(HW.vulkan.length?HW.vulkan.join(", "):HW.gpus.join(", ")):
   "No GPU in this container. To add one, run on the Proxmox host: install.sh --add-gpu <this container's ID>. It passes the GPU in; then set it up here.";
  gpuBtn.textContent=gpu?"Remove the GPU set-up (CPU only)":"Set up the GPU (Vulkan)";gpuBtn.style.display=gpu||HW.gpus.length?"":"none";
  hostBox.replaceChildren(
-  h("div",{style:"font-weight:600;margin-top:4px"},"This server"),
-  h("div",{class:"mut"},"Models set to run on this server's CPU or GPU work on that hardware. Each has its own number of models that may work at the same time (1 means they take turns)."),
+  h("div",{class:"mut"},"Models on this server's CPU or GPU work on that hardware. The number is how many may work at the same time (1: they take turns)."),
   h("div",{class:"fld"},h("label",{},"CPU: models at the same time"),cpuLimit),
   ...(gpu?[h("div",{class:"fld"},h("label",{},"GPU: models at the same time"),gpuLimit)]:[]),
   saveLimits,hwMsg,
@@ -141,11 +142,11 @@ async function loadServers(){try{const d=await api("/api/servers");SERVERS=d.ser
  notice.replaceChildren(...(d.notice&&d.notice.length?[h("div",{class:"mut",style:"border-left:3px solid var(--acc);padding-left:10px;margin:8px 0"},
   h("div",{style:"font-weight:600"},"The old presets were moved into this list:"),...d.notice.map(function(n){return h("div",{},n)}),
   h("button",{onclick:async function(){await postJ("/api/servers/notice/dismiss",{});loadServers()}},"OK"))]:[]));
- extBox.replaceChildren(h("div",{style:"font-weight:600;margin-top:16px"},"External servers"),
-  h("div",{class:"mut"},"Another machine that runs a model. Pick it in Where it runs on a model's card. Add the machine here once, whichever models use it."),
+ extSum.textContent="External servers · "+SERVERS.length;
+ extBox.replaceChildren(h("div",{class:"mut"},"Another machine that runs a model. Pick it under Where it runs on a model's card."),
   ...SERVERS.map(function(p){return serverForm(p,false)}),
   add)}catch(e){}}
-root.append(notice,hostBox,extBox);$("#srv").replaceChildren(root);
+root.append(notice,h("details",{class:"sec"},hostSum,hostBox),h("details",{class:"sec"},extSum,extBox));$("#srv").replaceChildren(root);
 loadHw();loadCpu();loadServers();setInterval(function(){if(!document.hidden)loadCpu().catch(function(){})},5000);
 })();
 </script>

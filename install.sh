@@ -370,7 +370,7 @@ fi
 
 # --- the code: from this checkout when run from one, otherwise downloaded --------------------------------
 WORK="$(mktemp -d)"
-trap 'restore_screen; [[ -e "$WORK/cancelled" ]] && echo "cancelled; nothing was changed" >&2; rm -rf "$WORK"' EXIT
+trap 'restore_screen; [[ -e "$WORK/cancelled" ]] && echo "canceled; nothing was changed" >&2; rm -rf "$WORK"' EXIT
 TGZ="$WORK/memory-agent.tar.gz"
 HERE=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then

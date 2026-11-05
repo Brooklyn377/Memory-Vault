@@ -239,13 +239,13 @@ def chat(model, endpoint, body, label, slot=None, cancel=None):
     except Exception:
         pass
     if cancel and cancel():
-        raise Aborted(f"{model}: the call was cancelled")
+        raise Aborted(f"{model}: the call was canceled")
     import turns
     began = time.time()
 
     def give_up():   # while waiting for its turn: the server was switched or stopped, or the answer is no longer wanted
         if _aborted_since(model, began) or (cancel and cancel()):
-            raise Aborted(f"{model} was switched or stopped, or the call was cancelled")
+            raise Aborted(f"{model} was switched or stopped, or the call was canceled")
     while True:
         try:
             with turns.lease(model, stop=give_up):   # waits for the model's turn (model groups), local or external
