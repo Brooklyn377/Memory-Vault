@@ -418,11 +418,33 @@ def _find_call(text):
     return None
 
 
+def _not_a_call(text):
+    """A reply that is a JSON object but neither a tool call nor an answer (or one that does not parse): what is wrong with it, for
+    the model, or "" if it is not that. It is never shown as the answer and nothing in it is run."""
+    s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if not s.startswith("{"):
+        return ""
+    try:
+        pairs, _ = json.JSONDecoder(object_pairs_hook=list).raw_decode(s)
+    except ValueError:
+        return _json_problem(text)
+    import assistant_tools
+    keys = [k for k, _ in pairs]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    tool = next((k for k in keys if k in assistant_tools.TOOLS), None)
+    return ("That reply is a JSON object that is neither a tool call nor an answer, so nothing ran and nothing was shown to the person. "
+            f"Its key{'s are' if len(set(keys)) != 1 else ' is'} {', '.join(repr(k) for k in dict.fromkeys(keys))}. "
+            + (f"The key {', '.join(repr(k) for k in dup)} is there more than once: send ONE tool call per reply, then wait for its result. " if dup else "")
+            + 'A tool call is {"tool":"<name>","args":{...}} and an answer is {"answer":"<your reply>"}: the first key must be "tool" or "answer". '
+            + (f'The tool name goes after "tool", for example {{"tool":"{tool}","args":{{...}}}}. ' if tool else "")
+            + "Send one corrected JSON object.")
+
+
 def _json_problem(text):
     """What is wrong with a tool call that did not parse, in words the model can act on (where, and what was there)."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     hit = re.search(r'"tool"\s*:', text)
-    start = text.rfind("{", 0, hit.start()) if hit else -1
+    start = text.rfind("{", 0, hit.start()) if hit else text.find("{")
     why = ""
     if start >= 0:
         try:
@@ -471,6 +493,14 @@ def assistant_answer(m, context):
             msgs += [{"role": "assistant", "content": text},
                      {"role": "user", "content": _json_problem(text)}]
             continue
+        if data is None:   # a JSON object that is no tool call and no answer is sent back, never shown as the answer
+            problem = _not_a_call(text)
+            if problem:
+                if repairs >= __import__("tuning").get("assistant.call_fixes"):
+                    raise RuntimeError("the Assistant's reply was neither a tool call nor an answer")
+                repairs += 1
+                msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": problem}]
+                continue
         if not isinstance(data, dict) or "tool" not in data or last:
             if isinstance(data, dict) and data.get("answer"):
                 return cited(str(data["answer"]).strip()), opened
