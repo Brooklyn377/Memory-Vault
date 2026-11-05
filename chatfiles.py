@@ -1,7 +1,7 @@
 """Files and images attached to a chat message.
   state/chat_uploads/<id>/<name>        where an upload waits, and where it stays with its message (shown in the chat)
   raw/files/<name>/<message id>.<ext>   the original, kept in the vault like the files saved from chats (not for images)
-The Assistant gets a text file's text in the message, with the saved original for the rest; an image only when its server
+The Assistant gets a text file's whole text in the message; an image only when its server
 can look at images (the server says so: /props, modalities, vision)."""
 import base64
 import json
@@ -14,7 +14,6 @@ import urllib.request
 from pathlib import Path
 
 import agent
-import tuning
 
 UP = agent.STATE / "chat_uploads"
 ORIG = agent.VAULT / "raw" / "files"
@@ -137,7 +136,6 @@ def vision():
 
 def context(files, can_see):
     """What the Assistant is told about the attachments: -> (text to add to the message, [data URIs of the images])."""
-    limit = int(tuning.get("chat.attachment_chars"))
     parts, images = [], []
     for f in files or []:
         p = UP / f["id"] / f["name"]
@@ -153,9 +151,6 @@ def context(files, can_see):
         text = read_text(p)
         if text is None:
             parts.append(f'ATTACHED FILE "{f["name"]}", {f["size"]:,} bytes, is not text, so you cannot read it.{saved}')
-        elif len(text) > limit:
-            parts.append(f'ATTACHED FILE "{f["name"]}": only the first {limit:,} of {len(text):,} characters are shown.{saved} '
-                         f"Open the original to read the rest.\n{text[:limit]}")
         else:
             parts.append(f'ATTACHED FILE "{f["name"]}":{saved}\n{text}')
     return "\n\n".join(parts), images

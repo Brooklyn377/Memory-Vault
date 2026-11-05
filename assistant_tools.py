@@ -311,6 +311,8 @@ def run(name, args):
         text = fn(args if isinstance(args, dict) else {})
     except (ValueError, OSError) as e:
         text = f"{name} failed: {e}"
+    except Exception as e:   # anything else a tool hits: the model is told what, and tries again, instead of the answer failing
+        text = f"{name} failed ({type(e).__name__}): {e}"
     text = scrub(str(text))[0]
     try:   # every tool call is in the activity log, so the History tab shows what the Assistant looked at and did
         said = " ".join(scrub(json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else "")[0].split())[:200]

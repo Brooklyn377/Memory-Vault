@@ -104,6 +104,12 @@ def _get(url, data=None, accept="text/html,text/plain,application/json;q=0.9,*/*
     p = urllib.parse.urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname or p.username or p.password:
         raise ValueError("only plain http and https addresses are opened")
+    bad = re.search(r"[\x00-\x20\x7f]", url)
+    if bad:   # http.client refuses these: say which one and where, so the address can be sent again right
+        ch = bad.group()
+        what = {"\n": "a line break", "\r": "a line break", "\t": "a tab", " ": "a space"}.get(ch, f"a control character (code {ord(ch)})")
+        raise ValueError(f"the address has {what} at character {bad.start() + 1}, after '{url[max(0, bad.start() - 24):bad.start()]}'. "
+                         "An address cannot contain it: send it again without it, written out in one piece")
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
         with _opener.open(req, timeout=TIMEOUT) as r:
@@ -113,6 +119,8 @@ def _get(url, data=None, accept="text/html,text/plain,application/json;q=0.9,*/*
         raise ValueError(f"the site answered {e.code} {e.reason}")
     except urllib.error.URLError as e:
         raise ValueError(str(e.reason) if isinstance(e.reason, ValueError) else f"could not reach it ({e.reason})")
+    except http.client.HTTPException as e:   # the request itself was not valid
+        raise ValueError(f"the request was not valid: {e}")
     except (OSError, ValueError) as e:
         raise ValueError(str(e) if isinstance(e, ValueError) else f"could not reach it ({type(e).__name__})")
 
