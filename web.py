@@ -47,7 +47,7 @@ def login(response: Response, username: str = Form(...), password: str = Form(..
     return {"ok": True}
 
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
 <title>Memory vault login</title>
 <style>
 body{margin:0;font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px;box-sizing:border-box}
@@ -162,7 +162,7 @@ def activity(request: Request):
     return {"log": lines[::-1], "pending": pending}
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
 <title>Memory Agent</title>
 __THEME_JS__
 <style>

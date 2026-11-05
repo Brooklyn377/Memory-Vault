@@ -275,7 +275,7 @@ def register(app, authed):
 
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>Memory vault</title>
 __THEME_JS__
 <style>
