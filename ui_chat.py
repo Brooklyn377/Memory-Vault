@@ -916,10 +916,13 @@ async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
-// The on-screen keyboard covers the bottom of the page without shrinking it: lift the box by the height of the keyboard
-const vv=window.visualViewport;
-function lift(){if(vv)$("#cbox").style.bottom=Math.max(0,Math.round(window.innerHeight-vv.height-vv.offsetTop))+"px"}
-if(vv){vv.addEventListener("resize",lift);vv.addEventListener("scroll",lift);lift()}
+// The on-screen keyboard covers the bottom of the page: lift the box by the keyboard's height. The browser is asked for that height
+// directly (VirtualKeyboard API: the keyboard then only covers the page and says how much); without it, the visual viewport's shortfall.
+const vk=navigator.virtualKeyboard,vv=window.visualViewport;
+if(vk)vk.overlaysContent=true;
+function lift(){const h=vk?vk.boundingRect.height:(vv?window.innerHeight-vv.height-vv.offsetTop:0);$("#cbox").style.bottom=Math.max(0,Math.round(h))+"px"}
+if(vk)vk.addEventListener("geometrychange",lift);else if(vv){vv.addEventListener("resize",lift);vv.addEventListener("scroll",lift)}
+lift();
 const ct=$("#ct");
 function fit(){ct.style.height="auto";ct.style.height=Math.min(ct.scrollHeight+2,parseFloat(getComputedStyle(ct).maxHeight))+"px"}   // one line, then grows to its maximum and scrolls
 ct.addEventListener("input",fit);fit();
