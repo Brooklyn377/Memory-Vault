@@ -470,7 +470,7 @@ def assistant_answer(m, context):
         text += "\n\n" + extra
     content = [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": u}} for u in images] if images else text
     msgs = earlier_turns(m) + [{"role": "user", "content": content}]
-    opened, used, repairs = [], 0, 0
+    opened, used = [], 0
     while True:
         if gone(m):
             raise Cancelled()
@@ -479,26 +479,17 @@ def assistant_answer(m, context):
             msgs.append({"role": "user", "content": 'No more look-ups. Answer now with {"answer": "..."} from what you have.'})
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
         if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():   # blank, and no limit was hit: send it back
-            if repairs >= __import__("tuning").get("assistant.call_fixes"):
-                raise RuntimeError("the Assistant sent an empty reply again after being told so")
-            repairs += 1
             msgs += [{"role": "assistant", "content": "(empty reply)"},
                      {"role": "user", "content": 'Your last reply was empty. Reply with one JSON object: a tool call such as {"tool": "search", "text": "..."}, or {"answer": "..."}.'}]
             continue
         data = _find_call(text)         # the JSON may sit among text the model wrote around it
         if data is None and re.search(r'"tool"\s*:', re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)):
-            if repairs >= __import__("tuning").get("assistant.call_fixes"):   # a tool call that will not parse is never shown as the answer
-                raise RuntimeError("the Assistant's tool call was not valid JSON")
-            repairs += 1
-            msgs += [{"role": "assistant", "content": text},
+            msgs += [{"role": "assistant", "content": text},   # a tool call that will not parse is never shown as the answer
                      {"role": "user", "content": _json_problem(text)}]
             continue
         if data is None:   # a JSON object that is no tool call and no answer is sent back, never shown as the answer
             problem = _not_a_call(text)
             if problem:
-                if repairs >= __import__("tuning").get("assistant.call_fixes"):
-                    raise RuntimeError("the Assistant's reply was neither a tool call nor an answer")
-                repairs += 1
                 msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": problem}]
                 continue
         if not isinstance(data, dict) or "tool" not in data or last:
