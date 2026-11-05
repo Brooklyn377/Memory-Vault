@@ -857,7 +857,7 @@ CHAT_HTML = r"""
 .st{font-size:12px;color:var(--mut);text-align:right;margin:2px 4px 10px}
 .st .del{font:inherit;color:#f87171;background:none;border:0;padding:0 0 0 8px;cursor:pointer}
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
-#cbox{position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+#cbox{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100% - 24px,736px);z-index:6;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
 #cs svg{width:18px;height:18px;background:none;border-radius:0}
 #cp{position:absolute;right:54px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center}
@@ -877,6 +877,7 @@ CHAT_HTML = r"""
 </style>
 <div id="thread"></div>
 <div id="vpedge" style="position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden"></div>
+<div id="cspace"></div>
 <div id="cbox"><div id="catt"></div><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"></span></div>
 <div class="cwrap"><textarea id="ct" rows="1" placeholder="Type to chat"></textarea>
 <button type="button" id="cp" title="Add an image or a file" aria-label="Add an image or a file" aria-haspopup="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
@@ -949,11 +950,23 @@ async function removeOne(id){if(!confirm("Remove this message and its reply from
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}
 // The on-screen keyboard covers the bottom of the page without resizing it. The browser says where the visible area ends (the top
 // edge of the keyboard); an invisible marker fixed to the bottom of the page says where the page's own bottom edge is (the box is
-// kept off that edge); the box is lifted by the distance between the two, so it sits right on the keyboard.
+// kept off that edge); the box is moved by the distance between the two, so it sits right on the keyboard. The distance can be
+// negative: a browser that keeps its toolbar's height out of the page leaves the page's edge above the keyboard.
 const vv=window.visualViewport,cb=$("#cbox"),edge=$("#vpedge");
-function lift(){if(!vv)return;
- cb.style.bottom=Math.max(0,Math.round(edge.getBoundingClientRect().bottom-(vv.offsetTop+vv.height)))+"px"}
+function lift(){const gap=vv?Math.round(edge.getBoundingClientRect().bottom-(vv.offsetTop+vv.height)):0;
+ cb.style.bottom=gap+"px";
+ $("#cspace").style.height=(cb.offsetHeight+Math.max(0,gap))+"px";   // room under the thread for the box, and for a keyboard that covers the page
+ if(DEBUG)debug()}
+// Add ?kbdebug to the chat address to see the numbers the browser reports, in the top left corner.
+const DEBUG=/[?&]kbdebug\b/.test(location.search);let dbg;
+function debug(){if(!dbg){dbg=document.createElement("pre");dbg.style.cssText="position:fixed;left:4px;top:56px;z-index:99;margin:0;padding:4px 6px;font:11px/1.3 monospace;background:#000c;color:#0f0;pointer-events:none;white-space:pre";document.body.append(dbg)}
+ const r=cb.getBoundingClientRect(),e=edge.getBoundingClientRect();
+ dbg.textContent=["innerHeight "+innerHeight,"clientHeight "+document.documentElement.clientHeight,"vv.height "+(vv&&vv.height),"vv.offsetTop "+(vv&&vv.offsetTop),
+  "vv.pageTop "+(vv&&vv.pageTop),"screen.height "+screen.height,"page edge (fixed) "+Math.round(e.bottom),"box bottom "+Math.round(r.bottom),
+  "box style.bottom "+cb.style.bottom,"virtualKeyboard "+(navigator.virtualKeyboard?"yes":"no"),"scrollY "+Math.round(scrollY)].join("\n")}
+new ResizeObserver(lift).observe(cb);   // the box grows as you type
 if(vv){vv.addEventListener("resize",lift);vv.addEventListener("scroll",lift)}
+addEventListener("scroll",()=>{if(DEBUG)debug()});
 lift();
 const ct=$("#ct");
 function fit(){ct.style.height="auto";ct.style.height=Math.min(ct.scrollHeight+2,parseFloat(getComputedStyle(ct).maxHeight))+"px"}   // one line, then grows to its maximum and scrolls
