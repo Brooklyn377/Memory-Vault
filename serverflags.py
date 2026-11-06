@@ -28,6 +28,8 @@ SPEC = [
     # what runs, and the memory estimate on the card is only a recommendation. Passed only if this build has --fit.
     {"key": "fit", "flag": "--fit", "kind": "choice", "choices": ["off", "on"], "default": "off",
      "label": "Fit context to free memory (default here: off; on lets llama.cpp lower the context you set)"},
+    {"key": "vision", "flag": "--mmproj", "kind": "bool", "only": "pa",
+     "label": "Images: load the model's vision file (uses about 0.5 to 1.5 GB more memory)"},
     {"key": "draft_model", "flag": "--model-draft", "kind": "model", "label": "Draft model (speculative decoding)"},
     {"key": "draft_max", "flag": "--draft-max", "kind": "int", "lo": 1, "hi": 64, "label": "Draft tokens to guess at most"},
     {"key": "draft_min", "flag": "--draft-min", "kind": "int", "lo": 0, "hi": 64, "label": "Draft tokens to guess at least"},
@@ -49,7 +51,7 @@ def supported():
 def spec():
     sup = supported()
     return [{"key": s["key"], "flag": s["flag"], "label": s["label"], "kind": s["kind"], "choices": s.get("choices"),
-             "step": s.get("step", "1"), "ok": (not sup) or s["flag"] in sup} for s in SPEC]
+             "step": s.get("step", "1"), "only": s.get("only"), "ok": (not sup) or s["flag"] in sup} for s in SPEC]
 
 
 def runner_flags(s, sup):
@@ -62,7 +64,7 @@ def runner_flags(s, sup):
             v = sp["default"]
         if v is None or v is False or v == "":
             continue
-        out[sp["flag"]] = True if sp["kind"] == "bool" else v
+        out[sp["flag"]] = ("auto" if sp["key"] == "vision" else True) if sp["kind"] == "bool" else v   # vision: the runner finds the file
     return out
 
 
@@ -141,7 +143,12 @@ def build(s):
             v = sp["default"]   # a flag whose default here differs from llama.cpp's, for builds that have it
         if v is None or v is False or v == "":
             continue
-        if sp["kind"] == "bool":
+        if sp["key"] == "vision":   # the vision file found next to the model, if there is one
+            import model_runner
+            mm = model_runner.find_mmproj(MODELS, s.get("model_file") or "")
+            if mm:
+                parts += [sp["flag"], f"/opt/models/{mm}"]
+        elif sp["kind"] == "bool":
             parts.append(sp["flag"])
         elif sp["kind"] == "model":
             parts += [sp["flag"], f"/opt/models/{v}"]

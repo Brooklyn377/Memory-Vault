@@ -181,6 +181,13 @@ models it works when its slider is on or its server is up; there is no other swi
 `/fix` corrections stay with the Reviewer. Your chat is also saved as a conversation, one file a day under `raw/conversations`
 in the same format as an imported chat, so the Sweeper reads it and the notes can find it. While it is not available your message waits for it; nothing else answers in its place.
 
+- **Images and files:** the **+** beside Send offers Upload an image, Take a picture and Upload a file. A text or code file is read
+  into your message whole, and a copy is kept in the vault under `raw/files`. An image reaches the model only when its server
+  can look at images; otherwise the two image items are greyed out. For images, pick a vision model and keep its vision file
+  (`mmproj-….gguf`, from the same Hugging Face page) in the same models folder. Then tick **Images** under the Assistant's
+  **Server and where it runs** and press Apply all: the server is started with that file (it uses about 0.5 to 1.5 GB more
+  memory, so it is off by default). The file is found next to the model by its name, or by the name inside it; with
+  several, the F16 one. The status line under the tick says whether the server reports vision.
 - **It looks things up before answering:** all vault notes and raw chats, the agent's own state and logs, and
   the Git servers it has a token for. Files named like keys, tokens, passwords or env files, and everything in
   `/etc/memory-agent`, are never readable, and every result is scrubbed, because its model may run on another

@@ -107,6 +107,64 @@ def models(c):
     return [{"name": p.name, "size": p.stat().st_size} for p in sorted(root.glob("*.gguf"))] if root.is_dir() else []
 
 
+QUANT = re.compile(r"[-_.](?:UD-)?(?:I?Q\d\w*|F16|BF16|F32|MXFP4)(?:-\d{5}-of-\d{5})?$", re.I)
+
+
+def _gguf_names(path):
+    """The names inside a GGUF file ({"name": ..., "basename": ...}), from the first entries of its header; {} if unreadable."""
+    import struct
+    size, out = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}, {}
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return out
+            f.read(12)   # version, tensor count
+
+            def rd(fmt):
+                return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
+
+            def s():
+                return f.read(rd("<Q")).decode("utf-8", "replace")
+
+            def skip(t):
+                if t == 8:
+                    s()
+                elif t == 9:
+                    it, n = rd("<I"), rd("<Q")
+                    for _ in range(n):
+                        skip(it)
+                else:
+                    f.read(size[t])
+            for _ in range(rd("<Q")):
+                k, t = s(), rd("<I")
+                if not k.startswith("general."):
+                    break   # the general.* entries come first
+                if t == 8 and k in ("general.name", "general.basename"):
+                    out[k.split(".", 1)[1]] = s()
+                else:
+                    skip(t)
+    except (OSError, struct.error, KeyError):
+        pass
+    return out
+
+
+def find_mmproj(root, model):
+    """The vision file (mmproj) of this model file, in the same folder, or None. A file with the model's name in its own name
+    counts first; then one whose name inside the file is the model's. Several: F16, then BF16, then Q8_0."""
+    root, norm = Path(root), (lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower()))
+    cands = [p for p in sorted(root.glob("*.gguf")) if "mmproj" in p.name.lower()]
+    if not cands or not model:
+        return None
+    base = norm(QUANT.sub("", str(model)[:-5] if str(model).endswith(".gguf") else str(model)))
+    hit = [p for p in cands if len(base) >= 6 and base in norm(p.name)]
+    if not hit:
+        mine = {norm(v) for v in _gguf_names(root / model).values() if len(norm(v)) >= 6}
+        same = lambda a, b: a in b or b in a
+        hit = [p for p in cands if any(same(a, norm(v)) for a in mine for v in _gguf_names(p).values() if len(norm(v)) >= 6)]
+    rank = lambda p: (0 if "f16" in p.name.lower() and "bf16" not in p.name.lower() else 1 if "bf16" in p.name.lower() else 2 if "q8" in p.name.lower() else 3, p.name)
+    return min(hit, key=rank).name if hit else None
+
+
 def _spellings(flag):
     return [flag] + SAME.get(flag, [])
 
@@ -140,7 +198,8 @@ def build(c, s):
         if s.get(key) not in (None, ""):
             args += [flag, str(int(float(s[key])))]
     sup = set(flags_supported(c))
-    flags = s.get("flags") or {}
+    flags = dict(s.get("flags") or {})
+    mm = find_mmproj(root, model) if flags.pop("--mmproj", None) == "auto" else None   # "auto": the vision file next to the model, if any
     for flag, v in flags.items():
         if not isinstance(flag, str) or not flag.startswith("--") or (sup and flag not in sup):
             raise ValueError(f"{flag} is not an option of this llama-server")
@@ -155,9 +214,12 @@ def build(c, s):
             elif not VALUE.fullmatch(v):
                 raise ValueError(f"{flag}: the value has odd characters")
             args += [flag, v]
+    if mm:
+        args += ["--mmproj", inside(mm)]
+    own = list(MANAGED) + list(flags) + (["--mmproj"] if mm else [])
     if k:   # the adopted command, minus what the card sets, then the card's values
-        return _strip(k["base_args"], list(MANAGED) + list(flags)) + args
-    return [c["llama"]] + _strip(c.get("base_args") or [], list(MANAGED) + list(flags)) + args + ["--host", c.get("llama_host", "0.0.0.0"), "--port", str(c["llama_port"])]
+        return _strip(k["base_args"], own) + args
+    return [c["llama"]] + _strip(c.get("base_args") or [], own) + args + ["--host", c.get("llama_host", "0.0.0.0"), "--port", str(c["llama_port"])]
 
 
 # ---------- model files: download, list, delete (the Settings page's Servers card asks for these) ----------

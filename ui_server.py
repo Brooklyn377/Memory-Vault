@@ -22,7 +22,7 @@ NAME = re.compile(r"[\w.\-]+\.gguf")
 
 
 def _models():
-    return [p.name for p in sorted(gguf_info.MODELS.glob("*.gguf"))]
+    return [p.name for p in sorted(gguf_info.MODELS.glob("*.gguf")) if "mmproj" not in p.name.lower()]   # a vision file is not a model
 
 
 def _threads_max():
@@ -250,9 +250,12 @@ def register(app, authed):
         """What the servers say now: whether each is up, the context it really runs, and its runner. These are asked of
         the servers, all at once, and can be slow when one does not answer; the page fills them in when they arrive."""
         need(request)
-        with ThreadPoolExecutor(max_workers=3 * len(MODELS)) as pool:
+        import chatfiles
+        with ThreadPoolExecutor(max_workers=3 * len(MODELS) + 1) as pool:
             asked = {m: (pool.submit(applier.health, m), pool.submit(_running_ctx, m), pool.submit(_runner_info, m)) for m in MODELS}
-            return {m: {"health": a[0].result(), "running": a[1].result(), "runner": a[2].result()} for m, a in asked.items()}
+            sees = pool.submit(chatfiles.vision)   # whether the Assistant's server says it can look at images
+            return {m: {"health": a[0].result(), "running": a[1].result(), "runner": a[2].result(), **({"vision": sees.result()} if m == "pa" else {})}
+                    for m, a in asked.items()}
 
     @router.post("/api/server/cancel")
     async def cancel(request: Request):
@@ -350,13 +353,16 @@ function mk(m,s,models,maxT){
  e.file=h("select",{},...(s.file?[]:[h("option",{value:""},"No model chosen")]),...models.map(n=>h("option",{value:n},n)));e.file.value=s.file;
  e.ctx=num(s.context);e.thr=num(s.threads);e.par=num(s.parallel);
  e.fx={};
- const frows=(FS||[]).map(function(f){
+ const frows=[];let vrow=null;
+ (FS||[]).filter(function(f){return !f.only||f.only===m}).forEach(function(f){
   let inp;
   if(f.kind==="bool"){inp=h("input",{type:"checkbox"});inp.checked=!!(s.flags&&s.flags[f.key])}
   else if(f.kind==="choice"||f.kind==="model"){inp=h("select",{},h("option",{value:""},"default"),...(f.kind==="model"?models:f.choices).map(function(o){return h("option",{value:o},o)}));inp.value=(s.flags&&s.flags[f.key])||""}
   else{inp=h("input",{type:"number",step:f.step||"1",placeholder:"default"});inp.value=(s.flags&&s.flags[f.key]!=null)?s.flags[f.key]:""}
   inp.disabled=!f.ok;e.fx[f.key]=inp;
-  return fld(f.label+(f.ok?"":" (not in this llama.cpp build)"),inp)});
+  const row=fld(f.label+(f.ok?"":" (not in this llama.cpp build)"),inp);
+  if(f.key==="vision"){e.vis=h("div",{class:"mut"});vrow=h("div",{},row,e.vis)}   // not among the advanced flags: it is a setting people look for
+  else frows.push(row)});
  e.adv=h("details",{},h("summary",{class:"mut"},"Advanced server flags (blank uses the default)"),...frows);
  const rs=s.remote||{};
  // Where it runs: this server's CPU or GPU, or one of the servers on the Servers card.
@@ -398,14 +404,14 @@ function mk(m,s,models,maxT){
  e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm);
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
- const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),e.adv];
+ const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),...(vrow?[vrow]:[]),e.adv];
  e.loc=h("div",{},hw[0],fld("Context (tokens)",e.ctx),...hw.slice(1));
  e.extnote=h("div",{class:"mut",style:"margin:6px 0"},"");
  e.rst=null;   // the runner's last status: its model files and llama-server options
  // With a runner, "Model on that server" also offers the model files in that machine's models folder: it is the one
  // model setting for an external server, and Apply all has the runner load the one chosen there.
  e.useRunner=function(st){if(!st||st.error){e.rst=null;return}e.rst=st;
-  e.setNames((st.models||[]).map(function(x){return x.name}));sync()};
+  e.setNames((st.models||[]).map(function(x){return x.name}).filter(function(n){return !/mmproj/i.test(n)}));sync()};
  function sync(){const r=e.ext(),mg=r&&!!(e.srv()||{}).runner;
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});
@@ -420,6 +426,7 @@ function mk(m,s,models,maxT){
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
 // The model list changed (a download finished or a file was deleted): refresh every Model file list, keeping choices.
 window.refreshModelFiles=function(models){
+ models=models.filter(function(n){return !/mmproj/i.test(n)});   // a vision file is not a model
  for(const m of IDS){const e=E[m];if(!e)continue;
   const fill=function(sel,first){const v=sel.value;
    sel.replaceChildren(...first,...models.map(function(n){return h("option",{value:n},n)}));
@@ -447,6 +454,10 @@ async function stat(){clearTimeout(T);
   if(s.runner){   // the model runner on that machine
    e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
    if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
+  if(e.vis){const saved=!!(s.flags&&s.flags.vision);
+   e.vis.textContent=s.vision?"Images: the server reports vision, so images and photos work in chat."
+    :saved?"Images: on here, but the server does not report vision. It needs a restart (Apply all) and a vision file (mmproj-….gguf) next to the model."
+    :"Images: off."}
   e.cancel.style.display=s.pending?"":"none";
   if((s.health!=="ready"&&s.health!=="down")||s.pending)busy=true}
  const l=d.last;
