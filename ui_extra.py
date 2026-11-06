@@ -423,7 +423,7 @@ function card(q){const c=h("div",{class:"card"},h("h3",{},q.question),q.why?h("d
  const finish=async(path,body)=>{try{await api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});c.remove();badge();load()}catch(e){alert(e.message)}};
  for(const o of q.options)c.append(h("button",{class:"pri",onclick:()=>finish("/api/questions/answer",{id:q.id,answer:o.value})},o.label));
  if(q.kind==="free"){const t=h("textarea",{rows:"3",placeholder:"Your answer..."});c.append(t,h("button",{class:"pri",onclick:()=>t.value.trim()&&finish("/api/questions/answer",{id:q.id,answer:t.value})},"Send"))}
- c.append(h("button",{onclick:()=>finish("/api/questions/dismiss",{id:q.id})},"Skip"));return c}
+ if(q.kind!=="notedone")c.append(h("button",{onclick:()=>finish("/api/questions/dismiss",{id:q.id})},"Skip"));return c}
 const SL={queued:"Queued",working:"Working",done:"Done"};
 function row(q){
  const act=async(path,body)=>{try{await api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});badge();load()}catch(e){alert(e.message)}};
