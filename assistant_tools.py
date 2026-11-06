@@ -252,7 +252,7 @@ def queue_job(kind, target, instructions):
             "the result waits for the person's approval as an Ask card. Tell them it is queued.")
 
 
-def edit_file(path, old, new, why):
+def git_edit_file(path, old, new, why):
     """Propose one change to one file in a Git server. Nothing changes until the person approves it."""
     import jobs
     j = jobs.propose_edit(path, old, new, why, CHAT["id"])
@@ -264,6 +264,19 @@ def edit_file(path, old, new, why):
                 "and write key alone does not change that setting) and ask you again.")
     return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
             "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
+
+
+def _done(j):
+    return (f"Done: the Assistant {j['result']['what']}, in the vault only (nothing went to Git). It is already in the vault and you can "
+            "open it. The person has an Ask card showing exactly what changed, with OK and Undo. Tell them what you did.")
+
+
+def note_tools():
+    import jobs
+    c = CHAT["id"]
+    return {"write_note": lambda a: _done(jobs.write_note(a.get("path"), a.get("text"), a.get("why"), c)),
+            "edit_note": lambda a: _done(jobs.edit_note(a.get("path"), a.get("old"), a.get("new"), a.get("why"), c)),
+            "move_note": lambda a: _done(jobs.move_note(a.get("from"), a.get("to"), a.get("why"), c))}
 
 
 def updated_file(a):
@@ -307,7 +320,10 @@ TOOLS = {"search": do_search,
          "web_open": lambda a: web_open(a.get("url"), a.get("start", 0)),
          "updated_file": updated_file,
          "chats": chats_tool,
-         "edit_file": lambda a: edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
+         "write_note": lambda a: note_tools()["write_note"](a),
+         "edit_note": lambda a: note_tools()["edit_note"](a),
+         "move_note": lambda a: note_tools()["move_note"](a),
+         "git_edit_file": lambda a: git_edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
 
 
 def run(name, args):

@@ -23,7 +23,7 @@ NOT_SAME = STATE / "not_same.json"
 MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
-KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "jobmerge", "memory")
+KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "notedone", "jobmerge", "memory")
 
 
 def _path(qid):
@@ -146,6 +146,11 @@ def answer(qid, text):
         chatmemory.clear_failure()
     elif q["kind"] in ("gitpull", "serverfail"):   # notices: answering only acknowledges them
         pass
+    elif q["kind"] == "notedone":   # the Assistant already changed a vault note: OK keeps it, Undo puts it back
+        if text not in ("ok", "undo"):
+            raise ValueError("unknown answer")
+        import jobs
+        (jobs.undo if text == "undo" else jobs.keep)(q["payload"]["job"])
     elif q["kind"] == "job":
         if text not in ("approve", "reject"):
             raise ValueError("unknown answer")

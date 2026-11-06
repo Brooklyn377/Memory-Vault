@@ -454,6 +454,122 @@ def propose_updated_file(name, what, contents, chat="", reference="", path="", a
     return j
 
 
+# ---------- the Assistant's own changes to local vault notes ----------
+def _vault_note(path, must_exist):
+    rel = str(path or "").strip().removeprefix("vault/").strip("/")
+    vault = Path(agent.VAULT).resolve()
+    p = (vault / rel).resolve()
+    if not rel.endswith(".md") or not p.is_relative_to(vault) or Path(rel).parts[0] in ("raw", ".git"):
+        raise ValueError(f"{path} is not a place for a note: give a vault path ending in .md, like entities/foo.md (raw/ is for originals)")
+    if must_exist and not p.is_file():
+        raise ValueError(f"there is no note {rel} in the vault: open it from a search first, or use write_note to create it")
+    return rel, p
+
+
+def _put(p, text):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(p)
+
+
+def _did(kind, what, why, changes, chat):
+    """Record a change the Assistant already made to the vault and ask you to keep it or undo it.
+    changes: [(rel path, text before or None if it did not exist, text after or None if now gone)]."""
+    diff = ""
+    for rel, before, after in changes:
+        diff += "".join(difflib.unified_diff((before or "").splitlines(True), (after or "").splitlines(True),
+                                             f"a/{rel}" if before is not None else "/dev/null",
+                                             f"b/{rel}" if after is not None else "/dev/null"))
+    j = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": "note_done", "worker": "pa",
+         "target": changes[-1][0], "instructions": why, "chat": chat, "status": "waiting",
+         "created": datetime.now().isoformat(timespec="seconds"), "error": "",
+         "result": {"what": what, "diff": diff, "changes": [{"path": r, "before": b, "after": a} for r, b, a in changes]}}
+    _save(j)
+    import questions
+    questions.ask(f"The Assistant {what}. {why}".strip(), why="Already done in your vault only (nothing goes to Git). OK keeps it; "
+                  "Undo puts the note back exactly as it was.", kind="notedone",
+                  payload={"job": j["id"], "local": True, "diff": diff, "file": ", ".join(c[0] for c in changes)},
+                  options=[{"label": "OK", "value": "ok"}, {"label": "Undo", "value": "undo"}])
+    agent.log(f"jobs: the Assistant {what} (in your vault)")
+    return j
+
+
+def write_note(path, text, why="", chat=""):
+    """Create a vault note, or replace one whole. Done at once."""
+    rel, p = _vault_note(path, False)
+    text = scrub(str(text or ""))[0]
+    if not text.strip():
+        raise ValueError("give the note's whole text")
+    before = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
+    if before == text:
+        raise ValueError("that is the same as the note now: nothing to change")
+    _put(p, text)
+    return _did("write", f"{'replaced' if before is not None else 'created'} the note {rel}", " ".join(str(why or "").split())[:300],
+                [(rel, before, text)], chat)
+
+
+def edit_note(path, old, new, why="", chat=""):
+    """Replace one piece of text in a vault note (it must occur once). Done at once."""
+    rel, p = _vault_note(path, True)
+    current = p.read_text(encoding="utf-8", errors="replace")
+    old, new = str(old or ""), scrub(str(new if new is not None else ""))[0]
+    n = current.count(old) if old else 0
+    if n != 1:
+        raise ValueError(f"the text to replace is {'not in' if not n else 'in more than one place in'} {rel}: open the note and copy "
+                         "the exact text (a longer piece, if it repeats)")
+    text = current.replace(old, new, 1)
+    if text == current:
+        raise ValueError("that is the same as the note now: nothing to change")
+    _put(p, text)
+    return _did("edit", f"changed the note {rel}", " ".join(str(why or "").split())[:300], [(rel, current, text)], chat)
+
+
+def move_note(src, dest, why="", chat=""):
+    """Move (file away) a vault note to another path. Done at once."""
+    a, pa = _vault_note(src, True)
+    b, pb = _vault_note(dest, False)
+    if pb.exists():
+        raise ValueError(f"{b} already exists: pick another path")
+    text = pa.read_text(encoding="utf-8", errors="replace")
+    _put(pb, text)
+    pa.unlink()
+    return _did("move", f"moved the note {a} to {b}", " ".join(str(why or "").split())[:300], [(a, text, None), (b, None, text)], chat)
+
+
+def undo(jid):
+    """Put back what a note_done job changed, if nothing touched those notes since."""
+    j = get(jid)
+    if not j or j["kind"] != "note_done" or j["status"] != "waiting":
+        raise ValueError("there is nothing to undo")
+    vault = Path(agent.VAULT).resolve()
+    ch = j["result"]["changes"]
+    for c in ch:
+        p = vault / c["path"]
+        now = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
+        if now != c["after"]:
+            raise ValueError(f"{c['path']} was changed again after this, so undoing would lose that: change it back by hand")
+    for c in reversed(ch):
+        p = vault / c["path"]
+        if c["before"] is None:
+            p.unlink(missing_ok=True)
+        else:
+            _put(p, c["before"])
+    j["status"] = "undone"
+    j["decided"] = datetime.now().isoformat(timespec="seconds")
+    _save(j)
+    agent.log(f"jobs: undone by you: the Assistant {j['result']['what']}")
+    return j
+
+
+def keep(jid):
+    j = get(jid)
+    if j and j["kind"] == "note_done" and j["status"] == "waiting":
+        j["status"] = "kept"
+        j["decided"] = datetime.now().isoformat(timespec="seconds")
+        _save(j)
+
+
 def _hunks(diff):
     """The hunks of a unified diff: [{"start": line in the old file, "lines": [" x", "-x", "+x"]}]."""
     out, cur = [], None

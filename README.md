@@ -228,6 +228,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up
   for one chat stops after **File look-up time per chat** (60 s). The Assistant can also propose an updated file, or an edit of one, with its
   `updated_file` tool; it waits for your approval and writes only to the vault. Nothing here pushes to Git.
+- **Local notes:** the Assistant has `write_note`, `edit_note` and `move_note` for notes in your vault (never Git; `raw/` is refused). They
+  happen at once, and an Ask card shows the diff with **OK** (keep) and **Undo** (restore; refused if the note changed again since). Its Git tool is
+  `git_edit_file`, for files in a Git server only, which still waits for your approval.
 - **The web (Settings → Chats → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages (its prompt says to try the vault and your Git servers first, but nothing enforces it), and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,
