@@ -388,7 +388,13 @@ def collect(calls=False):
 def query(who, kinds, offset, limit):
     evs = [e for e in collect("call" in kinds) if e["who"] in who and e["kind"] in kinds]
     evs.sort(key=lambda e: -e["t"])
-    return evs[offset:offset + limit], len(evs) > offset + limit
+    page = evs[offset:offset + limit]
+    try:
+        import history_journal
+        page = history_journal.fill(page)   # the vault changes' lines are read only for the rows being sent
+    except Exception:
+        pass
+    return page, len(evs) > offset + limit
 
 
 if __name__ == "__main__":

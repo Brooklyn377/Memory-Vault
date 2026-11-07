@@ -111,6 +111,12 @@ The **History** tab lists everything the models and you did, newest first, from 
 - **Assistant tools** and **Websites**: every look-up the Assistant made (search, open a file, Git repositories, web
   searches and the pages it opened), with what it asked for and a short start of what came back; its answers, with the
   full reply inside; the changes it drafted or proposed.
+- **Vault changes**: every note created, changed or deleted, with **every changed line** (nothing is cut). The name on a
+  change comes from whoever wrote it: the Assistant's note tools and your Undo say so (`actors.py`); anything else is
+  guessed from where the file is (a note under `entities/` is labeled the Sweeper). The journal is a rolling record in files
+  of about 4 MB: once it is over **History size (MB)** (Settings > Chats, default 1024), the oldest file is deleted as new
+  entries come in, so it stays within that size give or take one file. -1 keeps everything. The tab shows every
+  entry still on record, 50 rows at a time (**Load older**).
 - **Git servers**: every pull and every commit.
 - **Turns**: every time a model got its turn or gave it up, and why a model had to wait.
 - **Settings**: model downloads (here and on a server), servers saved, groups saved, models loaded or stopped by you.

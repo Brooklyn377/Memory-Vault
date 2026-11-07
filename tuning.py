@@ -28,6 +28,7 @@ REG = [
     ("web.timeout", "chat", "Web request timeout (seconds)", "How long a web page may go without answering before the request is given up; with no limit a slow page is waited for.", 15, 1, 3600, ""),
     ("web.search_results", "chat", "Web search results per search", "How many results one web search gives the Assistant; with no limit, every result the search engine returns.", 6, 1, 20, ""),
     ("web.max_mb", "chat", "Largest web page read (MB)", "A web page bigger than this is read only up to this size, and the Assistant is told it goes on.", 2, 1, 2000, ""),
+    ("history.max_mb", "chat", "History size (MB)", "The change journal behind the History page keeps this much; over it, the oldest entries are deleted first. 1024 is 1 GB. With no limit nothing is ever deleted.", 1024, 100, 10240, ""),
     ("chat.scrub", "chat", "Hide secrets in chat (1 = on)", "Replaces tokens, keys, passwords and other secret-looking text with [REDACTED] in what you type, in what the Assistant reads with its tools, and in the chat saved to the vault. 0 passes chat text exactly as written. The activity log is always redacted.", 1, 0, 1, ""),
     ("chat.fix_tries", "chat", "Tries for a /fix message", "How many times a /fix correction is tried again when the Reviewer's server fails, before the message is marked failed; with no limit it keeps trying.", 3, 1, 20, ""),
     ("chat.linked_chars", "chat", "Chat: characters read per linked note", "Text taken from each linked note.", 300, 50, 3000, ""),

@@ -466,7 +466,10 @@ def _vault_note(path, must_exist):
     return rel, p
 
 
-def _put(p, text):
+def _put(p, text, who="assistant"):
+    """Write a vault note. who is named first so the History page labels the change correctly."""
+    import actors
+    actors.claim(Path(p).resolve().relative_to(Path(agent.VAULT).resolve()).as_posix(), who)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -533,6 +536,8 @@ def move_note(src, dest, why="", chat=""):
         raise ValueError(f"{b} already exists: pick another path")
     text = pa.read_text(encoding="utf-8", errors="replace")
     _put(pb, text)
+    import actors
+    actors.claim(a, "assistant")
     pa.unlink()
     return _did("move", f"moved the note {a} to {b}", " ".join(str(why or "").split())[:300], [(a, text, None), (b, None, text)], chat)
 
@@ -549,12 +554,14 @@ def undo(jid):
         now = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
         if now != c["after"]:
             raise ValueError(f"{c['path']} was changed again after this, so undoing would lose that: change it back by hand")
+    import actors
     for c in reversed(ch):
         p = vault / c["path"]
         if c["before"] is None:
+            actors.claim(c["path"], "you")
             p.unlink(missing_ok=True)
         else:
-            _put(p, c["before"])
+            _put(p, c["before"], "you")   # you pressed Undo
     j["status"] = "undone"
     j["decided"] = datetime.now().isoformat(timespec="seconds")
     _save(j)
@@ -657,6 +664,8 @@ def merge(jid):
 def _write_updated(j):
     draft = DIR / f"{j['id']}.draft"
     out = Path(agent.VAULT) / j["result"]["path"]
+    import actors
+    actors.claim(j["result"]["path"], "assistant")   # the Assistant's note, written once you approved it
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".tmp")
     tmp.write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")

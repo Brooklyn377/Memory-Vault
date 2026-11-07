@@ -11,7 +11,9 @@ from pathlib import Path
 
 from inotify_simple import INotify, flags
 
+import actors
 import agent
+import tuning
 
 VAULT, STATE = agent.VAULT, agent.STATE
 OUT = STATE / "journal"
@@ -67,7 +69,7 @@ def read_text(p):
 
 def fmt(v):
     s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-    return s if len(s) <= 60 else s[:57] + "..."
+    return s
 
 
 def jdiff(a, b, pre):
@@ -87,20 +89,20 @@ def describe(p, op, old, new):
     if op == "updated" and p.name in ("settings.json", "curator_cfg.json", "tuning.json"):
         try:
             ch = jdiff(json.loads(old), json.loads(new), "")
-            return len(ch), 0, ch[:40], "; ".join(ch[:4])
+            return len(ch), 0, ch, "; ".join(ch[:4])
         except ValueError:
             pass
     if op == "updated" and p.name in ("entity_blocklist.json", "entity_keep.json"):
         try:
             a, b = set(json.loads(old)), set(json.loads(new))
             ch = [f"added {x}" for x in sorted(b - a)] + [f"removed {x}" for x in sorted(a - b)]
-            return len(ch), 0, ch[:40], "; ".join(ch[:4])
+            return len(ch), 0, ch, "; ".join(ch[:4])
         except (ValueError, TypeError):
             pass
     d = [l for l in difflib.unified_diff((old or "").splitlines(), (new or "").splitlines(), lineterm="", n=0)
          if not l.startswith(("---", "+++", "@@"))]
     add, rem = sum(1 for l in d if l.startswith("+")), sum(1 for l in d if l.startswith("-"))
-    return add, rem, [l[:200] for l in d[:40]], f"+{add} -{rem}"
+    return add, rem, d, f"+{add} -{rem}"
 
 
 def who_for(rel, lines):
@@ -127,6 +129,30 @@ def who_for(rel, lines):
     return "system"
 
 
+SEGMENT = 4 * 1024 * 1024   # a journal file is closed at this size and the next entry starts a new one
+
+
+def segments():
+    return sorted(OUT.glob("journal-*.jsonl"))
+
+
+def trim(total=None):
+    """Keep the journal within Settings > History size (MB): once it is over, the oldest file is deleted. Files are
+    small (SEGMENT), so the oldest entries go out a few MB at a time as new ones come in. -1 keeps everything.
+    -> the size now."""
+    files = segments()
+    total = sum(f.stat().st_size for f in files) if total is None else total
+    mb = tuning.get("history.max_mb")
+    if mb >= tuning.NO_LIMIT:
+        return total
+    budget = int(mb * 1024 * 1024)
+    while total > budget and len(files) > 1:   # the newest file is never deleted: it is being written
+        oldest = files.pop(0)
+        total -= oldest.stat().st_size
+        oldest.unlink(missing_ok=True)
+    return total
+
+
 class Journal:
     def __init__(self):
         self.ino = INotify()
@@ -134,19 +160,20 @@ class Journal:
 
     def write(self, row):
         OUT.mkdir(parents=True, exist_ok=True)
-        f = OUT / time.strftime("journal-%Y%m.jsonl", time.gmtime())
-        fresh = not f.exists()
+        if getattr(self, "size", None) is None:
+            self.size = trim()
+        files = segments()
+        f = files[-1] if files and files[-1].stat().st_size < SEGMENT else OUT / f"journal-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{time.time_ns() % 10**9:09d}.jsonl"
+        line = json.dumps(row, ensure_ascii=False) + "\n"
         with open(f, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-        if fresh:
-            for old in sorted(OUT.glob("journal-*.jsonl"))[:-6]:
-                old.unlink(missing_ok=True)
+            fh.write(line)
+        self.size = trim(self.size + len(line.encode("utf-8")))
 
     def record(self, p, op, old, new):
         rel = rel_path(p)
         add, rem, lines, summary = describe(p, op, old, new)
         self.write({"t": time.time(), "path": rel, "op": op, "add": add, "rem": rem, "summary": summary,
-                    "diff": lines, "who": who_for(rel, lines)})
+                    "diff": lines, "who": actors.who_of(rel) or who_for(rel, lines)})
 
     def add_dir(self, d, scan=False):
         for root, dirs, files in os.walk(d):
