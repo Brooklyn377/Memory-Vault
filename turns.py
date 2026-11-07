@@ -257,7 +257,7 @@ def _off(model):
 def want(model):
     """This model is needed now. Repeat while waiting: a want older than FRESH seconds is forgotten."""
     DIR.mkdir(parents=True, exist_ok=True)
-    tmp = DIR / f".want-{model}.{os.getpid()}"
+    tmp = DIR / f".want-{model}.{os.getpid()}.{secrets.token_hex(3)}"   # its own name: threads of one process write at once
     tmp.write_text(json.dumps({"at": time.time()}))
     os.replace(tmp, DIR / f"want-{model}")
 
