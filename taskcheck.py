@@ -1,5 +1,6 @@
 """After an accepted chunk, the reviewer closes or updates open tasks that the new facts answer."""
 import json
+import time
 from datetime import datetime
 
 import agent
@@ -7,6 +8,7 @@ import reviewer
 import todo
 
 LOG = agent.STATE / "task_changes.jsonl"
+QUEUE = agent.STATE / "taskcheck_queue"   # approved chunks waiting for their check, one small file each
 SYS = ("You keep a person's to-do board honest. You get OPEN TASKS and NEW FACTS from their notes. "
        "If a new fact shows a task is finished or was answered elsewhere, use action close. "
        "If a fact only adds progress, use action update. Otherwise change nothing. "
@@ -44,20 +46,82 @@ def _apply(rel, facts, ids, c):
     agent.log(f"task check: {c['action']} '{t['title'][:40]}' - {note[:60]}")
 
 
-def check(rel, data):
+def queue(rel, data):
+    """The Sweeper hands over the facts of an approved chunk and goes straight on. The Reviewer's worker checks them later."""
+    facts = [f for f in (data.get("facts") or []) if isinstance(f, dict)]
+    if not facts:
+        return
+    QUEUE.mkdir(parents=True, exist_ok=True)
+    name = f"{time.time_ns()}.json"
+    tmp = QUEUE / f".{name}.tmp"   # written whole and then renamed: the worker never reads half a file
+    tmp.write_text(json.dumps({"rel": rel, "facts": facts, "at": datetime.now().isoformat(timespec="seconds")},
+                              ensure_ascii=False))
+    tmp.replace(QUEUE / name)
+
+
+def _run(rel, facts):
+    """Compare the facts with every open task. Raises if the Reviewer call fails."""
+    tasks = todo.list_tasks("open")
+    if not facts or not tasks:
+        return
+    tl = "\n".join(f"{t['id']}: {t['title']} - {t['detail']}" for t in tasks)
+    fl = "\n".join(f"{i}. {f.get('entity')}: {f.get('fact')}\n   quote: \"{str(f.get('quote', ''))[:200]}\""
+                   for i, f in enumerate(facts))
+    v = reviewer.rask(SYS, f"OPEN TASKS:\n{tl}\n\nNEW FACTS:\n{fl}", tokens=8000)
+    if not isinstance(v, dict):
+        return
+    ids = {t["id"] for t in tasks}
+    for c in v.get("changes") or []:
+        _apply(rel, facts, ids, c)
+
+
+def run_next():
+    """Check the oldest queued chunk. -> 1 if it did something, else 0 (nothing to do, or the Reviewer is not up, in which
+    case everything stays queued). A check that fails is kept, marked failed, and listed under "Failed, waiting for you";
+    nothing is deleted except by Skip."""
+    for p in sorted(QUEUE.glob("*.json")) if QUEUE.is_dir() else []:
+        try:
+            e = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue   # not readable now: left alone, never deleted
+        if e.get("failed"):
+            continue
+        if not reviewer.ready():
+            return 0
+        try:
+            _run(e["rel"], e["facts"])
+        except Exception as ex:
+            e["failed"] = f"{type(ex).__name__}: {str(ex)[:120]}"
+            p.write_text(json.dumps(e, ensure_ascii=False))
+            agent.log(f"task check failed, waiting for you in the Failed list: {e['failed']}")
+            return 1
+        p.unlink(missing_ok=True)
+        return 1
+    return 0
+
+
+def failed():
+    """The checks that failed, as (key, record), oldest first."""
+    out = []
+    for p in sorted(QUEUE.glob("*.json")) if QUEUE.is_dir() else []:
+        try:
+            e = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if e.get("failed"):
+            out.append((p.stem, e))
+    return out
+
+
+def decide(key, action):
+    """retry puts a failed check back in the queue; skip deletes it (only ever on your say-so)."""
+    p = QUEUE / f"{key}.json"
     try:
-        facts = [f for f in (data.get("facts") or []) if isinstance(f, dict)]
-        tasks = todo.list_tasks("open")[:__import__("tuning").get("taskcheck.max_tasks")]
-        if not facts or not tasks or not reviewer.ready():
-            return
-        tl = "\n".join(f"{t['id']}: {t['title']} - {t['detail']}" for t in tasks)
-        fl = "\n".join(f"{i}. {f.get('entity')}: {f.get('fact')}\n   quote: \"{str(f.get('quote', ''))[:200]}\""
-                       for i, f in enumerate(facts))
-        v = reviewer.rask(SYS, f"OPEN TASKS:\n{tl}\n\nNEW FACTS:\n{fl}", tokens=8000)
-        if not isinstance(v, dict):
-            return
-        ids = {t["id"] for t in tasks}
-        for c in v.get("changes") or []:
-            _apply(rel, facts, ids, c)
-    except Exception as e:
-        agent.log(f"task check error: {type(e).__name__}: {str(e)[:80]}")
+        e = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return
+    if action == "skip":
+        p.unlink(missing_ok=True)
+        return
+    e.pop("failed", None)
+    p.write_text(json.dumps(e, ensure_ascii=False))

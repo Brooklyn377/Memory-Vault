@@ -315,7 +315,7 @@ def run_chunk(st, rel, d, meta, chunks, idx, merges, clarification=None):
         return False
     try:
         import taskcheck
-        taskcheck.check(rel, data)
+        taskcheck.queue(rel, data)   # the Reviewer's worker does the check; the Sweeper does not wait for it
     except Exception:
         pass
     touched = {entity_key(f["entity"], merges) for f in d["facts"] if f["chunk"] == idx and f["ok"]}

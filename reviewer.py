@@ -146,9 +146,10 @@ def _review_loop():
     """Reviews the Sweeper's parked chunks one after another, apart from the worker's other jobs, so the Sweeper never
     waits for a verdict: it goes on with other conversations and comes back when one is in."""
     import reviewgate
+    import taskcheck
     while True:
         try:
-            n = reviewgate.review_next()
+            n = reviewgate.review_next() or taskcheck.run_next()   # a verdict the Sweeper waits for always comes first
         except Exception as e:
             agent.log(f"reviewer: review failed: {type(e).__name__}: {str(e)[:100]}")
             n = 0

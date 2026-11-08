@@ -38,6 +38,12 @@ def _reviews():
             for k, e in reviewgate._entries() if e.get("stuck")]
 
 
+def _taskchecks():
+    import taskcheck
+    return [{"source": "taskcheck", "key": k, "what": f"To-do check: {str(e.get('rel', '')).split('/')[-1][:60]}",
+             "why": e.get("failed", ""), "at": e.get("at", "")} for k, e in taskcheck.failed()]
+
+
 def _jobs():
     import jobs
     return [{"source": "job", "key": j["id"], "what": f"Job: {j['kind']} {j.get('target') or ''}".strip(), "why": j.get("error", ""),
@@ -50,7 +56,7 @@ def _chat():
             for m in ui_chat._all() if m["status"] == "error"]
 
 
-SOURCES = {"file": _filechecks, "curator": _curator, "review": _reviews, "job": _jobs, "chat": _chat}
+SOURCES = {"file": _filechecks, "curator": _curator, "review": _reviews, "taskcheck": _taskchecks, "job": _jobs, "chat": _chat}
 CARD = {"file": ("filecheck", "name"), "curator": ("curatecheck", "rel"), "review": ("reviewstuck", "key")}
 
 
@@ -90,6 +96,9 @@ def act(source, key, action):
     elif source == "review":
         import reviewgate
         reviewgate.decide_stuck(key, action)
+    elif source == "taskcheck":
+        import taskcheck
+        taskcheck.decide(key, action)
     elif source == "job":
         import jobs
         jobs.requeue(key) if action == "retry" else jobs.drop(key)

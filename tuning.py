@@ -17,7 +17,6 @@ REG = [
     ("review.recap_chars", "gpt", "Recap length the gate sees", "The Sweeper's recap is cut to this many characters before the Reviewer reads it.", 600, 200, 5000, "memory-sweep"),
     ("review.quote_chars", "gpt", "Quote length the gate sees", "Each fact's quote is cut to this many characters before the Reviewer reads it.", 200, 100, 2000, "memory-sweep"),
     ("reviewer.note_chars", "gpt", "Summary text read per task scan", "How much of a summary the Reviewer reads when looking for unfinished tasks.", 6000, 1000, 40000, "memory-review-worker"),
-    ("taskcheck.max_tasks", "gpt", "Open tasks checked per chunk", "Open tasks compared against each chunk's new facts.", 30, 5, 200, ""),
     ("files.window", "gpt", "File check: characters around each mention", "Text kept on each side of a file name when the Reviewer reads chats about a file.", 1500, 300, 8000, "memory-filechanges"),
     ("files.excerpt_chars", "gpt", "File check: chat text per call", "Most chat text sent to the Reviewer in one file check.", 12000, 3000, 60000, "memory-filechanges"),
     ("chat.page_messages", "chat", "Chat: messages loaded at a time", "The Chat page opens on this many of the newest messages. Scrolling up loads this many more, all the way back to the first one, which is kept in the vault.", 40, 5, 1000, ""),
