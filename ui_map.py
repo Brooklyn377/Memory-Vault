@@ -44,10 +44,18 @@ main{max-width:none!important;padding:0!important}
 #info{position:absolute;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));background:rgba(20,26,44,.94);color:#e6e9f0;border:1px solid #2b3350;border-radius:12px;padding:10px 12px;display:none}
 #info a{color:#8fb4ff;text-decoration:none;font-weight:600;margin-right:14px}
 #st{position:absolute;right:10px;bottom:10px;color:#6b7590;font-size:12px;pointer-events:none}
+#lock{position:absolute;left:0;bottom:env(safe-area-inset-bottom);margin:0;padding:10px;display:block;line-height:0;cursor:pointer;-webkit-tap-highlight-color:transparent}   /* the padding is room for a finger; the switch itself is as small as the file count */
+.sw{position:relative;display:inline-block;width:30px;height:16px;flex:none}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:8px;transition:background .15s;cursor:pointer}
+.sw span:before{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;background:#fff;border-radius:50%;transition:transform .15s}
+.sw input:checked+span{background:#15803d}
+.sw input:checked+span:before{transform:translateX(14px)}
 </style>
 <div id="wrap"><canvas id="cv"></canvas>
  <div id="bar"><input id="s" type="search" placeholder="Find a note..." autocomplete="off"><div class="f" id="flt"></div></div>
- <div id="info"></div><div id="st"></div></div>
+ <div id="info"></div><div id="st"></div>
+ <label id="lock" title="Physics off: the dots cannot be dragged. Turn on to drag them."><span class="sw"><input type="checkbox" id="phys" aria-label="Physics: drag the dots"><span></span></span></label></div>
 <script>
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};
 let TOTAL=0,BUSY=6;const HUBPUSH=20;   // BUSY: how many links make a note a busy hub (set from the busiest note once loaded)
@@ -55,6 +63,9 @@ const col=t=>COL[t]||COL.note;   // the colors are the ones set under Settings, 
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let N=[],E=[],adj=[],W=0,H=0,dpr=1,view={x:0,y:0,k:1},sel=-1,hit=new Set(),off=new Set(),alpha=1,running=false;
 const rad=n=>2.2+Math.sqrt(n.d)*.8;
+// A dot's size on screen: it shrinks with the zoom (down to a speck, never below 0.9 px) and stops growing at 1.8 times.
+// Tapping still has 10 px of room around it (see pick).
+const dr=n=>Math.max(rad(n)*Math.min(Math.max(view.k,.15),1.8),.9);
 function resize(){const r=$("#wrap").getBoundingClientRect();dpr=window.devicePixelRatio||1;W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;draw()}
 function vis(i){return !off.has(N[i].ty)}
 function initPos(){const R=Math.sqrt(N.length)*22,done=new Array(N.length).fill(false),q=[];let seed=0;
@@ -77,7 +88,8 @@ function step(){
   // the busier of the two notes sets how long the link is, the less busy one how hard it pulls
   const f=(d-(18+6*Math.sqrt(Math.max(p.d,q.d))))*.05/Math.sqrt(Math.max(1,Math.min(p.d,q.d)))*alpha;
   p.vx+=f*dx/d;p.vy+=f*dy/d;q.vx-=f*dx/d;q.vy-=f*dy/d}
- for(const n of N){n.vx-=n.x*.0006*alpha;n.vy-=n.y*.0006*alpha;const sp=Math.hypot(n.vx,n.vy);if(sp>14){n.vx*=14/sp;n.vy*=14/sp}n.x+=n.vx;n.y+=n.vy;n.vx*=.6;n.vy*=.6}
+ for(const n of N){if(n.fixed){n.vx=n.vy=0;continue}   // the dot you are holding stays under your finger; the rest still feel it
+  n.vx-=n.x*.0006*alpha;n.vy-=n.y*.0006*alpha;const sp=Math.hypot(n.vx,n.vy);if(sp>14){n.vx*=14/sp;n.vy*=14/sp}n.x+=n.vx;n.y+=n.vy;n.vx*=.6;n.vy*=.6}
 }
 function loop(){if(alpha<.015){running=false;if(!touched)fit();draw();return}
  const t=performance.now();do{step();alpha*=.985}while(performance.now()-t<6&&alpha>=.015);draw();requestAnimationFrame(loop)}
@@ -91,7 +103,7 @@ function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
   const[x1,y1]=w2s(N[a].x,N[a].y),[x2,y2]=w2s(N[b].x,N[b].y);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}
  const labels=[];
  for(let i=0;i<N.length;i++){if(!vis(i))continue;const n=N[i],[x,y]=w2s(n.x,n.y);if(x<-20||y<-20||x>W+20||y>H+20)continue;
-  const r=rad(n)*Math.min(Math.max(view.k,.6),1.8);ctx.globalAlpha=focus&&!lit.has(i)?.15:1;ctx.fillStyle=col(n.ty);
+  const r=dr(n);ctx.globalAlpha=focus&&!lit.has(i)?.15:1;ctx.fillStyle=col(n.ty);
   ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fill();
   if(i===sel){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1}
   if(focus?lit.has(i):(n.d>=8&&view.k>.5)||(n.d>=3&&view.k>1.6)||view.k>3.2)labels.push([n.t,x,y-r-3,i===sel,i===sel?1e9:n.d])}
@@ -104,21 +116,31 @@ function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
 let touched=false;
 function fit(){if(!N.length)return;const xs=N.map(n=>n.x).sort((a,b)=>a-b),ys=N.map(n=>n.y).sort((a,b)=>a-b),lo=Math.floor(N.length*.03),hi=Math.ceil(N.length*.97)-1;
  const a=xs[lo],c=xs[hi],b=ys[lo],d=ys[hi];view.x=(a+c)/2;view.y=(b+d)/2;view.k=Math.min(W/(c-a+60),H/(d-b+60),3)}
-function pick(sx,sy){let best=-1,bd=1e9;for(let i=0;i<N.length;i++){if(!vis(i))continue;const[x,y]=w2s(N[i].x,N[i].y),d=Math.hypot(x-sx,y-sy),r=rad(N[i])*Math.min(Math.max(view.k,.6),1.8)+10;if(d<r&&d<bd){bd=d;best=i}}return best}
-function select(i){sel=i;const p=$("#info");if(i<0){p.style.display="none";$("#st").style.display="";draw();return}
+function pick(sx,sy){let best=-1,bd=1e9;for(let i=0;i<N.length;i++){if(!vis(i))continue;const[x,y]=w2s(N[i].x,N[i].y),d=Math.hypot(x-sx,y-sy),r=dr(N[i])+10;if(d<r&&d<bd){bd=d;best=i}}return best}
+function lockUp(){const p=$("#info");$("#lock").style.bottom=p.style.display==="block"?"calc("+(p.offsetHeight+8)+"px + env(safe-area-inset-bottom))":""}
+function select(i){sel=i;const p=$("#info");if(i<0){p.style.display="none";$("#st").style.display="";lockUp();draw();return}
  const n=N[i];p.style.display="block";$("#st").style.display="none";p.replaceChildren(h("div",{},h("b",{},n.t),h("span",{class:"badge",style:"background:"+col(n.ty)},n.ty)),
   h("div",{style:"color:#8b93a7;font-size:13px;margin:2px 0 8px"},n.p+" · "+adj[i].length+" linked notes"),
   h("a",{href:"/graph#"+encodeURIComponent(n.p)},"Open note ›"),h("a",{href:"#",onclick:e=>{e.preventDefault();view.x=n.x;view.y=n.y;view.k=Math.max(view.k,2.2);draw()}},"Zoom here"),
-  h("a",{href:"#",onclick:e=>{e.preventDefault();select(-1)}},"Close"));draw()}
-const ptr=new Map();let last=null,moved=0,pinch=0;
-cv.addEventListener("pointerdown",e=>{touched=true;cv.setPointerCapture(e.pointerId);ptr.set(e.pointerId,[e.offsetX,e.offsetY]);moved=0;if(ptr.size===2){const[a,b]=[...ptr.values()];pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}});
+  h("a",{href:"#",onclick:e=>{e.preventDefault();select(-1)}},"Close"));lockUp();draw()}
+const ptr=new Map();let last=null,moved=0,pinch=0,unlocked=false,drag=-1;
+function wake(a){alpha=Math.max(alpha,a);if(!running){running=true;requestAnimationFrame(loop)}}   // start the physics again, at this much energy
+function s2w(x,y){return[(x-W/2)/view.k+view.x,(y-H/2)/view.k+view.y]}   // a screen point back to the map
+function stopDrag(){if(drag<0)return;N[drag].fixed=false;drag=-1;if(moved>=8)wake(.5)}   // let go: the dot joins the physics again and settles
+$("#phys").addEventListener("change",e=>{stopDrag();unlocked=e.target.checked;
+ $("#lock").title=unlocked?"Physics on: drag a dot to move it.":"Physics off: the dots cannot be dragged. Turn on to drag them."});
+cv.addEventListener("pointerdown",e=>{touched=true;cv.setPointerCapture(e.pointerId);ptr.set(e.pointerId,[e.offsetX,e.offsetY]);moved=0;
+ if(unlocked&&ptr.size===1){const i=pick(e.offsetX,e.offsetY);if(i>=0){drag=i;N[i].fixed=true}}   // unlocked: a touch on a dot holds it
+ if(ptr.size===2){stopDrag();const[a,b]=[...ptr.values()];pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}});
 cv.addEventListener("pointermove",e=>{if(!ptr.has(e.pointerId))return;const o=ptr.get(e.pointerId),nx=e.offsetX,ny=e.offsetY;
- if(ptr.size===1){view.x-=(nx-o[0])/view.k;view.y-=(ny-o[1])/view.k;moved+=Math.abs(nx-o[0])+Math.abs(ny-o[1])}
+ if(ptr.size===1){moved+=Math.abs(nx-o[0])+Math.abs(ny-o[1]);
+  if(drag>=0){if(moved>=8){const[wx,wy]=s2w(nx,ny);N[drag].x=wx;N[drag].y=wy;wake(.35)}}   // the held dot follows the finger, the physics pulls its links along
+  else{view.x-=(nx-o[0])/view.k;view.y-=(ny-o[1])/view.k}}
  ptr.set(e.pointerId,[nx,ny]);
  if(ptr.size===2){const[a,b]=[...ptr.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pinch){view.k=Math.min(8,Math.max(.1,view.k*d/pinch))}pinch=d;moved+=10}
  draw()});
-const up=e=>{if(ptr.size===1&&moved<8){const i=pick(e.offsetX,e.offsetY);select(i)}ptr.delete(e.pointerId);pinch=0};
-cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",e=>{ptr.delete(e.pointerId);pinch=0});
+const up=e=>{if(ptr.size===1&&moved<8){const i=drag>=0?drag:pick(e.offsetX,e.offsetY);select(i)}stopDrag();ptr.delete(e.pointerId);pinch=0};
+cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",e=>{stopDrag();ptr.delete(e.pointerId);pinch=0});
 cv.addEventListener("wheel",e=>{touched=true;e.preventDefault();view.k=Math.min(8,Math.max(.1,view.k*(e.deltaY<0?1.15:1/1.15)));draw()},{passive:false});
 $("#s").addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase();hit=new Set();
  if(q)N.forEach((n,i)=>{if(vis(i)&&(n.t.toLowerCase().includes(q)||n.p.toLowerCase().includes(q)))hit.add(i)});
