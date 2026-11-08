@@ -86,13 +86,25 @@ function step(){
   const q=(1+Math.sqrt(n.d))*(1+Math.sqrt(m.d))*HUBPUSH,f=(120*q/d2)*alpha,d=Math.sqrt(d2);n.vx+=f*dx/d*6;n.vy+=f*dy/d*6;m.vx-=f*dx/d*6;m.vy-=f*dy/d*6}
  for(const[a,b]of E){const p=N[a],q=N[b];let dx=q.x-p.x,dy=q.y-p.y,d=Math.sqrt(dx*dx+dy*dy)+.01;
   // the busier of the two notes sets how long the link is, the less busy one how hard it pulls
-  const f=(d-(18+6*Math.sqrt(Math.max(p.d,q.d))))*.05/Math.sqrt(Math.max(1,Math.min(p.d,q.d)))*alpha;
+  let f=(d-(18+6*Math.sqrt(Math.max(p.d,q.d))))*.05/Math.sqrt(Math.max(1,Math.min(p.d,q.d)))*alpha;
+  // A link to a busy hub is softer, always, so the notes around a hub fan out instead of balling up. A small dot you hold
+  // (Physics on) pulls its links harder; a busy hub you hold pulls them less, so it stays loose.
+  const hd=play?(p.fixed?p.d:q.fixed?q.d:-1):-1;
+  f*=(hd>=0?GRIP/(1+.25*Math.sqrt(hd)):1)/(1+SLACK*Math.sqrt(Math.max(p.d,q.d)));
   p.vx+=f*dx/d;p.vy+=f*dy/d;q.vx-=f*dx/d;q.vy-=f*dy/d}
  for(const n of N){if(n.fixed){n.vx=n.vy=0;continue}   // the dot you are holding stays under your finger; the rest still feel it
   n.vx-=n.x*.0006*alpha;n.vy-=n.y*.0006*alpha;const sp=Math.hypot(n.vx,n.vy);if(sp>14){n.vx*=14/sp;n.vy*=14/sp}n.x+=n.vx;n.y+=n.vy;n.vx*=.6;n.vy*=.6}
 }
-function loop(){if(alpha<.015){running=false;if(!touched)fit();draw();return}
- const t=performance.now();do{step();alpha*=.985}while(performance.now()-t<6&&alpha>=.015);draw();requestAnimationFrame(loop)}
+// Moving a dot by hand: the physics runs at a fixed pace (120 steps a second, the same on any phone) and cools slowly, so the
+// dots have time to ease back; the first layout still runs as fast as it can.
+let play=false,acc=0,lastT=0;
+const GRIP=4,SLACK=.12,AWAKE=.01;   // how much harder the held dot pulls; how soft links to busy hubs get; the energy the physics never drops below while Physics is on
+function loop(){if(unlocked&&alpha<AWAKE)alpha=AWAKE;   // Physics on: it never goes to sleep
+ if(!unlocked&&alpha<(play?.015:.004)){running=false;play=false;if(!touched)fit();draw();return}   // the first layout cools further before it sleeps, so turning Physics on later does not move it
+ const t=performance.now();
+ if(play){acc+=Math.min(.1,(t-(lastT||t))/1000)*120;lastT=t;while(acc>=1){step();alpha*=.994;acc--}}
+ else{do{step();alpha*=.985}while(performance.now()-t<6&&alpha>=.004)}
+ draw();requestAnimationFrame(loop)}
 function kick(){alpha=Math.max(alpha,.5);if(!running){running=true;requestAnimationFrame(loop)}}
 function w2s(x,y){return[(x-view.x)*view.k+W/2,(y-view.y)*view.k+H/2]}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
@@ -124,10 +136,10 @@ function select(i){sel=i;const p=$("#info");if(i<0){p.style.display="none";$("#s
   h("a",{href:"/graph#"+encodeURIComponent(n.p)},"Open note ›"),h("a",{href:"#",onclick:e=>{e.preventDefault();view.x=n.x;view.y=n.y;view.k=Math.max(view.k,2.2);draw()}},"Zoom here"),
   h("a",{href:"#",onclick:e=>{e.preventDefault();select(-1)}},"Close"));lockUp();draw()}
 const ptr=new Map();let last=null,moved=0,pinch=0,unlocked=false,drag=-1;
-function wake(a){alpha=Math.max(alpha,a);if(!running){running=true;requestAnimationFrame(loop)}}   // start the physics again, at this much energy
+function wake(a){alpha=Math.max(alpha,a);if(!play){play=true;acc=0;lastT=0}if(!running){running=true;requestAnimationFrame(loop)}}   // start the physics again, at this much energy
 function s2w(x,y){return[(x-W/2)/view.k+view.x,(y-H/2)/view.k+view.y]}   // a screen point back to the map
 function stopDrag(){if(drag<0)return;N[drag].fixed=false;drag=-1;if(moved>=8)wake(.5)}   // let go: the dot joins the physics again and settles
-$("#phys").addEventListener("change",e=>{stopDrag();unlocked=e.target.checked;
+$("#phys").addEventListener("change",e=>{stopDrag();unlocked=e.target.checked;if(unlocked)wake(AWAKE);
  $("#lock").title=unlocked?"Physics on: drag a dot to move it.":"Physics off: the dots cannot be dragged. Turn on to drag them."});
 cv.addEventListener("pointerdown",e=>{touched=true;cv.setPointerCapture(e.pointerId);ptr.set(e.pointerId,[e.offsetX,e.offsetY]);moved=0;
  if(unlocked&&ptr.size===1){const i=pick(e.offsetX,e.offsetY);if(i>=0){drag=i;N[i].fixed=true}}   // unlocked: a touch on a dot holds it
