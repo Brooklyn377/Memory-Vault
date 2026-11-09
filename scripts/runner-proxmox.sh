@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GPU model server for the memory agent, on a Proxmox host. Run as root in the Proxmox shell:
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
-# It creates a Debian 12 LXC, passes the GPUs you pick (none, one or several) into it, builds llama.cpp inside, installs the
+# It creates a Debian LXC (13 for Vulkan, 12 for CUDA and ROCm), passes the GPUs you pick (none, one or several) into it, builds llama.cpp inside, installs the
 # model runner there as a service, and prints the server address, API key and runner token for Settings > Servers.
 # Anything not given as an option is asked, in the same blue dialog boxes as install.sh (--plain: plain text lines).
 # The disk, memory and cores have no defaults: they are always asked.
@@ -173,13 +173,22 @@ Local models on: $(gpu_summary)" 15 76 >/dev/null
 fi
 
 # --- template and container ----------------------------------------------------------------------------------------
-say "Debian 12 template"
+# llama.cpp's Vulkan code needs newer Vulkan headers than Debian 12 has (1.3.239), so Vulkan uses Debian 13 when pveam offers it.
+# CUDA and ROCm keep Debian 12: their repositories below are set up for it.
+DEBIAN=12; [[ "$BACKEND" == vulkan ]] && DEBIAN=13
+say "Debian $DEBIAN template"
 if (( DRY )) && ! have pveam; then
-    TEMPLATE="debian-12-standard_<newest>_amd64.tar.zst"
+    TEMPLATE="debian-$DEBIAN-standard_<newest>_amd64.tar.zst"
 else
     run pveam update >/dev/null
-    TEMPLATE="$(pveam available --section system | awk '{print $2}' | grep '^debian-12-standard_' | sort -V | tail -n 1)"
-    [[ -n "$TEMPLATE" ]] || die "no Debian 12 template offered by pveam"
+    available="$(pveam available --section system | awk '{print $2}')"
+    TEMPLATE="$(grep "^debian-$DEBIAN-standard_" <<<"$available" | sort -V | tail -n 1)"
+    if [[ -z "$TEMPLATE" && "$DEBIAN" == 13 ]]; then
+        echo "warning: this Proxmox does not offer Debian 13; using Debian 12, whose older Vulkan headers may not build the newest llama.cpp (try --llama-ref with an older release)" >&2
+        DEBIAN=12
+        TEMPLATE="$(grep '^debian-12-standard_' <<<"$available" | sort -V | tail -n 1)"
+    fi
+    [[ -n "$TEMPLATE" ]] || die "no Debian $DEBIAN template offered by pveam"
 fi
 if (( DRY )) || ! pveam list "$TSTORAGE" | grep -q "$TEMPLATE"; then
     run pveam download "$TSTORAGE" "$TEMPLATE"
