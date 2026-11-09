@@ -234,7 +234,7 @@ cmake_opts=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON)
 case "$BACKEND" in
 cpu) ;;   # no GPU software
 vulkan)
-    apt-get install -y -q --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
+    apt-get install -y -q --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc glslang-tools spirv-headers vulkan-tools
     vulkaninfo --summary 2>/dev/null | sed -n 's/^\s*deviceName\s*=\s*/Vulkan device: /p' || true
     cmake_opts+=(-DGGML_VULKAN=ON) ;;
 cuda)   # the host's driver libraries, the same version as the host, then the CUDA toolkit

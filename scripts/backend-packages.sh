@@ -13,7 +13,7 @@ backend_prepare() {
     cpu) ;;
     vulkan)
         _r env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-            libvulkan-dev mesa-vulkan-drivers glslc vulkan-tools
+            libvulkan-dev mesa-vulkan-drivers glslc glslang-tools spirv-headers vulkan-tools
         GPUOPTS=(-DGGML_VULKAN=ON) ;;
     cuda)   # the host's driver libraries (the same version as the host), then the CUDA toolkit
         [[ -r "$NVFILE" ]] && . "$NVFILE"
