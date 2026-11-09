@@ -290,7 +290,8 @@ the **address**, the **API key** and the **runner token** to type into **Setting
 Run it as root:
 
 - **Proxmox** (creates a Debian container, passes the GPUs you pick into it, builds llama.cpp inside; it asks for
-  anything you do not give as an option, and always asks the disk, memory and cores):
+  anything you do not give as an option, and always asks the disk, memory and cores. Like the main installer, it asks in
+  blue dialog boxes with a Default or Advanced choice and a last box to confirm; add `--plain` for plain text lines):
   ```bash
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
   ```

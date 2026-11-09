@@ -103,7 +103,14 @@ choose_gpus() {
         err="$(_pick_tokens "${words[@]}")" || die "--gpus: $err"
         _pick_tokens "${words[@]}"
     else
-        if _can_ask; then
+        if [[ "${UI:-text}" == dialog ]] && _can_ask; then   # the blue dialog boxes of runner-ui.sh
+            local items=() state=OFF
+            (( n == 1 )) && state=ON
+            for (( i = 0; i < n; i++ )); do items+=("$((i + 1))" "$(gpu_label "$i")" "$state"); done
+            ans="$(wt --title "$UI_TITLE" --checklist "Which graphics cards go into the container?"$'\n'"Space marks a card. Nothing marked: the CPU only." 18 76 8 "${items[@]}")" || exit 1
+            read -ra words <<<"${ans//[,\"]/ }"
+            if (( ${#words[@]} )); then _pick_tokens "${words[@]}"; else SEL=(); fi
+        elif _can_ask; then
             (( n == 1 )) && def="1"
             while :; do
                 [[ -n "$err" ]] && echo "  not accepted: $err"
@@ -184,18 +191,25 @@ choose_backend() {
         echo "Software: $BACKEND (from --backend)"
     else
         local tag_v="$TAG_V" tag_c="$TAG_C" tag_r="$TAG_R" note_c="$NOTE_C" note_r="$NOTE_R"
-        echo "Software llama.cpp runs on, for the cards you picked (this decides the token speed):"
-        echo "  1) Vulkan ($tag_v)   works on AMD, Intel and NVIDIA"
-        echo "  2) CUDA$tag_c   $note_c"
-        echo "  3) ROCm$tag_r   $note_r"
         local ans=""
-        if _can_ask; then
-            _ask "Enter 1, 2 or 3 [1]: " || REPLY=""
-            ans="$REPLY"
+        if [[ "${UI:-text}" == dialog ]] && _can_ask; then   # the blue dialog boxes of runner-ui.sh
+            BACKEND="$(wt --title "$UI_TITLE" --default-item vulkan --menu "Software llama.cpp runs on, for the cards you picked. This decides the token speed. Vulkan works on AMD, Intel and NVIDIA.
+CUDA: $note_c
+ROCm: $note_r" 20 76 3 \
+                vulkan "Vulkan ($tag_v)" cuda "CUDA$tag_c" rocm "ROCm$tag_r")" || exit 1
         else
-            echo "Not asking (no terminal, or --yes): using Vulkan. Pass --backend cuda or --backend rocm to change it."
+            echo "Software llama.cpp runs on, for the cards you picked (this decides the token speed):"
+            echo "  1) Vulkan ($tag_v)   works on AMD, Intel and NVIDIA"
+            echo "  2) CUDA$tag_c   $note_c"
+            echo "  3) ROCm$tag_r   $note_r"
+            if _can_ask; then
+                _ask "Enter 1, 2 or 3 [1]: " || REPLY=""
+                ans="$REPLY"
+            else
+                echo "Not asking (no terminal, or --yes): using Vulkan. Pass --backend cuda or --backend rocm to change it."
+            fi
+            case "${ans:-1}" in 2|cuda|CUDA) BACKEND=cuda ;; 3|rocm|ROCm|ROCM) BACKEND=rocm ;; *) BACKEND=vulkan ;; esac
         fi
-        case "${ans:-1}" in 2|cuda|CUDA) BACKEND=cuda ;; 3|rocm|ROCm|ROCM) BACKEND=rocm ;; *) BACKEND=vulkan ;; esac
     fi
     case "$BACKEND" in
         cuda) [[ -z "$cmiss" ]] || _warn_missing CUDA "$cmiss" ;;

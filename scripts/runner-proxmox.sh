@@ -3,7 +3,8 @@
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Brooklyn377/Memory-Vault/main/scripts/runner-proxmox.sh)"
 # It creates a Debian 12 LXC, passes the GPUs you pick (none, one or several) into it, builds llama.cpp inside, installs the
 # model runner there as a service, and prints the server address, API key and runner token for Settings > Servers.
-# Anything not given as an option is asked. The disk, memory and cores have no defaults: they are always asked.
+# Anything not given as an option is asked, in the same blue dialog boxes as install.sh (--plain: plain text lines).
+# The disk, memory and cores have no defaults: they are always asked.
 # Options go after the command: bash -c "$(curl ...)" _ --disk 200 --memory 16384 --cores 8
 set -euo pipefail
 
@@ -11,7 +12,7 @@ REPO="${MA_REPO:-Brooklyn377/Memory-Vault}"   # GitHub owner/name the runner is 
 REF="${MA_REF:-main}"                        # branch or tag
 CTID=""; HOSTNAME_=""; STORAGE=""; TSTORAGE="local"; DISK=""; CORES=""; MEMORY=""
 BRIDGE=""; IP=""; GW=""; DNS=""; GPUS=""; MODELS="/opt/models"; LLAMA_PORT=8080; RUNNER_PORT=8090; BACKEND=""; ENGINE=""
-LLAMA_REF=""; UPDATE=""; YES=0; DRY=0
+LLAMA_REF=""; UPDATE=""; YES=0; DRY=0; PLAIN=0
 
 usage() {
     cat <<EOF
@@ -48,11 +49,13 @@ Other
   --repo OWNER/NAME     where the runner is downloaded from (default: $REPO)
   --ref REF             branch or tag (default: $REF)
   --yes                 take the defaults instead of asking (not for disk, memory and cores)
+  --plain               ask in plain text lines instead of dialog boxes
   --dry-run             print what would be done, change nothing
 EOF
 }
 
-die() { echo "error: $*" >&2; exit 1; }
+# die also puts the terminal's own colors back if the blue dialog screen is showing (restore_screen is in runner-ui.sh)
+die() { if declare -F restore_screen >/dev/null; then restore_screen; fi; echo "error: $*" >&2; exit 1; }
 say() { printf '\n== %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 run() { if (( DRY )); then echo "+ $(printf '%q ' "$@")"; else "$@"; fi; }
@@ -80,6 +83,7 @@ while (( $# )); do
         --repo) REPO="$2"; shift ;;
         --ref) REF="$2"; shift ;;
         --yes) YES=1 ;;
+        --plain) PLAIN=1 ;;
         --dry-run) DRY=1 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option $1" ;;
@@ -93,32 +97,17 @@ done
 have curl || die "curl is needed"
 (( DRY )) || have pct || die "pct not found: this must run on a Proxmox VE host"
 
-# the graphics-card scan and the choice of software (scripts/runner-gpu.sh, next to this script or from the repository)
-HERE="$(dirname "${BASH_SOURCE[0]:-.}")"
-if [[ -f "$HERE/runner-gpu.sh" ]]; then source "$HERE/runner-gpu.sh"
-else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/runner-gpu.sh") || die "could not download the graphics-card scan"; fi
+# a folder for temporary files; the exit trap also puts the terminal's colors back and says so when the boxes were canceled
+WORK="$(mktemp -d)"
+trap 'restore_screen; [[ -e "$WORK/cancelled" ]] && echo "canceled; nothing was changed" >&2; rm -rf "$WORK"' EXIT
 
-# ask VAR "question" "default": keeps a value that was given; else asks (a blank answer takes the default), or takes the
-# default with --yes. Questions are read from the terminal, so this also works when the script is piped from curl.
-ask() {
-    local var="$1" q="$2" def="${3:-}" ans
-    [[ -n "${!var}" ]] && return 0
-    if (( YES )) && [[ -n "$def" ]]; then printf -v "$var" '%s' "$def"; return 0; fi
-    (( YES )) && die "--yes needs a default for: $q; give it as an option"
-    [[ -r /dev/tty ]] || die "no terminal to ask on; give the options on the command line (see --help)"
-    read -r -p "$q${def:+ [$def]}: " ans </dev/tty
-    printf -v "$var" '%s' "${ans:-$def}"
-    [[ -n "${!var}" ]] || die "an answer is needed"
-}
-ask_number() {
-    local var="$1" q="$2" opt="$3"
-    if [[ -z "${!var}" ]]; then
-        (( YES )) && die "give $opt: it has no default"
-        [[ -r /dev/tty ]] || die "no terminal to ask on; give $opt"
-        read -r -p "$q: " "$var" </dev/tty
-    fi
-    [[ "${!var}" =~ ^[0-9]+$ && "${!var}" -gt 0 ]] || die "$opt must be a whole number above 0"
-}
+# the blue dialog screens and the checked questions (scripts/runner-ui.sh), the graphics-card scan and the choice of software
+# (scripts/runner-gpu.sh): each next to this script or from the repository
+HERE="$(dirname "${BASH_SOURCE[0]:-.}")"
+for part in runner-ui runner-gpu; do
+    if [[ -f "$HERE/$part.sh" ]]; then source "$HERE/$part.sh"
+    else source <(curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/scripts/$part.sh") || die "could not download $part.sh"; fi
+done
 
 # --- --update: a newer runner in an existing container --------------------------------------------------------------
 if [[ -n "$UPDATE" ]]; then
@@ -130,15 +119,28 @@ if [[ -n "$UPDATE" ]]; then
 fi
 
 # --- questions -----------------------------------------------------------------------------------------------------
+if [[ $UI == dialog ]]; then
+    # While the boxes are in use, the text lines go to a file and are shown after the last box.
+    exec 4>&1 1>"$WORK/answers.txt"
+    backdrop
+    mode="$(wt --title "$UI_TITLE" --notags --menu "Choose an option:" 14 60 2 \
+        default "Default Install" advanced "Advanced Install")" || exit 1
+    [[ "$mode" == default ]] && ASKING=0
+    backdrop "Reading the host's settings..."
+fi
+say "Container"
 next=""
 (( DRY )) && ! have pvesh || next="$(pvesh get /cluster/nextid 2>/dev/null || true)"
-ask CTID "Container ID" "${next:-100}"
-[[ "$CTID" =~ ^[0-9]+$ ]] || die "the container ID must be a number"
-if ! (( DRY )) && have pvesh && ! pvesh get /cluster/nextid --vmid "$CTID" >/dev/null 2>&1; then die "ID $CTID is already in use"; fi
-ask HOSTNAME_ "Host name" "llama-runner"
-defstore=""
-have pvesm && defstore="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active"{print $1; exit}')"
-ask STORAGE "Storage for the container disk" "${defstore:-local-lvm}"
+ask CTID "Container ID" "${next:-100}" valid_ctid
+ask HOSTNAME_ "Host name" "llama-runner" valid_hostname
+stores=()   # name, type: the active storages that hold containers
+if have pvesm; then
+    while read -r name type; do stores+=("$name" "$type"); done \
+        < <(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active"{print $1, $2}')
+fi
+defstore="local-lvm"
+(( ${#stores[@]} )) && ! one_of "${stores[@]}" local-lvm >/dev/null && defstore="${stores[0]}"
+choose STORAGE "Storage for the container disk" "$defstore" "${stores[@]}"
 
 say "Graphics cards and software"
 choose_gpus
@@ -146,13 +148,29 @@ choose_backend
 HOST_NV_DRIVER=""; CUDA_PKG=""
 [[ "$BACKEND" == cuda ]] && host_nvidia
 
-ask BRIDGE "Network bridge" "vmbr0"
-ask IP "Address (dhcp, or a fixed one such as 192.168.1.60/24)" "dhcp"
-if [[ "$IP" != dhcp ]]; then ask GW "Gateway" ""; fi
-ask DNS "DNS server (or host for this host's)" "${GW:-host}"
-ask_number DISK "Disk size in GB (the models live here)" "--disk"
-ask_number MEMORY "Memory in MB" "--memory"
-ask_number CORES "CPU cores" "--cores"
+say "Network and size"
+bridges=()   # name, description: the Linux bridges on this host
+for b in /sys/class/net/*/bridge; do [[ -d "$b" ]] && bridges+=("$(basename "$(dirname "$b")")" bridge); done
+choose BRIDGE "Network bridge" vmbr0 "${bridges[@]}"
+ask IP "Address: dhcp, or a fixed address with its prefix length, e.g. 192.168.1.60/24" dhcp valid_ip
+if [[ "$IP" != dhcp ]]; then ask GW "Gateway for $IP" "" valid_gw; fi
+ask DNS "DNS server: an address (several separated by spaces), or host for the Proxmox host's" "${GW:-host}" valid_dns
+hostmem="$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)"
+ask DISK "Disk size in GB (the models live here)" "" posint
+ask MEMORY "Memory in MB (the host has $hostmem)" "" posint
+ask CORES "CPU cores (the host has $(nproc))" "" posint
+
+if [[ $UI == dialog ]]; then
+    wt --title "$UI_TITLE" --yesno "Create the GPU server container with these settings?
+
+Container ID $CTID, host name $HOSTNAME_, storage $STORAGE
+$CORES cores, $MEMORY MB memory, $DISK GB disk
+Bridge $BRIDGE, address $IP${GW:+, gateway $GW}, DNS $DNS
+Local models on: $(gpu_summary)" 15 76 >/dev/null
+    exec 1>&4 4>&-
+    restore_screen
+    cat "$WORK/answers.txt"
+fi
 
 # --- template and container ----------------------------------------------------------------------------------------
 say "Debian 12 template"
@@ -201,8 +219,6 @@ if ! (( DRY )); then
 fi
 
 # --- inside the container: llama.cpp for the chosen software, then the runner ---------------------------------------------------
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 cat > "$WORK/inside.sh" <<'INSIDE'
 #!/usr/bin/env bash
 set -euo pipefail
