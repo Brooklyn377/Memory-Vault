@@ -182,11 +182,11 @@ if (( DRY )) && ! have pveam; then
 else
     run pveam update >/dev/null
     available="$(pveam available --section system | awk '{print $2}')"
-    TEMPLATE="$(grep "^debian-$DEBIAN-standard_" <<<"$available" | sort -V | tail -n 1)"
+    TEMPLATE="$(grep "^debian-$DEBIAN-standard_.*_amd64" <<<"$available" | sort -V | tail -n 1)"   # Proxmox 9 also lists arm64
     if [[ -z "$TEMPLATE" && "$DEBIAN" == 13 ]]; then
         echo "warning: this Proxmox does not offer Debian 13; using Debian 12, whose older Vulkan headers may not build the newest llama.cpp (try --llama-ref with an older release)" >&2
         DEBIAN=12
-        TEMPLATE="$(grep '^debian-12-standard_' <<<"$available" | sort -V | tail -n 1)"
+        TEMPLATE="$(grep '^debian-12-standard_.*_amd64' <<<"$available" | sort -V | tail -n 1)"
     fi
     [[ -n "$TEMPLATE" ]] || die "no Debian $DEBIAN template offered by pveam"
 fi
@@ -199,7 +199,7 @@ net="name=eth0,bridge=$BRIDGE,ip=$IP"
 [[ -n "$GW" ]] && net="$net,gw=$GW"
 dns=(); [[ "$DNS" != host ]] && dns=(--nameserver "$DNS")
 run pct create "$CTID" "$TSTORAGE:vztmpl/$TEMPLATE" \
-    --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 \
+    --hostname "$HOSTNAME_" --ostype debian --unprivileged 1 --features nesting=1 \
     --cores "$CORES" --memory "$MEMORY" --swap 512 --rootfs "$STORAGE:$DISK" \
     --net0 "$net" "${dns[@]}" --onboot 1 --start 1
 # the devices for the cards you picked and the software you chose, each at the next free devN
