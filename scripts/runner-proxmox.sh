@@ -279,11 +279,12 @@ if [[ ! -x "$LLAMA/build/bin/llama-server" ]]; then
         "${clone[@]}" https://github.com/ggml-org/llama.cpp "$LLAMA"
     fi
     cmake -S "$LLAMA" -B "$LLAMA/build" "${cmake_opts[@]}"
-    # one compile job per ~1.2 GB of this container's memory (at most one per core, at least one): a job that runs out of memory is
-    # killed and the build fails. A small container just builds more slowly.
+    # one compile job per ~6 GB of this container's memory (at most one per core, at least one): the biggest Vulkan shader file
+    # (mul_mm) needed more than 2.3 GB on its own, and a job that runs out of memory is killed and the build fails.
+    # A small container just builds more slowly.
     jobs="$(nproc)"
     mem_mb="$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)"
-    max_jobs=$(( mem_mb / 1200 )); (( max_jobs >= 1 )) || max_jobs=1
+    max_jobs=$(( mem_mb / 6000 )); (( max_jobs >= 1 )) || max_jobs=1
     (( jobs <= max_jobs )) || jobs="$max_jobs"
     echo "building with $jobs compile job(s) (${mem_mb} MB memory)"
     cmake --build "$LLAMA/build" --target llama-server -j "$jobs"
