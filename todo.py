@@ -10,11 +10,12 @@ from datetime import datetime
 import yaml
 
 import agent
+import shutil
 from bootstrap import clean, slug
 
 VAULT, STATE = agent.VAULT, agent.STATE
 TODO = STATE / "todo"
-
+UNDO = STATE / "todo_undo"
 
 def _path(tid):
     return TODO / f"{tid}.json"
@@ -80,8 +81,7 @@ def drop(tid):
         raise FileNotFoundError(tid)
     t["status"] = "dropped"
     _save(t)
-    write_note(t)
-
+    _stash(t)
 
 def pending():
     return [t for t in list_tasks() if any(not u["processed"] for u in t["updates"])]
@@ -91,15 +91,26 @@ def save(t):
     _save(t)
     write_note(t)
 
+def _note_path(t):
+    name = f"{slug(t['title'], 60)}-{t['id'][:6]}"
+    out = VAULT / "tasks" / f"{name}.md"
+    return out
+
+def _stash(t):
+    UNDO.mkdir(parents=True, exist_ok=True)
+    note = _note_path(t)
+    if note.exists():
+        shutil.move(note, UNDO / note.name)
 
 def write_note(t):
     """The task as a vault note, linked to the note it came from."""
-    name = f"{slug(t['title'], 60)}-{t['id'][:6]}"
+    if t["status"] == "dropped":
+        return
     fm = {"type": "task", "status": t["status"], "confidence": "medium" if t["updates"] else "low",
           "task_id": t["id"]}
     src = t["source"][:-3] if t["source"].endswith(".md") else t["source"]
     lines = [f"- {u['at'][:10]}: {clean(u['text'])}" for u in t["updates"]]
-    out = VAULT / "tasks" / f"{name}.md"
+    out = _note_path(t)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         "---\n" + yaml.safe_dump(fm, sort_keys=False) + "---\n\n"
