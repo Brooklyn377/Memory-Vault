@@ -40,7 +40,7 @@ def register(app, authed):
 
 HTML = r"""
 <style>
-.pp textarea{width:100%;min-height:170px;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box}
+.pp textarea{width:100%;height:50vh;min-height:120px;resize:vertical;overflow-y:auto;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box}
 .pp details.pi{border-top:1px solid var(--line);padding:8px 0}
 .pp summary{cursor:pointer}
 .pp pre{white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}
@@ -50,12 +50,14 @@ HTML = r"""
 <script>
 (function(){
 const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
-const NODES={},OPEN={};
+const NODES={},OPEN={},TALL={};   // TALL: the height you dragged each box to, kept until the page is reloaded
 let D=[];
 function when(t){return new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}
 async function call(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(function(){return{}});return{ok:r.ok,detail:j.detail||""}}
 function item(p){
  const ta=h("textarea",{});ta.value=p.text;
+ if(TALL[p.id])ta.style.height=TALL[p.id];
+ if(window.ResizeObserver)new ResizeObserver(function(){if(ta.style.height)TALL[p.id]=ta.style.height}).observe(ta);
  const msg=h("div",{class:"mut"}),skip=h("input",{type:"checkbox"});
  const dflt=h("pre",{class:"mut"},p.default||"(the default could not be read from the code)");dflt.style.display="none";
  const hist=h("div",{});hist.style.display="none";

@@ -328,13 +328,21 @@ TOOLS = {"search": do_search,
 
 def run(name, args):
     """Run one tool. Always returns text for the model: a result, or what went wrong. Never a secret."""
-    fn = TOOLS.get(str(name))
-    if fn is None:
-        return f"There is no tool called {name}. Tools: " + ", ".join(TOOLS)
+    return run_call(name, args)[0]
+
+
+def run_call(name, args):
+    """Run one tool. -> (text for the model, whether it failed). Failed means the tool does not exist, it raised an error, or
+    it refused the call; a look-up that finds nothing has not failed. The text never holds a secret."""
+    fn, failed = TOOLS.get(str(name)), True
     try:
-        text = fn(args if isinstance(args, dict) else {})
+        if fn is None:
+            text = f"There is no tool called {name}. Tools: " + ", ".join(TOOLS)
+        else:
+            text = fn(args if isinstance(args, dict) else {})
+            failed = False
     except (ValueError, OSError) as e:
-        text = f"{name} failed: {e}"
+        text = str(e) if getattr(e, "plain", False) else f"{name} failed: {e}"   # a refusal says it in its own words
     except Exception as e:   # anything else a tool hits: the model is told what, and tries again, instead of the answer failing
         text = f"{name} failed ({type(e).__name__}): {e}"
     text = chat_text(str(text))
@@ -343,4 +351,4 @@ def run(name, args):
         agent.log(f"assistant: {name} {said} -> {' '.join(text.split())[:140]}")
     except Exception:
         pass
-    return text
+    return text, failed

@@ -23,7 +23,7 @@ NOT_SAME = STATE / "not_same.json"
 MERGES = STATE / "merges.yaml"
 MAX_OPEN = __import__("tuning").get("questions.max_open")
 # Cards for failures and results waiting for you: always asked, whatever the Ask queue size limit.
-KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "notedone", "jobmerge", "memory")
+KEEP = ("filecheck", "curatecheck", "reviewstuck", "assistant", "gitpull", "serverfail", "job", "notedone", "memory")
 
 
 def _path(qid):
@@ -31,7 +31,10 @@ def _path(qid):
 
 
 def _load(p):
-    return json.loads(p.read_text())
+    q = json.loads(p.read_text())
+    if q.get("kind") == "jobmerge":   # a card from before Merge was removed: now a notice with OK, nothing is merged
+        q.update(kind="assistant", why="Nothing changed in the repository. Ask for a new draft.", options=[{"label": "OK", "value": "ok"}])
+    return q
 
 
 def ask(question, why="", kind="free", options=None, payload=None):
@@ -134,11 +137,6 @@ def answer(qid, text):
             except ValueError:   # already sent again from the Chat page, or removed
                 pass
         # otherwise it is a notice about a job (a change that could not be committed, a job that failed): OK only closes it
-    elif q["kind"] == "jobmerge":   # the file moved on since the draft: Merge puts the draft's changes into it and asks again
-        if text != "merge":
-            raise ValueError("unknown answer")
-        import jobs
-        jobs.merge(q["payload"]["job"])
     elif q["kind"] == "memory":   # the chat memory could not be compressed: Try again lets the next idle time run it
         if text != "retry":
             raise ValueError("unknown answer")

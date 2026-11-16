@@ -205,14 +205,20 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
 - **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file and it makes
   the change itself (it is your quick helper for lookups, config changes and file edits; the Reviewer is much slower
   and is only for long work, or whole new documents). It replaces exact text it copied from the file, or adds to the
-  end, or creates a file: one file per change. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
+  end, or creates a file: one file per change. A file has one change waiting at a time: while one waits on your Ask page
+  (the Assistant's, or a Reviewer draft), another edit of that file is refused until you approve or reject it. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
   the diff line by line. On a Git server marked **read and write**, **Approve and commit** commits exactly that
   change to that one file and pushes it (as the bot named in `config.yaml`), using the Assistant's token for that
   server (or another model's, if it has none). If the file changed in the repository after the draft was written,
-  nothing is committed and you are asked to request a new draft. On a **read only** server nothing is queued or asked: the Assistant
+  nothing is committed and nothing is merged: a card says so, and you ask for a new draft. On a **read only** server nothing is queued or asked: the Assistant
   shows you the change in its answer, for you to apply, and says to set the server to read and write if you want it
   pushed. Under its answer, the notes it used show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's history, so it can be
   reverted.
+- **Its replies are JSON and nothing else:** a reply is one answer, or one or more tool calls (one after another, or a
+  list). A reply with anything outside the JSON (a sentence before a tool call, a code fence, plain text) is not used and
+  not shown: it is sent back to the Assistant with the reason, as often as it takes, and the log records each time.
+  Several tool calls in one reply all run, in order; if one fails, the ones after it are not run and the Assistant is
+  told which. Reasoning inside `<think>` tags is allowed.
 - **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses
