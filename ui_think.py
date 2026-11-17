@@ -253,15 +253,18 @@ def register(app, authed):
 
 THINK_HTML = r"""
 <style>
+/* Flat: no boxes. A line divides the log from the controls under it, and a wide window is used. */
+@media (min-width:1000px){body.thinkpage main{max-width:1400px;padding:12px 32px}}
 .tk{display:flex;flex-direction:column;padding:10px 12px;gap:10px}
-.chat{flex:none;height:60vh;overflow-y:auto;overflow-anchor:none;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+.chat{flex:none;height:60vh;overflow-y:auto;overflow-anchor:none;border-bottom:1px solid var(--line);padding:0 0 10px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
 .chat .more{color:var(--mut);text-align:center;font-size:12px;padding:2px 0 8px}
 .blk{border-left:3px solid var(--c);padding:2px 0 2px 10px;margin:0 0 14px}
 .bh{font:700 12px sans-serif;color:var(--c);margin-bottom:3px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .ba{font:12px sans-serif;color:var(--mut);margin:0 0 4px;white-space:pre-wrap;word-break:break-word}
 .bb{white-space:pre-wrap;word-break:break-word}
 .bb .r{color:var(--mut);font-style:italic}
-.bot{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:8px 10px}
+.bot{padding:4px 0}
+.bot.mem{margin:0 12px 16px;padding-top:10px;border-top:1px solid var(--line)}
 #cv{width:100%;height:100px;display:block}
 .mrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin-top:6px}
 .mrow i{width:10px;height:10px;border-radius:5px;display:inline-block}
@@ -283,9 +286,10 @@ THINK_HTML = r"""
     <div class="tot" id="tot"></div>
   </div>
 </div>
-<div class="bot" style="margin:0 12px 16px"><div id="mem"></div></div>
+<div class="bot mem"><div id="mem"></div></div>
 <script>
 (function(){
+document.body.classList.add("thinkpage");
 const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"},pa:{name:"Assistant",color:"#e879f9"}};
 const IDS=Object.keys(M);
 const LABELS=__LABELS__;
