@@ -1010,13 +1010,19 @@ CHAT_HTML = r"""
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100% - 24px,736px);z-index:6;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
-/* A wide window: the list of chats stays on screen down the left, and the thread and message box use a wider column beside it */
+/* A wide window: the list of chats stays on screen down the left (drag its edge to resize it), and the thread and message
+   box fill the rest. A message reaches two thirds of the way across from its own side; a reply has no bubble. */
+#cgrip{display:none}
 @media (min-width:1100px){
- body.chatpage #dchat{transform:none;visibility:visible;transition:none;width:300px;z-index:20}
+ body.chatpage{--cw:300px}
+ body.chatpage #dchat{transform:none;visibility:visible;transition:none;width:var(--cw);z-index:20}
  body.chatpage #dback{display:none}
- body.chatpage main{max-width:none;margin:0 0 0 300px;padding:12px 24px}
- body.chatpage #thread{max-width:900px;margin:0 auto}
- body.chatpage #cbox{left:calc(300px + (100% - 300px) / 2);width:min(100% - 348px,900px)}
+ body.chatpage main{max-width:none;margin:0 0 0 var(--cw);padding:12px 24px}
+ body.chatpage #cbox{left:calc(var(--cw) + 24px);right:24px;width:auto;transform:none}
+ body.chatpage .me{max-width:66%}
+ body.chatpage .bot:not(.ask){max-width:66%;background:none;border:0;border-radius:0;padding:0}
+ #cgrip{display:block;position:fixed;top:52px;bottom:0;left:calc(var(--cw) - 3px);width:7px;cursor:col-resize;z-index:21;touch-action:none}
+ #cgrip:hover,#cgrip.on{background:var(--acc);opacity:.5}
 }
 #cstop{font:inherit;color:#f87171;background:none;border:0;padding:0;margin:0;cursor:pointer}#cstop[hidden]{display:none}
 #cs svg{width:18px;height:18px;background:none;border-radius:0}
@@ -1055,7 +1061,7 @@ let waiting=false;   // a sandbox command, in any chat, is waiting for your answ
 function clock(since){const s=Math.max(0,Math.floor(Date.now()/1000-since));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 setInterval(function(){document.querySelectorAll("[data-since]").forEach(function(e){e.textContent=clock(Number(e.dataset.since))})},1000);
 function approvalBox(m){const a=m.approval;
- return h("div",{class:"msg"},h("div",{class:"bot"},
+ return h("div",{class:"msg"},h("div",{class:"bot ask"},
   h("div",{},"The Assistant wants to run a command that uses the internet."),
   h("div",{},"Git server: "+a.server),h("div",{},"Command: "+a.command),
   h("div",{},"Hosts: "+a.hosts.map(function(x){return x.host+(x.where?" ("+x.where+")":"")}).join(", ")),
@@ -1187,6 +1193,13 @@ document.body.classList.add("chatpage");
 const wide=window.matchMedia("(min-width:1100px)");
 function sideChats(){if(wide.matches&&window.fillChats)window.fillChats(true)}
 wide.addEventListener("change",sideChats);addEventListener("hashchange",sideChats);
+// Drag the right edge of the list to make it wider or narrower (from 200px to half the window). Not remembered: it is 300px again when the page opens.
+const grip=h("div",{id:"cgrip",title:"Drag to resize the list of chats"});document.body.append(grip);
+grip.addEventListener("pointerdown",function(e){e.preventDefault();grip.setPointerCapture(e.pointerId);grip.classList.add("on")});
+grip.addEventListener("pointermove",function(e){if(!grip.classList.contains("on"))return;
+ document.body.style.setProperty("--cw",Math.round(Math.min(Math.max(e.clientX,200),window.innerWidth/2))+"px");lift()});
+function drop(e){grip.classList.remove("on");try{grip.releasePointerCapture(e.pointerId)}catch(x){}}
+grip.addEventListener("pointerup",drop);grip.addEventListener("pointercancel",drop);
 pick().then(load).then(sideChats);
 </script>
 """
