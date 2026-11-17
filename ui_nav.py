@@ -59,7 +59,6 @@ textarea{resize:none;overflow-y:auto}
 </div>
 <div id="dwr">
  <a href="/">Home</a>
- <a href="/#up">Upload</a>
  <a href="/queue">Queue</a>
  <a href="/history">History</a>
  <a href="/chat">Chat</a>

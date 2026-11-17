@@ -161,72 +161,118 @@ def activity(request: Request):
                      if not p.name.endswith(".part")) if INBOX.exists() else []
     return {"log": lines[::-1], "pending": pending}
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8">
+# Home: a dashboard. What each model is doing, what is waiting for you, upload, and the latest activity. The same
+# sections on every screen: side by side across a wide window, one under the other on a phone.
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
-<title>Memory Agent</title>
+<title>Memory vault</title>
 __THEME_JS__
 <style>
 __THEME_CSS__
-body{margin:0;font-family:system-ui;background:var(--bg);color:var(--ink);padding:16px 16px 80px}
-button,label.btn{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:14px;
- font-size:16px;display:block;text-align:center;width:100%;box-sizing:border-box}
-textarea,input[type=password],input[type=text]{width:100%;box-sizing:border-box;background:var(--card);
- color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:16px;margin-bottom:10px}
-nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line)}
-nav button{border-radius:0;background:var(--card);color:var(--ink);flex:1}nav button.on{background:var(--acc);color:#fff}
-.tab{display:none}.tab.on{display:block}
-.idx a{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;color:inherit;text-decoration:none}
-.idx b{display:block;font-size:17px}.idx span{color:var(--mut);font-size:14px}
-pre{white-space:pre-wrap;font-size:13px;color:var(--mut)}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--ink);padding:16px 16px 40px}
+main{max-width:1500px;margin:0 auto}
+h1{font-size:26px;margin:4px 0 16px}
+h2{font-size:14px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+section{margin:0 0 26px;scroll-margin-top:68px;min-width:0}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.tile{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;color:inherit;text-decoration:none;min-width:0;overflow-wrap:anywhere}
+.tile b{font-size:17px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}
+.chip{font-size:12px;font-weight:600;padding:2px 10px;border-radius:10px;background:var(--line);color:var(--mut);margin-left:8px;white-space:nowrap}
+.chip.on{background:var(--acc);color:#fff}
+.mut{color:var(--mut);font-size:14px}
+.now{margin-top:8px}
+.big{font-size:22px;font-weight:700;margin-top:4px}
+.cols{display:grid;gap:0 26px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:1000px){.cols{grid-template-columns:minmax(300px,1fr) minmax(0,2fr)}}
+#drop{border:2px dashed var(--line);border-radius:12px;padding:20px;text-align:center}
+#drop.over{border-color:var(--acc);background:var(--card)}
+label.btn{display:inline-block;background:var(--acc);color:#fff;border-radius:10px;padding:10px 18px;margin:12px 0 4px;cursor:pointer}
+#log{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--mut);margin:0 0 8px}
+.links a,a.more{color:var(--acc);text-decoration:none}
+.links a{display:inline-block;margin-right:16px;padding:4px 0;white-space:nowrap}
+a.more{font-size:14px}
 </style></head><body>
-<div id="hm" class="tab on"><h3>Memory vault</h3>
-<div class="idx">
-<a href="#up"><b>Upload</b><span>Add a chat export</span></a>
-<a href="/queue"><b>Queue</b><span>What each model is doing and what is next</span></a>
-<a href="/history"><b>History</b><span>Everything the models have done</span></a>
-<a href="/chat"><b>Chat</b><span>Ask about the lab or correct a note</span></a>
-<a href="/map"><b>Map</b><span>Every note as a dot</span></a>
-<a href="/graph"><b>List</b><span>Browse and search notes</span></a>
-<a href="/ask"><b>Ask</b><span id="hq">Questions for you</span></a>
-<a href="/todo"><b>To-do</b><span id="ht">Unfinished tasks</span></a>
-<a href="/think"><b>Thinking</b><span>Live model thinking and speed</span></a>
-</div></div>
-<div id="up" class="tab"><h3>Upload export</h3>
+__DRAWER__
+<main>
+<h1>Home</h1>
+<section><h2>Models</h2><div class="grid" id="models"></div></section>
+<section><h2>Waiting for you</h2><div class="grid">
+<a class="tile" href="/ask"><b>Ask</b><div class="big" id="hq">...</div></a>
+<a class="tile" href="/todo"><b>To-do</b><div class="big" id="ht">...</div></a>
+<a class="tile" href="/queue"><b>Failed</b><div class="big" id="hf">...</div></a>
+</div></section>
+<div class="cols">
+<section id="up"><h2>Upload</h2>
+<div id="drop"><b>Add a chat export</b>
+<div class="mut">Drop a .zip or .json file here, or choose one.</div>
 <label class="btn" for="f">Choose file</label>
 <input type="file" id="f" accept=".zip,.json" hidden>
-<p id="upmsg"></p></div>
-<div id="ac" class="tab"><h3>Activity</h3><pre id="log"></pre></div>
-__DRAWER__
+<div id="upmsg" class="mut"></div><div id="pend" class="mut"></div></div></section>
+<section><h2>Latest activity</h2><pre id="log"></pre><a class="more" href="/history">All activity in History</a></section>
+</div>
+<section><h2>Pages</h2><div class="links">
+<a href="/queue">Queue</a><a href="/history">History</a><a href="/chat">Chat</a><a href="/map">Map</a><a href="/graph">List</a>
+<a href="/ask">Ask</a><a href="/todo">To-do</a><a href="/think">Thinking</a><a href="/settings">Settings</a>
+</div></section>
+</main>
 <script>
 const $=i=>document.getElementById(i);
+const NL=String.fromCharCode(10);
 function showLogin(){location="/login?next="+encodeURIComponent(location.pathname+location.hash);}
 async function api(url,opts){
  const r=await fetch(url,opts);
  if(r.status==401)showLogin();
  return r;}
-document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
- document.querySelectorAll(".tab,nav button").forEach(e=>e.classList.remove("on"));
- b.classList.add("on");$(b.dataset.t).classList.add("on");
- if(b.dataset.t=="ac")load();});
-$("f").onchange=async()=>{
- const fd=new FormData();fd.append("file",$("f").files[0]);
- $("upmsg").textContent="Uploading...";
- const r=await api("/api/upload",{method:"POST",body:fd});
- $("upmsg").textContent=r.ok?"Saved: "+(await r.json()).saved:"Failed: "+r.status;};
-async function load(){
- const r=await api("/api/activity");
- if(!r.ok){$("log").textContent="Failed: "+r.status;return;}
- const d=await r.json();
- $("log").textContent="Pending: "+(d.pending.join(", ")||"none")+"\\n\\n"+d.log.join("\\n");}
-function tab(id){if(!["hm","up","ac"].includes(id))id="hm";
- document.querySelectorAll(".tab").forEach(e=>e.classList.remove("on"));
- $(id).classList.add("on");if(id=="ac")load();}
-addEventListener("hashchange",()=>tab(location.hash.slice(1)));
-tab(location.hash.slice(1));
-async function idx(){
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+// What each model is doing: the same words as the Queue page, which a tile opens
+const M=[["sweeper","Sweeper","#4c9aff"],["reviewer","Reviewer","#f5a623"],["curator","Curator","#34d399"],["assistant","Assistant","#e879f9"]];
+function dur(s){s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+"h "+m+"m":m?m+"m "+(s%60)+"s":s+"s"}
+let Q=null;
+function models(){
+ if(!Q)return;
+ $("models").replaceChildren(...M.map(function(a){
+  const n=(Q.now||{})[a[0]]||{},x=(Q.next||{})[a[0]]||{},t=el("a","tile"),head=el("div"),dot=el("i","dot");
+  t.href="/queue";dot.style.background=a[2];
+  head.append(dot,el("b",null,a[1]),el("span","chip"+(n.state==="working"?" on":""),n.state||""));
+  t.append(head);
+  const calls=n.calls||[],now=el("div","now");
+  if(!calls.length)now.append(el("div","mut",n.state==="idle"?"Nothing running right now.":"Not running."));
+  calls.forEach(function(c){now.append(el("div",null,c.job+(c.what?": "+c.what:"")));
+   if(c.since)now.append(el("div","mut","running for "+dur(Date.now()/1000-c.since)))});
+  t.append(now,el("div","mut","Up next: "+(x.total!=null?x.total:(x.items||[]).length)));
+  return t}))}
+async function queue(){try{const r=await api("/api/queue");if(r.ok){Q=await r.json();models()}}catch(e){}}
+async function counts(){
  for(const [u,i] of [["/api/questions/count","hq"],["/api/todo/count","ht"]]){
-  try{const r=await fetch(u);if(r.ok){const n=(await r.json()).open;$(i).textContent=n?n+" open":"Nothing open"}}catch(e){}}}
-idx();
+  try{const r=await fetch(u);if(r.ok){const n=(await r.json()).open;$(i).textContent=n?n+" open":"Nothing open"}}catch(e){}}
+ try{const r=await fetch("/api/failed");if(r.ok){const n=((await r.json()).items||[]).length;$("hf").textContent=n?n+" waiting":"Nothing failed"}}catch(e){}}
+async function activity(){
+ try{const r=await api("/api/activity");
+  if(!r.ok){$("log").textContent="Failed: "+r.status;return}
+  const d=await r.json();
+  $("log").textContent=d.log.slice(0,15).join(NL)||"Nothing yet.";
+  $("pend").textContent=d.pending.length?"Waiting to be read: "+d.pending.join(", "):""}catch(e){}}
+// Upload: choose a file, or drop one on the box
+async function send(file){
+ if(!file)return;
+ const fd=new FormData();fd.append("file",file);
+ $("upmsg").textContent="Uploading...";
+ try{const r=await api("/api/upload",{method:"POST",body:fd});
+  if(r.ok){$("upmsg").textContent="Saved: "+(await r.json()).saved}
+  else{let why=String(r.status);try{why=(await r.json()).detail||why}catch(e){}$("upmsg").textContent="Failed: "+why}}
+ catch(e){$("upmsg").textContent="Failed: the upload did not reach the server"}
+ $("f").value="";activity()}
+$("f").onchange=function(){send($("f").files[0])};
+const drop=$("drop");
+["dragenter","dragover"].forEach(function(n){drop.addEventListener(n,function(e){e.preventDefault();drop.classList.add("over")})});
+["dragleave","drop"].forEach(function(n){drop.addEventListener(n,function(e){e.preventDefault();drop.classList.remove("over")})});
+drop.addEventListener("drop",function(e){if(e.dataTransfer&&e.dataTransfer.files.length)send(e.dataTransfer.files[0])});
+queue();counts();activity();
+setInterval(function(){if(!document.hidden)queue()},5000);
+setInterval(function(){if(!document.hidden)models()},2000);
+setInterval(function(){if(!document.hidden){counts();activity()}},15000);
 api("/api/me");
 </script></body></html>"""
 
