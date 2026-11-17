@@ -159,16 +159,14 @@ def _review_loop():
 
 def watch():
     import threading
-    import jobs
     agent.log("reviewer worker started")
     threading.Thread(target=_review_loop, daemon=True).start()
-    jobs.interrupted("gpt")
     while True:
         if not ready():
             time.sleep(30)
             continue
         try:
-            work = one_pass() or jobs.run_one("gpt")   # the Assistant's jobs only when its own work is done
+            work = one_pass()
         except Exception as e:
             agent.log(f"reviewer: {type(e).__name__}: {str(e)[:120]}")
             work = 0
@@ -176,10 +174,7 @@ def watch():
         if work:
             time.sleep(30)
             continue
-        for _ in range(10):   # idle: up to 5 minutes, but a new job is picked up within 30 seconds
-            time.sleep(30)
-            if jobs.queued("gpt"):
-                break
+        time.sleep(300)   # idle
 
 
 if __name__ == "__main__":

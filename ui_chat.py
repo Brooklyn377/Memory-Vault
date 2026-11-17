@@ -756,8 +756,10 @@ def watch():
     import applier
     import reviewer
     agent.log("chat worker started")
+    import jobs
     import sandbox
     sandbox.clear_pending()
+    jobs.retire()   # hand-off jobs from before that was removed: marked skipped, with the reason
     for m in _all():
         if m["status"] == "working":
             m["status"] = "queued"
