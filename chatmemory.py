@@ -54,10 +54,12 @@ def request():
 
 
 def status(chat=""):
-    """The memory bar: with a chat, how much of the memory is that chat's own (all that the Assistant sees in it)."""
+    """The line above the message box, in words: the chat's summary, and all the Assistant sees of the chat (the summary
+    and the messages still kept word for word) against the size that starts a compression."""
     st = _flag()
     running = _list(st.get("running"))
-    return {"tokens": size(chat), "limit": _g("assistant.memory_tokens"),
+    return {"summary": words(render(saved(chat).get("memory") or {})) if chat else 0, "words": size(chat),
+            "limit": _g("assistant.memory_words"),
             "running": (chat in running) if chat else bool(running), "requested": bool(st.get("requested"))}
 
 
@@ -65,8 +67,8 @@ def clear_failure():
     _flag(failed_at={})
 
 
-def tokens(text):
-    return int(len(text) / max(1, _g("assistant.chars_per_token")))
+def words(text):
+    return len(str(text).split())
 
 
 # ---------- one chat's summary ----------
@@ -138,7 +140,7 @@ def _reply(m):
 
 
 def cost(m):
-    return tokens(m["summary"]) if m.get("summary") else tokens(m["text"] + _reply(m))
+    return words(m["summary"]) if m.get("summary") else words(m["text"] + _reply(m))
 
 
 def live(before=None):
@@ -164,13 +166,13 @@ def _chat_ids():
 
 
 def size(chat=""):
-    """Tokens (an estimate) of what the Assistant sees of a chat: its summary and its messages not yet in the summary."""
+    """Words in what the Assistant sees of a chat: its summary and its messages not yet in the summary."""
     import ui_chat
     msgs = sum(cost(m) for m in live() if not chat or ui_chat.chat_of(m) == chat)
     files = [_file(chat)] if chat else (sorted(DIR.glob("*.json")) if DIR.is_dir() else [])
     for f in files:
         try:
-            msgs += tokens(render(json.loads(f.read_text()).get("memory") or {}))
+            msgs += words(render(json.loads(f.read_text()).get("memory") or {}))
         except (OSError, ValueError, AttributeError):
             pass
     return msgs
@@ -281,9 +283,9 @@ def _compress(cid, busy):
     tmp = _file(cid).with_suffix(".tmp")
     tmp.write_text(json.dumps({"memory": mem, "upto": old[-1]["id"]}, indent=1, ensure_ascii=False))
     tmp.replace(_file(cid))
-    words, limit = len(render(mem).split()), _g("assistant.summary_words")
-    agent.log(f"chat memory: wrote {len(old)} message(s) of chat {cid} into its summary ({words:,} words"
-              + (f", over the {limit:,} it was asked to keep to" if words > limit else "") + ")")
+    count, limit = words(render(mem)), _g("assistant.summary_words")
+    agent.log(f"chat memory: wrote {len(old)} message(s) of chat {cid} into its summary ({count:,} words"
+              + (f", over the {limit:,} it was asked to keep to" if count > limit else "") + ")")
     return True
 
 
@@ -295,7 +297,7 @@ def run(busy):
         return
     st = _flag()
     running, failed, asked = _list(st.get("running")), _dict(st.get("failed_at")), bool(st.get("requested"))
-    limit = _g("assistant.memory_tokens")
+    limit = _g("assistant.memory_words")
     todo = []
     for cid in _chat_ids():
         if not _work(cid):
@@ -308,11 +310,11 @@ def run(busy):
             _flag(running=[], requested=False)
         return
     if todo != running or asked:
-        agent.log(f"chat memory: compressing {len(todo)} chat(s)" + (" (you asked for it)" if asked else f", over {limit:,}"))
+        agent.log(f"chat memory: compressing {len(todo)} chat(s)" + (" (you asked for it)" if asked else f", over {limit:,} words"))
     _flag(running=todo, requested=False)
     for cid in todo:
         if not _compress(cid, busy):
             return
         todo = [c for c in todo if c != cid]
         _flag(running=todo)
-        agent.log(f"chat memory: chat {cid} compressed to {size(cid):,} tokens")
+        agent.log(f"chat memory: chat {cid} compressed to {size(cid):,} words")

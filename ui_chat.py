@@ -384,38 +384,9 @@ def _ask_assistant_once(system, messages, label="chat", m=None, cancel=None):
         if not big:
             raise
         raise HitLimit(_context_text(int(big.group(1)), int(big.group(2)))) from None
-    _note_usage(body, r)
     if r.get("finish_reason") == "length":   # it stopped at a limit: not something to hand back to the model
         raise HitLimit(_limit_text(r.get("tokens") or 0, s["max_tokens"]["chat"], bool((r.get("content") or "").strip())))
     return (r.get("content") or "").strip()
-
-
-USAGE = STATE / "chat-usage.json"
-
-
-def _note_usage(body, r):
-    """Keep what the server counted for the last call, with how many characters were sent, to compare with the estimate."""
-    n = (r.get("usage") or {}).get("prompt_tokens")
-    if n:
-        text = lambda c: "".join(p.get("text", "") for p in c if p.get("type") == "text") if isinstance(c, list) else str(c or "")
-        chars = sum(len(text(x.get("content"))) for x in body["messages"])
-        try:
-            USAGE.write_text(json.dumps({"prompt_tokens": n, "chars": chars, "at": time.time()}))
-        except OSError:
-            pass
-
-
-def usage_info():
-    """The server's own count for the last call against this page's estimate, or None when switched off or no call yet."""
-    tuning = __import__("tuning")
-    if not tuning.get("assistant.show_server_tokens"):
-        return None
-    try:
-        u = json.loads(USAGE.read_text())
-    except (OSError, ValueError):
-        return {"none": True}
-    return {"tokens": u["prompt_tokens"], "estimate": int(u["chars"] / max(1, tuning.get("assistant.chars_per_token"))),
-            "per_token": round(u["chars"] / u["prompt_tokens"], 2), "context": int(settings.get("pa").get("context") or 0)}
 
 
 class HitLimit(RuntimeError):
@@ -890,8 +861,7 @@ def register(app, authed):
         if before:
             return {"messages": page, "more": len(msgs) > len(page)}
         import chatmemory
-        return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(chat), "server": usage_info(),
-                "waiting": bool(asking)}
+        return {"messages": page, "more": len(msgs) > len(page), "memory": chatmemory.status(chat), "waiting": bool(asking)}
 
     @router.get("/api/chat/list")
     def chat_chats(request: Request):
@@ -1038,6 +1008,7 @@ CHAT_HTML = r"""
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100% - 24px,736px);z-index:6;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
+#cstop{font:inherit;color:#f87171;background:none;border:0;padding:0;margin:0;cursor:pointer}#cstop[hidden]{display:none}
 #cs svg{width:18px;height:18px;background:none;border-radius:0}
 #cp{position:absolute;right:54px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center}
 #cp svg{width:18px;height:18px;background:none;border-radius:0}
@@ -1057,7 +1028,7 @@ CHAT_HTML = r"""
 <div id="thread"></div>
 <div id="vpedge" style="position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden"></div>
 <div id="cspace"></div>
-<div id="cbox"><div id="catt"></div><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"></span></div>
+<div id="cbox"><div id="catt"></div><div id="cuse" class="mut"><span id="cuseB"></span><span id="cuseA"><button type="button" id="cstop" hidden>Stop answer</button></span></div>
 <div class="cwrap"><textarea id="ct" rows="1" placeholder="Type to chat"></textarea>
 <button type="button" id="cp" title="Add an image or a file" aria-label="Add an image or a file" aria-haspopup="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
 <div id="cmenu" hidden role="menu">
@@ -1105,8 +1076,7 @@ function bubble(m){
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.status==="working"){
   if(m.approval)out.push(approvalBox(m));
-  else if(m.running)out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));
-  out.push(h("div",{class:"st"},h("button",{onclick:()=>stopAnswer(m.id)},"Stop answer")))}
+  else if(m.running)out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));}
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
   if(m.web&&m.web.length)box.append(webList(m.web));
@@ -1126,9 +1096,10 @@ let latest=[];
 function everything(){const first=latest.length?latest[0].id:"~";return older.filter(m=>m.id<first).concat(latest)}
 async function load(){try{const d=await api("/api/chat?chat="+encodeURIComponent(chatId||"new"));
  latest=d.messages;waiting=!!d.waiting;if(!older.length)more=d.more;show(everything());
- const mm=d.memory,sv=d.server;
- $("#cuseA").textContent=mm?"Memory "+mm.tokens.toLocaleString()+" / "+mm.limit.toLocaleString()+" tokens (estimate)"+(mm.running||mm.requested?" · compressing":""):"";
- $("#cuseB").textContent=!sv?"":sv.none?"Server count: no call yet":"Server: "+sv.tokens.toLocaleString()+(sv.context>0?" of "+sv.context.toLocaleString():"")+" tokens in the last call · estimate "+sv.estimate.toLocaleString()+" · "+sv.per_token+" characters per token";
+ const mm=d.memory;
+ $("#cuseB").textContent=mm?(mm.summary?"Summary "+mm.summary.toLocaleString()+" words":"No summary yet")+" · chat memory "+mm.words.toLocaleString()+" of "+mm.limit.toLocaleString()+" words"+(mm.running||mm.requested?" · compressing":""):"";
+ const busy=latest.find(function(m){return m.status==="working"});   // Stop answer: only while a message of this chat is being answered
+ $("#cstop").hidden=!busy;$("#cstop").onclick=busy?function(){stopAnswer(busy.id)}:null;
  const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
 async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
  try{const first=(older.length?older[0]:latest[0]);if(!first)return;

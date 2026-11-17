@@ -205,7 +205,7 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   copy, that copy's own virtualenv and the system's programs (read only), and nothing else, not your vault, tokens
   or the agent's code. Git commands do not work there (the copy has no `.git`). Nothing stops a command by a timer;
   while one runs, the chat shows the command and for how long.
-- **Stop answer:** while a message is being answered the chat shows **Stop answer**. It ends the answer, and any
+- **Stop answer:** while a message is being answered, **Stop answer** shows at the top right of the message box. It ends the answer, and any
   command that is running; the message is marked Stopped and has **Send again**. What the Assistant had already
   changed in the sandbox or in your notes stays.
 - **The sandbox has no internet unless you allow it:** a command can only reach hosts through the agent's own proxy.
@@ -242,19 +242,17 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   newest messages word for word. With each earlier reply it also sees what it did for that reply, one line per tool
   call (which file it viewed or changed, which command it ran and its exit code); the code writes those lines, not
   the model. Every chat is measured and compressed on its own. When one passes **Chat memory size that starts
-  compression** (30,000 tokens by default), its oldest messages are written into its summary in one call, right after
+  compression** (20,000 words by default), its oldest messages are written into its summary in one call, right after
   a reply, until only **Chats kept word for word** (6) are left. A message you send meanwhile cancels that call and is
   answered first. The summary has a fixed format that the code checks; an answer that does not fit is sent back with
   the reason. Nothing is written to the vault for this: the whole chat is already in `raw/conversations`. (Earlier
   versions kept one short summary per message and moved the oldest to `raw/chat-summaries/`; those notes stay, and a
   chat that still has such summaries takes them into its summary at its next compression.) Nothing stops a chat: the
-  size only starts the shrinking. The size is estimated from characters (**Characters per token**, 4) and the summary
-  is asked to stay under **Summary length** (1,000 words). If a summary cannot be written, an Ask card says why and
-  offers **Try again**. Above the chat box, on the right,
-  the Chat page shows the memory against that size. With **Show the server's token count above the chat** on, the left shows
-  how many tokens the Assistant's server counted in its last call, next to the estimate and the characters per token the
-  server's count implies, to tune **Characters per token**. **Compress the chat memory now**, on the Chats card under
-  Settings (Memory and compression), runs a compression as soon as no message is being answered, exactly as if the size had been passed.
+  size only starts the shrinking. The summary is asked to stay under **Summary length** (1,000 words). If a summary cannot be written, an
+  Ask card says why and offers **Try again**. Above the message box, on the left, one line shows the chat's summary
+  and its whole memory in words against that size ("Summary 640 words · chat memory 5,200 of 20,000 words").
+  **Compress the chat memory now**, on the Chats card under Settings (Memory and compression), runs a compression as
+  soon as no message is being answered, exactly as if the size had been passed.
 - **Updated files:** when a chat says a file was updated, the Sweeper looks for that file in your Git servers (read only; it needs a Sweeper token under
   Settings → Git servers), checks the commits made after the chat, and if one makes the update the chat describes and the Reviewer agrees, writes a note of
   type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up
