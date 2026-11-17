@@ -18,9 +18,9 @@ function memoryBlock(){
  const msg=h("div",{class:"mut"});
  const b=h("button",{style:"padding:4px 10px;font-size:13px"},"Compress chat memory now");
  b.onclick=async function(){
-  if(!await window.warnPop("Compress the chat memory now?",["The Assistant summarizes your older chats in its idle time, the same way as when the memory passes its size. If the memory is still too big afterwards, the oldest summaries are moved to the vault.","Your chats stay in the chat history and in raw/conversations."],"Compress now","Cancel"))return;
+  if(!await window.warnPop("Compress the chat memory now?",["The Assistant writes the older messages of each chat into that chat's summary, the same way as when the memory passes its size. It waits while a message of yours is being answered.","Your chats stay in the chat history and in raw/conversations."],"Compress now","Cancel"))return;
   b.disabled=true;msg.textContent="";
-  try{await api("/api/chat/compress",{method:"POST"});msg.textContent="Queued: it runs in the Assistant's idle time."}catch(e){msg.textContent=e.message}b.disabled=false};
+  try{await api("/api/chat/compress",{method:"POST"});msg.textContent="Queued: it runs as soon as no message is being answered."}catch(e){msg.textContent=e.message}b.disabled=false};
  return h("div",{style:"margin-top:10px"},toggle("assistant.show_server_tokens","Show the server's token count above the chat"),h("div",{style:"margin-top:6px"},b),msg)}
 function sec(title,nodes){const d=h("details",{class:"sec","data-saves":"1"},h("summary",{},title));nodes.forEach(function(n){d.append(n)});return d}
 // The limits of one group, as the rows of a section of this card (without the extra fold buildTuning gives them).
@@ -28,7 +28,7 @@ async function limits(keys,title){const d=await window.buildTuning(keys,title);r
 (async function(){
  const card=h("div",{class:"card"},h("h3",{},"Chats"));
  card.append(
-  sec("Memory and compression",[memoryBlock(),...await limits(["assistant.history","assistant.memory_tokens","assistant.memory_shrink","assistant.summary_words","assistant.chars_per_token"])]),
+  sec("Memory and compression",[memoryBlock(),...await limits(["assistant.history","assistant.memory_tokens","assistant.summary_words","assistant.chars_per_token"])]),
   sec("Notes and messages",[toggle("chat.scrub","Hide secrets in chat (tokens, keys, passwords): what you type, what the Assistant reads, and the saved chat"),...await limits(["chat.notes","chat.hop_notes","chat.linked","chat.note_chars","chat.linked_chars","chat.page_messages","chat.fix_tries"])]),
   sec("Web access",[window.webAccessNode||h("div",{class:"mut"},"Loading..."),...await limits(["web.search_results","web.timeout","web.max_mb","assistant.web_calls"])]),
   sec("Sandbox internet",[window.sandboxNode||h("div",{class:"mut"},"Loading..."),...await limits(["sandbox.output_chars"])]));

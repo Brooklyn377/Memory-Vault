@@ -237,18 +237,24 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses
   (for example one that is too big) is not repeated; that fails with the server's reason.
-- **Its memory of a chat:** with every message the Assistant sees the earlier messages of that chat only, never another chat's: the
-  newest word for word, older ones as one short summary each. Every chat is measured and compressed on its own. When one passes **Chat memory size that starts compression** (30,000 tokens by
-  default), the Assistant is asked, in its idle time, to summarize that chat's oldest messages until only **Chats kept word for word**
-  (6) are left. If the memory is then not at least **Shrink the memory by** (25%) smaller than that size, the oldest
-  summaries are moved to `raw/chat-summaries/` in the vault, one note per day, each summary linked to its chat in
-  `raw/conversations`; the Assistant can still find them by search. Nothing stops a chat: the size only starts the
-  shrinking. The size is estimated from characters (**Characters per token**, 4) and a summary is at most **Summary length**
-  (100) words. If a summary cannot be written, an Ask card says why and offers **Try again**. Above the chat box, on the right,
+- **Its memory of a chat:** with every message the Assistant sees that chat only, never another chat's: one summary of
+  everything older (the goal, what was decided, what was done, the files, what is still open, other facts), then the
+  newest messages word for word. With each earlier reply it also sees what it did for that reply, one line per tool
+  call (which file it viewed or changed, which command it ran and its exit code); the code writes those lines, not
+  the model. Every chat is measured and compressed on its own. When one passes **Chat memory size that starts
+  compression** (30,000 tokens by default), its oldest messages are written into its summary in one call, right after
+  a reply, until only **Chats kept word for word** (6) are left. A message you send meanwhile cancels that call and is
+  answered first. The summary has a fixed format that the code checks; an answer that does not fit is sent back with
+  the reason. Nothing is written to the vault for this: the whole chat is already in `raw/conversations`. (Earlier
+  versions kept one short summary per message and moved the oldest to `raw/chat-summaries/`; those notes stay, and a
+  chat that still has such summaries takes them into its summary at its next compression.) Nothing stops a chat: the
+  size only starts the shrinking. The size is estimated from characters (**Characters per token**, 4) and the summary
+  is asked to stay under **Summary length** (1,000 words). If a summary cannot be written, an Ask card says why and
+  offers **Try again**. Above the chat box, on the right,
   the Chat page shows the memory against that size. With **Show the server's token count above the chat** on, the left shows
   how many tokens the Assistant's server counted in its last call, next to the estimate and the characters per token the
   server's count implies, to tune **Characters per token**. **Compress the chat memory now**, on the Chats card under
-  Settings (Memory and compression), runs a compression in the Assistant's idle time exactly as if the size had been passed.
+  Settings (Memory and compression), runs a compression as soon as no message is being answered, exactly as if the size had been passed.
 - **Updated files:** when a chat says a file was updated, the Sweeper looks for that file in your Git servers (read only; it needs a Sweeper token under
   Settings → Git servers), checks the commits made after the chat, and if one makes the update the chat describes and the Reviewer agrees, writes a note of
   type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up

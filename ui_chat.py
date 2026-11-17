@@ -212,6 +212,8 @@ def delete_chat(cid):
         raise ValueError("there is no such chat")
     for m in mine:
         remove(m["id"])
+    import chatmemory
+    chatmemory.forget(cid)
     _set_meta(cid, title="", archived=False)
     return len(mine)
 
@@ -326,8 +328,9 @@ def _transient(e):
     return bool(code and (code.group(1)[0] == "5" or code.group(1) == "429"))
 
 
-def _ask_assistant(system, messages, label="chat", m=None):
-    """One call to the Assistant. When its server drops the connection, is unreachable or answers with a server error,
+def _ask_assistant(system, messages, label="chat", m=None, cancel=None):
+    """One call to the Assistant. cancel() true ends it (thinklog.Aborted): the chat memory uses it so a message of yours is
+    never kept waiting by a compression. When its server drops the connection, is unreachable or answers with a server error,
     it tries again after a pause that grows to a minute, as long as its switch is on: a long answer is not thrown away,
     and what is happening is shown under the message."""
     import power
@@ -335,7 +338,7 @@ def _ask_assistant(system, messages, label="chat", m=None):
     tries = 0
     while True:
         try:
-            return _ask_assistant_once(system, messages, label, m)
+            return _ask_assistant_once(system, messages, label, m, cancel)
         except thinklog.Aborted:
             if m is not None and stopped(m):
                 raise Stopped() from None
@@ -354,7 +357,7 @@ def _ask_assistant(system, messages, label="chat", m=None):
                 m["note"] = f"The Assistant's server did not answer ({type(e).__name__}). Trying again in {wait}s (try {tries + 1}); it keeps trying."
                 _save(m)
             for _ in range(wait):   # a second at a time, so Stop answer does not wait out the pause
-                if m is not None and halted(m):
+                if (m is not None and halted(m)) or (cancel and cancel()):
                     break
                 time.sleep(1)
             if m is not None and m.get("note"):
@@ -362,7 +365,7 @@ def _ask_assistant(system, messages, label="chat", m=None):
                 _save(m)
 
 
-def _ask_assistant_once(system, messages, label="chat", m=None):
+def _ask_assistant_once(system, messages, label="chat", m=None, cancel=None):
     import applier
     import thinklog
     import ui_settings
@@ -375,7 +378,7 @@ def _ask_assistant_once(system, messages, label="chat", m=None):
     elif caps["reasoning_effort"]:
         body["chat_template_kwargs"] = {"reasoning_effort": s.get("reasoning_effort", "low")}
     try:
-        r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label, cancel=(lambda: halted(m)) if m else None)
+        r = thinklog.chat("pa", f"http://127.0.0.1:{applier.PORT['pa']}/v1", body, label, cancel=cancel or ((lambda: halted(m)) if m else None))
     except RuntimeError as e:   # the server refused a request bigger than its context window: say which limit and what to change
         big = re.search(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", str(e))
         if not big:
@@ -593,6 +596,27 @@ def _check(m):
         raise Cancelled()
 
 
+def _did(name, args, result, failed):
+    """One line for the record of what the Assistant did for a reply: the tool and its main argument, a command's exit
+    code, and for a call that failed the start of the reason. Made here, never by the model."""
+    def short(v, n=120):
+        v = " ".join(str(v).split())
+        return v if len(v) <= n else v[:n] + "..."
+    if name == "run":
+        code = re.match(r"EXIT CODE (-?\d+)", str(result))
+        line = f'run "{short(args.get("command", ""))}"' + (f" (exit {code.group(1)})" if code else "")
+    elif name in ("rename", "move_note"):
+        line = f'{name} {short(args.get("from", ""))} -> {short(args.get("to", ""))}'
+    elif name == "propose":
+        paths = args.get("paths") or args.get("path") or []
+        line = "propose " + short(", ".join([paths] if isinstance(paths, str) else [str(p) for p in paths]))
+    else:
+        key = next((k for k in ("path", "repo", "url", "query", "text", "id") if args.get(k)), None)
+        quoted = key in ("query", "text") and name in ("search", "web_search")
+        line = name + ("" if key is None else f' "{short(args[key])}"' if quoted else f" {short(args[key])}")
+    return chat_text(line + (f" (failed: {short(result, 80)})" if failed else ""))
+
+
 def _show_running(m, what):
     """A sandbox command started (what: its Git server, the command and when) or ended (None): the chat page shows it."""
     if what:
@@ -614,7 +638,7 @@ def assistant_answer(m):
         text += "\n\n" + extra
     content = [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": u}} for u in images] if images else text
     msgs = earlier_turns(m) + [{"role": "user", "content": content}]
-    opened, used = [], 0
+    opened, used, m["work"] = [], 0, []   # work: what it does for this reply, kept with the message for later messages
     while True:
         _check(m)
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
@@ -639,6 +663,7 @@ def assistant_answer(m):
             if name in ("open", "view") and args.get("path"):
                 opened.append(str(args["path"]))
             result, failed = assistant_tools.run_call(name, args)
+            m["work"].append(_did(name, args, result, failed))
             _check(m)   # stopped while a tool ran (a sandbox command, or waiting for your answer on its hosts)
             results.append(f"TOOL RESULT ({name}):\n{result}" if n == 1 else f"TOOL RESULT {k} of {n} ({name}):\n{result}")
             if failed and k < n:   # the rest are not run, and the model is told exactly which
@@ -651,7 +676,7 @@ def assistant_answer(m):
 
 
 def earlier_turns(m):
-    """Your earlier chats for the Assistant: the newest word for word, older ones as summaries (see chatmemory.py)."""
+    """The earlier part of this chat for the Assistant: its summary, then the newest messages word for word (see chatmemory.py)."""
     import chatmemory
     return chatmemory.turns(m)
 

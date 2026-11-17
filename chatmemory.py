@@ -1,19 +1,28 @@
-"""The Assistant's memory of one chat. In a chat it sees that chat's earlier messages and no other chat's: the newest word
-for word, the older ones as one short summary each. When one chat's memory passes the size you set, the Assistant is asked
-in its idle time to summarize that chat's oldest messages down to the number kept word for word. If that did not shrink it
-by the percentage you set, that chat's oldest summaries are moved to the vault (raw/chat-summaries, linked to their chats)
-until it did. Every chat is measured and shrunk on its own. Nothing here ever stops a chat; the size only starts the
-shrinking."""
+"""The Assistant's memory of one chat. In a chat it sees that chat and no other: one summary of everything older (its
+goal, what was decided, what was done, the files, what is still open, other facts), then the newest messages word for
+word. With every earlier reply it also sees what it did for that reply: one line per tool call, written by the code.
+
+When a chat passes the size you set, its oldest messages are written into the summary in ONE call to the Assistant, right
+after a reply. A message you send meanwhile cancels that call and is answered first; the summary is written afterwards.
+The summary is strict JSON, checked here: an answer that does not fit is sent back with the reason, as often as it
+takes. A message of yours, or turning the Assistant off, ends that.
+
+Every chat is measured and shrunk on its own. Nothing here ever stops a chat; the size only starts the shrinking.
+Nothing is written to the vault: the whole chat is already in raw/conversations.
+
+Before this, each older message had its own short summary, and the oldest of those were moved to raw/chat-summaries.
+A chat that still has such summaries shows them as before until its next compression, which takes them in. Summaries
+already moved to the vault stay there."""
 import json
 import re
-from datetime import datetime
 
 import agent
 import tuning
-from scrub import scrub
+from scrub import chat_text
 
-SUMMARIES = agent.VAULT / "raw" / "chat-summaries"
+DIR = agent.STATE / "chat_memory"   # <chat id>.json: {"memory": the six parts, "upto": the id of the newest message it covers}
 FLAG = agent.STATE / "chat-memory.json"   # {"running": [chat ids being compressed], "requested": true, "failed_at": {chat id: size}}
+PARTS = (("goal", "Goal"), ("decisions", "Decided"), ("done", "Done"), ("files", "Files"), ("open", "Still open"), ("facts", "Also"))
 
 
 def _g(key):
@@ -60,41 +69,92 @@ def tokens(text):
     return int(len(text) / max(1, _g("assistant.chars_per_token")))
 
 
+# ---------- one chat's summary ----------
+def _file(cid):
+    return DIR / (re.sub(r"[^A-Za-z0-9._-]", "_", str(cid)) + ".json")
+
+
+def saved(cid):
+    """{"memory": {...}, "upto": message id} for a chat, or {} if it has no summary yet."""
+    try:
+        d = json.loads(_file(cid).read_text())
+        return d if isinstance(d, dict) and isinstance(d.get("memory"), dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def forget(cid):
+    """The chat was deleted: its summary goes with it."""
+    _file(cid).unlink(missing_ok=True)
+
+
+def render(mem):
+    """The summary as the Assistant reads it. A part with nothing in it is left out."""
+    out = []
+    for key, title in PARTS:
+        v = mem.get(key)
+        if key == "goal":
+            if str(v or "").strip():
+                out.append(f"Goal: {str(v).strip()}")
+        elif v:
+            out.append(f"{title}:\n" + "\n".join(f"- {x}" for x in v))
+    return "\n".join(out)
+
+
+def check(text):
+    """An answer to the summary prompt -> (the six parts, "") or (None, what is wrong with it, for the model)."""
+    s = re.sub(r"<think>.*?</think>", "", str(text), flags=re.DOTALL).strip()
+    s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s)
+    try:
+        d = json.loads(s)
+    except ValueError as e:
+        return None, f"it is not valid JSON ({e})"
+    if not isinstance(d, dict):
+        return None, "it is not a JSON object"
+    keys = [k for k, _ in PARTS]
+    for k in keys:
+        if k not in d:
+            return None, f'the key "{k}" is missing'
+    extra = [k for k in d if k not in keys]
+    if extra:
+        return None, f'the key "{extra[0]}" is not one of the six'
+    if not isinstance(d["goal"], str):
+        return None, '"goal" must be text'
+    for k in keys[1:]:
+        if not isinstance(d[k], list) or not all(isinstance(x, str) for x in d[k]):
+            return None, f'"{k}" must be a list of text'
+    return {"goal": d["goal"].strip(), **{k: [x.strip() for x in d[k] if x.strip()] for k in keys[1:]}}, ""
+
+
+# ---------- what the Assistant sees ----------
+def work_line(m):
+    """What the Assistant did for a reply, as it is shown with that reply: "" if it used no tools."""
+    w = [str(x) for x in m.get("work") or []]
+    return f"[What you did for this reply: {'; '.join(w)}]" if w else ""
+
+
+def _reply(m):
+    return m["reply"] + ("\n\n" + work_line(m) if work_line(m) else "")
+
+
 def cost(m):
-    return tokens(m["summary"]) if m.get("summary") else tokens(m["text"] + m["reply"])
+    return tokens(m["summary"]) if m.get("summary") else tokens(m["text"] + _reply(m))
 
 
 def live(before=None):
-    """The chats in the Assistant's memory, oldest first: answered, and not moved to the vault."""
+    """The messages in the Assistant's memory, oldest first: answered, not moved to the vault, and not yet written
+    into their chat's summary."""
     import ui_chat
-    return [m for m in ui_chat._all() if m["kind"] == "lookup" and m["status"] == "replied" and m.get("reply")
-            and not m.get("vaulted") and (before is None or m["id"] < before)]
-
-
-def size(chat=""):
-    import ui_chat
-    return sum(cost(m) for m in live() if not chat or ui_chat.chat_of(m) == chat)
-
-
-def _when(m):
-    i = m["id"]
-    return f"{i[:4]}-{i[4:6]}-{i[6:8]} {i[9:11]}:{i[11:13]}"
-
-
-def turns(m):
-    """The earlier messages of THIS chat as messages for the model: the summaries together first, then word for word.
-    Other chats are not shown; a new chat starts empty."""
-    import ui_chat
-    chats = [x for x in live(m["id"]) if ui_chat.chat_of(x) == ui_chat.chat_of(m)]
-    sums = [x for x in chats if x.get("summary")]
+    upto = {}
     out = []
-    if sums:
-        out += [{"role": "user", "content": "SUMMARIES OF YOUR EARLIER CHATS WITH ME, oldest first (the full chats are in raw/conversations):\n"
-                 + "\n".join(f"- {_when(x)}: {x['summary']}" for x in sums)},
-                {"role": "assistant", "content": "Understood."}]
-    for x in chats:
-        if not x.get("summary"):
-            out += [{"role": "user", "content": x["text"] + __import__("chatfiles").names(x)}, {"role": "assistant", "content": x["reply"]}]
+    for m in ui_chat._all():
+        if m["kind"] != "lookup" or m["status"] != "replied" or not m.get("reply") or m.get("vaulted"):
+            continue
+        cid = ui_chat.chat_of(m)
+        if cid not in upto:
+            upto[cid] = saved(cid).get("upto") or ""
+        if m["id"] > upto[cid] and (before is None or m["id"] < before):
+            out.append(m)
     return out
 
 
@@ -103,80 +163,133 @@ def _chat_ids():
     return list(dict.fromkeys(ui_chat.chat_of(m) for m in live()))
 
 
-def _work(chat=""):
-    """(messages to summarize, summaries) of one chat in order: everything but its newest messages kept word for word."""
+def size(chat=""):
+    """Tokens (an estimate) of what the Assistant sees of a chat: its summary and its messages not yet in the summary."""
     import ui_chat
-    chats = [x for x in live() if not chat or ui_chat.chat_of(x) == chat]
-    plain, sums = [x for x in chats if not x.get("summary")], [x for x in chats if x.get("summary")]
+    msgs = sum(cost(m) for m in live() if not chat or ui_chat.chat_of(m) == chat)
+    files = [_file(chat)] if chat else (sorted(DIR.glob("*.json")) if DIR.is_dir() else [])
+    for f in files:
+        try:
+            msgs += tokens(render(json.loads(f.read_text()).get("memory") or {}))
+        except (OSError, ValueError, AttributeError):
+            pass
+    return msgs
+
+
+def _when(m):
+    i = m["id"]
+    return f"{i[:4]}-{i[4:6]}-{i[6:8]} {i[9:11]}:{i[11:13]}"
+
+
+def turns(m):
+    """The earlier part of THIS chat as messages for the model: its summary, then the messages word for word, each reply
+    with what the Assistant did for it. Other chats are not shown; a new chat starts empty."""
+    import chatfiles
+    import ui_chat
+    cid = ui_chat.chat_of(m)
+    chats = [x for x in live(m["id"]) if ui_chat.chat_of(x) == cid]
+    out, mem = [], saved(cid).get("memory")
+    if mem and render(mem):
+        out += [{"role": "user", "content": "MEMORY OF THIS CHAT SO FAR (the messages it covers are no longer shown; the whole chat "
+                 "is in raw/conversations):\n" + render(mem)}, {"role": "assistant", "content": "Understood."}]
+    sums = [x for x in chats if x.get("summary")]   # from before a chat had one summary: shown until the next compression
+    if sums:
+        out += [{"role": "user", "content": "SUMMARIES OF YOUR EARLIER CHATS WITH ME, oldest first (the full chats are in raw/conversations):\n"
+                 + "\n".join(f"- {_when(x)}: {x['summary']}" for x in sums)},
+                {"role": "assistant", "content": "Understood."}]
+    for x in chats:
+        if not x.get("summary"):
+            out += [{"role": "user", "content": x["text"] + chatfiles.names(x)}, {"role": "assistant", "content": _reply(x)}]
+    return out
+
+
+# ---------- compression ----------
+def _work(chat):
+    """The messages of one chat to write into its summary, oldest first: everything not yet in it but the newest
+    messages kept word for word. Older per-message summaries always go."""
+    import ui_chat
+    chats = [x for x in live() if ui_chat.chat_of(x) == chat]
+    plain = [x for x in chats if not x.get("summary")]
     keep = _g("assistant.history")
-    return (plain[:-keep] if keep else plain), sums
+    kept = {x["id"] for x in plain[-keep:]} if keep else set()
+    return [x for x in chats if x["id"] not in kept]
 
 
-def _summarize(x):
-    import ui_chat
-    system = (f"Write a summary of this exchange between a person and their assistant, for the assistant's own memory, in at most "
-              f"{_g('assistant.summary_words')} words. Keep names, file paths, addresses, decisions, corrections and anything left "
-              "open. Leave out filler and the way it was said. Reply with the summary only.")
-    text = ui_chat._ask_assistant(system, [{"role": "user", "content": f"PERSON:\n{x['text']}\n\nASSISTANT:\n{x['reply']}"}], "memory")
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+def system():
+    return ("You keep the memory of one chat between a person and you, their assistant. You get THE MEMORY SO FAR (it may be "
+            "empty) and the OLDEST MESSAGES of the chat. Once you have written them into the memory you will no longer see those "
+            "messages. Each message shows what the person wrote, what you did (your tool calls) and your reply. Write the new "
+            "memory: everything in the memory so far that still matters, plus what these messages add. Keep exact names, file "
+            "paths, commands, addresses, numbers, decisions and corrections. Where the person corrected something, keep only the "
+            f"corrected version. Leave out filler and the way things were said. Use at most {_g('assistant.summary_words')} words in "
+            'all. Reply with ONLY JSON: {"goal":"<what the person is trying to get done in this chat>","decisions":["<something '
+            'decided, or a preference the person stated>"],"done":["<something finished, with the file or place>"],"files":["<path>: '
+            '<what it is, or what was changed in it>"],"open":["<something still to do, waiting for an answer, or '
+            'unanswered>"],"facts":["<anything else worth keeping>"]}. Use an empty list where there is nothing.')
 
 
-def _to_vault(x):
-    """Move one summary out of working memory into raw/chat-summaries: one note per day, each summary linked to its chat."""
-    import ui_chat
-    day = f"{x['id'][:4]}-{x['id'][4:6]}-{x['id'][6:8]}"
-    link = f"[[raw/conversations/{ui_chat.conv_name(day)[:-3]}]]"
-    summary = __import__("scrub").chat_text(x["summary"]).replace("[[", "[ [")
-    section = f"### {_when(x)} (summary of {link})\n\n{summary}\n"
-    path = SUMMARIES / f"{day}-chat-summaries.md"
-    SUMMARIES.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        text = path.read_text(encoding="utf-8").rstrip("\n") + "\n\n" + section
-    else:
-        title = f"Chat summaries, {day}"
-        text = f"---\ntype: chat-summary\ntitle: {title}\ncreated: {day}\n---\n\n# {title}\n\n{section}"
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
-    x["vaulted"] = True
-    ui_chat._save(x)
+def _material(mem, old):
+    import chatfiles
+    parts = []
+    for x in old:
+        if x.get("summary"):
+            parts.append(f"--- {_when(x)} (only a summary of this message was kept)\n{x['summary']}")
+        else:
+            did = "\n".join(str(w) for w in x.get("work") or []) or "(no tool calls)"
+            parts.append(f"--- {_when(x)}\nPERSON:\n{x['text']}{chatfiles.names(x)}\n\nWHAT YOU DID:\n{did}\n\nYOUR REPLY:\n{x['reply']}")
+    return f"THE MEMORY SO FAR:\n{render(mem) or '(empty)'}\n\nOLDEST MESSAGES:\n" + "\n\n".join(parts)
+
+
+def _fail(cid, why):
+    _flag(running=[], failed_at={**_dict(_flag().get("failed_at")), cid: size(cid)})
+    import questions
+    questions.ask(f"The Assistant could not compress the memory of a chat: {why}",
+                  why="Try again runs it at the next idle time. Until then the memory just keeps growing; no chat is stopped.",
+                  kind="memory", options=[{"label": "Try again", "value": "retry"}], payload={})
+    agent.log(f"chat memory: could not write the summary of chat {cid} ({why})")
 
 
 def _compress(cid, busy):
-    """Shrink one chat. False when it stopped before finishing (a message is waiting, the server was switched, or it failed)."""
+    """Write one chat's oldest messages into its summary, in one call. False when it stopped before finishing (a
+    message is waiting, the server was switched, or it failed)."""
+    import thinklog
     import ui_chat
-    for x in _work(cid)[0]:
+    old = _work(cid)
+    if not old:
+        return True
+    had = saved(cid)
+    msgs = [{"role": "user", "content": _material(had.get("memory") or {}, old)}]
+    while True:   # no limit on the tries: a message of yours, or turning the Assistant off, ends it
         if busy():
             return False
         try:
-            text = _summarize(x)
-            if not text:
-                raise RuntimeError("the Assistant wrote an empty summary")
+            text = ui_chat._ask_assistant(system(), msgs, "memory", cancel=busy)
+        except thinklog.Aborted:
+            return False   # a message of yours came in, or the server was switched: carry on at the next idle time
         except Exception as e:   # no retry timer: say why and wait for you
-            import thinklog
-            if isinstance(e, thinklog.Aborted):
-                return False   # the server was switched; carry on next idle time
-            why = f"{type(e).__name__}: {str(e)[:400]}"
-            _flag(running=[], failed_at={**_dict(_flag().get("failed_at")), cid: size(cid)})
-            import questions
-            questions.ask(f"The Assistant could not compress the memory of a chat: {why}",
-                          why="Try again runs it at the next idle time. Until then the memory just keeps growing; no chat is stopped.",
-                          kind="memory", options=[{"label": "Try again", "value": "retry"}], payload={})
-            agent.log(f"chat memory: could not summarize {x['id']} in chat {cid} ({why})")
+            _fail(cid, f"{type(e).__name__}: {str(e)[:400]}")
             return False
-        x["summary"] = text
-        ui_chat._save(x)
-    target = _g("assistant.memory_tokens") * (1 - _g("assistant.memory_shrink") / 100)
-    for x in _work(cid)[1]:   # not shrunk enough: this chat's oldest summaries go to the vault
-        if size(cid) <= target:
+        mem, wrong = check(text)
+        if mem is not None:
             break
-        _to_vault(x)
+        agent.log(f"chat memory: sent the summary of chat {cid} back: {wrong[:160]}")
+        msgs += [{"role": "assistant", "content": text},
+                 {"role": "user", "content": f"That is not the memory format, so it was not saved. What is wrong: {wrong}. Reply with ONLY "
+                                             "the JSON object, with all six keys: goal, decisions, done, files, open, facts."}]
+    mem = {k: (chat_text(v) if isinstance(v, str) else [chat_text(x) for x in v]) for k, v in mem.items()}
+    DIR.mkdir(parents=True, exist_ok=True)
+    tmp = _file(cid).with_suffix(".tmp")
+    tmp.write_text(json.dumps({"memory": mem, "upto": old[-1]["id"]}, indent=1, ensure_ascii=False))
+    tmp.replace(_file(cid))
+    words, limit = len(render(mem).split()), _g("assistant.summary_words")
+    agent.log(f"chat memory: wrote {len(old)} message(s) of chat {cid} into its summary ({words:,} words"
+              + (f", over the {limit:,} it was asked to keep to" if words > limit else "") + ")")
     return True
 
 
 def run(busy):
-    """Idle-time work for the chat watcher: start a compression for each chat that passed its size, and carry on one that
-    was interrupted. busy() says a chat message is waiting; then this stops and comes back when the chat is idle again."""
+    """Idle-time work for the chat watcher, right after a reply: compress each chat that passed its size, and carry on one
+    that was interrupted. busy() says a chat message is waiting; then this stops and comes back when the chat is idle again."""
     import ui_chat
     if not ui_chat.assistant_on():
         return
@@ -185,16 +298,17 @@ def run(busy):
     limit = _g("assistant.memory_tokens")
     todo = []
     for cid in _chat_ids():
-        old, sums = _work(cid)
+        if not _work(cid):
+            continue
         now = size(cid)
-        if cid in running or (asked and (old or sums)) or (now > limit and (old or sums) and failed.get(cid) != now):
+        if cid in running or asked or (now > limit and failed.get(cid) != now):
             todo.append(cid)
     if not todo:
         if asked or running:
             _flag(running=[], requested=False)
         return
     if todo != running or asked:
-        agent.log(f"chat memory: compressing {len(todo)} chat(s) in idle time" + (" (you asked for it)" if asked else f", over {limit:,}"))
+        agent.log(f"chat memory: compressing {len(todo)} chat(s)" + (" (you asked for it)" if asked else f", over {limit:,}"))
     _flag(running=todo, requested=False)
     for cid in todo:
         if not _compress(cid, busy):
