@@ -133,7 +133,7 @@ def register(app, authed):
         if not authed(request):
             return RedirectResponse("/login")
         import ui_server, ui_account, ui_curator, ui_servers, ui_prompts, power, ui_tuning, ui_git, ui_update, ui_web, ui_sandbox, ui_chats, ui_groups, ui_tagcolors
-        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_git.HTML + ui_web.HTML + ui_servers.HTML + ui_groups.HTML + ui_account.HTML + ui_tuning.HTML + ui_sandbox.HTML + ui_chats.HTML + power.HTML + ui_tagcolors.HTML + ui_update.HTML).replace("__ACTIVE__", "settings")
+        return ui_extra.PAGE.replace("__BODY__", HTML + ui_server.HTML + ui_curator.HTML + ui_prompts.HTML + ui_git.HTML + ui_web.HTML + ui_servers.HTML + ui_groups.HTML + ui_account.HTML + ui_tuning.HTML + ui_sandbox.HTML + ui_chats.HTML + power.HTML + ui_tagcolors.HTML + ui_update.HTML + LOOK).replace("__ACTIVE__", "settings")
 
     import downloads
     downloads.register(app, authed)
@@ -173,6 +173,48 @@ def register(app, authed):
     ui_tagcolors.register(app, authed)
     app.include_router(router)
 
+
+# The look of the Settings page, on top of every section's own markup: flat sections in place of boxes, an index of the
+# sections (a row at the top on a phone, a list down the left on a wide window), and the width used on a wide window.
+# Only this page: the other pages keep their cards. Pop-ups are outside <main>, so they keep their box.
+LOOK = r"""
+<style>
+body.setpage main .card{background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:16px 0 12px;margin:0;scroll-margin-top:112px}
+body.setpage main .card>h3,body.setpage main .card>details>summary{font-size:19px}
+body.setpage main button{padding:6px 12px;border-radius:8px;font-size:14px}
+#sidx{position:sticky;top:52px;z-index:4;display:flex;gap:4px;overflow-x:auto;background:var(--bg);padding:8px 0;margin:-12px 0 4px;scrollbar-width:thin}
+#sidx a{flex:none;padding:5px 10px;border-radius:8px;color:var(--mut);text-decoration:none;font-size:14px;white-space:nowrap;cursor:pointer}
+#sidx a:hover{color:var(--ink);background:var(--card)}
+@media (min-width:1000px){
+ body.setpage main{max-width:1100px;margin:0 0 0 240px;padding:12px 32px}
+ body.setpage main .card{scroll-margin-top:64px}
+ #sidx{position:fixed;top:52px;left:0;bottom:0;width:240px;flex-direction:column;overflow:hidden auto;margin:0;padding:12px 8px;border-right:1px solid var(--line)}
+ #sidx a{white-space:normal}
+ body.setpage .fld{justify-content:flex-start}
+ body.setpage .fld label{flex:0 0 320px}
+ body.setpage .fld select,body.setpage .fld input[type=text],body.setpage .fld input[type=password]{max-width:460px}
+}
+</style>
+<script>
+(function(){
+document.body.classList.add("setpage");
+const idx=h("div",{id:"sidx","aria-label":"Sections of this page"});
+$("main").prepend(idx);
+// The sections are drawn by their own scripts, some a moment after the page opens: the index follows what is there.
+function name(c){const t=c.querySelector("h3,summary,.mh b");return t?t.textContent.trim():""}
+let last="";
+function build(){
+ const cards=Array.from(document.querySelectorAll("main .card")).filter(function(c){return name(c)});
+ const now=cards.map(name).join("|");
+ if(now===last)return;
+ last=now;
+ idx.replaceChildren(...cards.map(function(c){return h("a",{onclick:function(){c.scrollIntoView({behavior:"smooth",block:"start"})}},name(c))}))}
+let t=null;
+new MutationObserver(function(){if(!t)t=setTimeout(function(){t=null;build()},300)}).observe($("main"),{childList:true,subtree:true,characterData:true});
+build();
+})();
+</script>
+"""
 
 HTML = r"""
 <style>
