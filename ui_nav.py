@@ -77,8 +77,10 @@ textarea{resize:none;overflow-y:auto}
  // Chat in the menu opens the list of chats over the menu; the arrow at its top left goes back to the menu
  function day(id){return /^[0-9]{8}/.test(id)?id.slice(0,4)+"-"+id.slice(4,6)+"-"+id.slice(6,8):""}
  function here(){return location.pathname==="/chat"?decodeURIComponent(location.hash.slice(1)):null}
- async function openChats(){
-  ch.classList.add("open");dl.textContent="Loading your chats...";
+ async function openChats(){ch.classList.add("open");await fill()}
+ // quiet: the list is refreshed in place (the Chat page keeps it on screen on a wide window), without the loading line
+ async function fill(quiet){
+  if(!quiet)dl.textContent="Loading your chats...";
   try{var r=await fetch("/api/chat/list");if(!r.ok)throw 0;var d=await r.json();dl.textContent="";
    if(!d.chats.length)dl.textContent="No chats yet.";
    d.chats.forEach(function(c){var row=document.createElement("div");row.className="crow";
@@ -101,10 +103,13 @@ textarea{resize:none;overflow-y:auto}
    else if(what==="archive"){await post(c,"archive")}
    else{var ok=window.holdConfirm?await window.holdConfirm("Delete this chat?","All its messages are deleted. The copy filed in the vault stays."):confirm("Delete this chat and all its messages? The copy filed in the vault stays.");
     if(!ok)return;await post(c,"delete");if(here()===c.id){location.href="/chat#new";if(location.pathname==="/chat")location.reload()}}
-   openChats()}
+   fill(!ch.classList.contains("open"))}
   catch(e){alert(e.message||"Could not do that")}}
+ window.fillChats=fill;
+ // On a wide window the Chat page shows the list of chats beside the thread all the time (see ui_chat.py)
+ function pinned(){return document.body.classList.contains("chatpage")&&window.matchMedia("(min-width:1100px)").matches}
  var chatLink=dr.querySelector('a[href="/chat"]');
- chatLink.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openChats()});
+ chatLink.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();if(pinned())set(false);else openChats()});
  document.getElementById("dback").addEventListener("click",function(){ch.classList.remove("open")});
  ch.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
  document.getElementById("dbtn").addEventListener("click",function(){set(!dr.classList.contains("open"))});

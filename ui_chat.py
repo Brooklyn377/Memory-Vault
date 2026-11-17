@@ -1004,10 +1004,20 @@ CHAT_HTML = r"""
 <style>
 .me{margin-left:auto;width:fit-content;max-width:85%;background:var(--acc);color:#fff;border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 .st{font-size:12px;color:var(--mut);text-align:right;margin:2px 4px 10px}
+.st.stl{text-align:left}
+.msg{margin-top:10px}
 .st .del{font:inherit;color:#f87171;background:none;border:0;padding:0 0 0 8px;cursor:pointer}
 .bot{width:fit-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
 #cbox{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100% - 24px,736px);z-index:6;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
+/* A wide window: the list of chats stays on screen down the left, and the thread and message box use a wider column beside it */
+@media (min-width:1100px){
+ body.chatpage #dchat{transform:none;visibility:visible;transition:none;width:300px;z-index:20}
+ body.chatpage #dback{display:none}
+ body.chatpage main{max-width:none;margin:0 0 0 300px;padding:12px 24px}
+ body.chatpage #thread{max-width:900px;margin:0 auto}
+ body.chatpage #cbox{left:calc(300px + (100% - 300px) / 2);width:min(100% - 348px,900px)}
+}
 #cstop{font:inherit;color:#f87171;background:none;border:0;padding:0;margin:0;cursor:pointer}#cstop[hidden]{display:none}
 #cs svg{width:18px;height:18px;background:none;border-radius:0}
 #cp{position:absolute;right:54px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center}
@@ -1069,9 +1079,12 @@ function notesList(src){
  btn.onclick=function(){const open=more.style.display==="none";more.style.display=open?"":"none";btn.textContent=open?"See less":"See more"};
  return h("div",{class:"mut"},line,btn,more)}
 function bubble(m){
- const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text),h("div",{class:"st"},(m.approval?"Waiting for you":m.status==="queued"&&waiting?"Queued: the Assistant is waiting for your answer above":LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:"")+" ",h("button",{class:"del",onclick:()=>removeOne(m.id)},"Delete"))];
- if(m.files&&m.files.length)out.splice(1,0,h("div",{class:"fl"},...m.files.map(f=>{const u="/api/chat/file/"+f.id+"/"+encodeURIComponent(f.name);
+ // The status line (and Delete) sits under your message until there is a reply; then it sits under the reply, on the left
+ const st=h("div",{class:m.reply?"st stl":"st"},(m.approval?"Waiting for you":m.status==="queued"&&waiting?"Queued: the Assistant is waiting for your answer above":LABEL[m.status]||m.status)+(m.by&&m.status==="replied"?" · "+m.by:"")+" ",h("button",{class:"del",onclick:()=>removeOne(m.id)},"Delete"));
+ const out=[h("div",{class:"me"},(m.kind==="correction"?"/fix ":"")+m.text)];
+ if(m.files&&m.files.length)out.push(h("div",{class:"fl"},...m.files.map(f=>{const u="/api/chat/file/"+f.id+"/"+encodeURIComponent(f.name);
   return f.image?h("a",{href:u,target:"_blank",rel:"noopener"},h("img",{src:u,alt:f.name})):h("a",{href:u,target:"_blank",rel:"noopener"},f.name+" · "+kb(f.size))})));
+ if(!m.reply)out.push(st);
  if(m.status==="error"||m.status==="stopped")out.push(h("button",{onclick:()=>again(m.id)},"Send again"));
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.status==="working"){
@@ -1083,7 +1096,7 @@ function bubble(m){
   if(m.confirm==="pending")box.append(h("button",{class:"pri",onclick:()=>decide(m.id,true)},"Yes, file it"),h("button",{onclick:()=>decide(m.id,false)},"No, that is not right"));
   if(m.confirm==="filed")box.append(h("div",{class:"mut"},"Filed to the inbox. The agent will turn it into a proposal; the vault itself is not changed yet."));
   if(m.confirm==="discarded")box.append(h("div",{class:"mut"},"Discarded. Nothing was filed."));
-  out.push(box)}
+  out.push(box,st)}
  return out}
 let older=[],more=false,loadingOlder=false,lastSeen="",chatId="";   // chatId: the chat on screen; "new" is one with no messages yet
 function fromHash(){return decodeURIComponent(location.hash.slice(1))}
@@ -1166,10 +1179,15 @@ $("#cs").onclick=async()=>{const t=$("#ct").value.trim(),ids=pend.filter(p=>p.id
  $("#cs").disabled=true;$("#ce").textContent="";
  try{const r=await api("/api/chat/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t,chat:chatId,files:ids})});$("#ct").value="";fit();pend=[];chips();
   if(chatId==="new"){chatId=r.chat;location.hash=r.chat}   // the first message names the chat
-  await load()}
+  await load();sideChats()}
  catch(e){$("#ce").textContent=e.message}$("#cs").disabled=false};
 setInterval(()=>{if(!document.hidden&&chatId)load()},10000);
-pick().then(load);
+// A wide window keeps the list of chats on screen (the menu's own list, filled by ui_nav.py): keep it up to date
+document.body.classList.add("chatpage");
+const wide=window.matchMedia("(min-width:1100px)");
+function sideChats(){if(wide.matches&&window.fillChats)window.fillChats(true)}
+wide.addEventListener("change",sideChats);addEventListener("hashchange",sideChats);
+pick().then(load).then(sideChats);
 </script>
 """
 
