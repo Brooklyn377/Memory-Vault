@@ -194,26 +194,40 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   **Server and where it runs** and press Apply all: the server is started with that file (it uses about 0.5 to 1.5 GB more
   memory, so it is off by default). The file is found next to the model by its name, or by the name inside it; with
   several, the F16 one. The status line under the tick says whether the server reports vision.
-- **It looks things up before answering:** all vault notes and raw chats, the agent's own state and logs, and
-  the Git servers it has a token for. Files named like keys, tokens, passwords or env files, and everything in
-  `/etc/memory-agent`, are never readable, and every result is scrubbed, because its model may run on another
-  machine.
-- **It hands slow work to the Reviewer and Sweeper as jobs:** draft a new version of a file in a Git server, change
-  a vault note, or sort a note. They run when those models are idle. Every result waits for you as an Ask card
-  with the changes and Approve / Reject (a failed job asks you on the Failed list). Approving a note change files it to
-  the inbox (the usual proposal path). A document draft is only made for a Git server set to read and write.
-- **Changing files in a Git repository, under your supervision:** ask the Assistant to change a file and it makes
-  the change itself (it is your quick helper for lookups, config changes and file edits; the Reviewer is much slower
-  and is only for long work, or whole new documents). It replaces exact text it copied from the file, or adds to the
-  end, or creates a file: one file per change. A file has one change waiting at a time: while one waits on your Ask page
-  (the Assistant's, or a Reviewer draft), another edit of that file is refused until you approve or reject it. The Ask card shows exactly which repository (name, address, branch) and file, a summary, and
-  the diff line by line. On a Git server marked **read and write**, **Approve and commit** commits exactly that
-  change to that one file and pushes it (as the bot named in `config.yaml`), using the Assistant's token for that
-  server (or another model's, if it has none). If the file changed in the repository after the draft was written,
-  nothing is committed and nothing is merged: a card says so, and you ask for a new draft. On a **read only** server nothing is queued or asked: the Assistant
-  shows you the change in its answer, for you to apply, and says to set the server to read and write if you want it
-  pushed. Under its answer, the notes it used show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's history, so it can be
-  reverted.
+- **It looks things up itself:** it gets your message and nothing else, and uses its tools for the rest: all vault
+  notes and raw chats, and the agent's own state and logs. There, files named like keys, tokens, passwords or env
+  files, and everything in `/etc/memory-agent`, are never readable, and every result is scrubbed. Code it reads in
+  its sandbox.
+- **The code sandbox:** every Git server the Assistant has a token for is a private working copy that only it
+  changes (under the state folder, in `sandbox/`). It has editor tools there (`list`, `grep`, `view`, `create`,
+  `replace`, `insert`, `delete`, `rename`, `status`, `reset`) and `run`, which runs a shell command in the working
+  copy so it can test what it wrote. A command runs under bubblewrap as an unprivileged user: it sees the working
+  copy, that copy's own virtualenv and the system's programs (read only), and nothing else, not your vault, tokens
+  or the agent's code. Git commands do not work there (the copy has no `.git`). Nothing stops a command by a timer;
+  while one runs, the chat shows the command and for how long.
+- **Stop answer:** while a message is being answered the chat shows **Stop answer**. It ends the answer, and any
+  command that is running; the message is marked Stopped and has **Send again**. What the Assistant had already
+  changed in the sandbox or in your notes stays.
+- **The sandbox has no internet unless you allow it:** a command can only reach hosts through the agent's own proxy.
+  The Assistant has to name the hosts a command needs; you are then asked under the message in the chat, with the
+  exact command and the hosts, and **Allow once**, **Always allow these hosts** or **Deny**. It waits for your
+  answer for as long as it takes, and the Assistant answers nothing else meanwhile. A host the command tries
+  without having named it is refused, and the Assistant is told which. An address on your own network is treated
+  like any other host, and is marked as such when you are asked. The hosts you always allow are listed, and can be
+  removed or added, under Settings → Chats → Sandbox internet.
+- **Changing files in a Git repository, under your supervision:** when a change is finished the Assistant proposes
+  the files it names. Each file, changed, new or deleted, waits on your Ask page as its own card, which shows exactly
+  which repository (name, address, branch) and file, a summary, and the diff line by line. A file has one change
+  waiting at a time: another proposal for that file is refused until you approve or reject it. On a Git server
+  marked **read and write**, **Approve and commit** commits exactly that change to that one file and pushes it (as
+  the bot named in `config.yaml`), using the Assistant's token for that server (or another model's, if it has none).
+  Nothing is ever merged: a file the Assistant has not touched follows the repository; a file changed both in the
+  sandbox and in the repository is refused until the Assistant takes the repository's version and makes its change
+  again; and if the file changed after the card was made, approving commits nothing and a card says so. On a
+  **read only** server nothing is queued or asked: the Assistant shows you the change in its answer, for you to
+  apply, and says to set the server to read and write if you want it pushed. Under its answer, the files it read
+  show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's
+  history, so it can be reverted.
 - **Its replies are JSON and nothing else:** a reply is one answer, or one or more tool calls (one after another, or a
   list). A reply with anything outside the JSON (a sentence before a tool call, a code fence, plain text) is not used and
   not shown: it is sent back to the Assistant with the reason, as often as it takes, and the log records each time.
@@ -238,11 +252,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
 - **Updated files:** when a chat says a file was updated, the Sweeper looks for that file in your Git servers (read only; it needs a Sweeper token under
   Settings → Git servers), checks the commits made after the chat, and if one makes the update the chat describes and the Reviewer agrees, writes a note of
   type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up
-  for one chat stops after **File look-up time per chat** (60 s). The Assistant can also propose an updated file, or an edit of one, with its
-  `updated_file` tool; it waits for your approval and writes only to the vault. Nothing here pushes to Git.
+  for one chat stops after **File look-up time per chat** (60 s). Nothing here pushes to Git.
 - **Local notes:** the Assistant has `write_note`, `edit_note` and `move_note` for notes in your vault (never Git; `raw/` is refused). They
-  happen at once, and an Ask card shows the diff with **OK** (keep) and **Undo** (restore; refused if the note changed again since). Its Git tool is
-  `git_edit_file`, for files in a Git server only, which still waits for your approval.
+  happen at once, and an Ask card shows the diff with **OK** (keep) and **Undo** (restore; refused if the note changed again since). Files in a Git server it changes in its sandbox (above), which still waits for your approval.
 - **The web (Settings → Chats → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages (its prompt says to try the vault and your Git servers first, but nothing enforces it), and
   only a few look-ups per message (a limit on its card). Under its reply, one line says "Used the web: N searches,

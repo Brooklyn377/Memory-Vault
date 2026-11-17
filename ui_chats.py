@@ -1,5 +1,6 @@
 """Settings page, Chats: one card for everything about the chat. The Chats card holds the memory and compression controls and limits, what
-the Assistant reads for each question, and Web access (its controls and limits). It is placed right after the model cards."""
+the Reviewer reads for a /fix message, Web access (its controls and limits) and Sandbox internet (the hosts sandbox commands may always
+reach). It is placed right after the model cards."""
 
 HTML = r"""
 <script>
@@ -29,7 +30,8 @@ async function limits(keys,title){const d=await window.buildTuning(keys,title);r
  card.append(
   sec("Memory and compression",[memoryBlock(),...await limits(["assistant.history","assistant.memory_tokens","assistant.memory_shrink","assistant.summary_words","assistant.chars_per_token"])]),
   sec("Notes and messages",[toggle("chat.scrub","Hide secrets in chat (tokens, keys, passwords): what you type, what the Assistant reads, and the saved chat"),...await limits(["chat.notes","chat.hop_notes","chat.linked","chat.note_chars","chat.linked_chars","chat.page_messages","chat.fix_tries"])]),
-  sec("Web access",[window.webAccessNode||h("div",{class:"mut"},"Loading..."),...await limits(["web.search_results","web.timeout","web.max_mb","assistant.web_calls"])]));
+  sec("Web access",[window.webAccessNode||h("div",{class:"mut"},"Loading..."),...await limits(["web.search_results","web.timeout","web.max_mb","assistant.web_calls"])]),
+  sec("Sandbox internet",[window.sandboxNode||h("div",{class:"mut"},"Loading..."),...await limits(["sandbox.output_chars"])]));
  for(let i=0;i<200&&!$("#mm");i++)await new Promise(function(r){setTimeout(r,50)});   // the model cards are drawn by the script after this one
  const mm=$("#mm");
  if(mm)mm.parentNode.insertBefore(card,mm.nextSibling);else $("main").append(card)})();

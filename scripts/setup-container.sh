@@ -72,7 +72,8 @@ write_file() {
 say "Packages"
 run apt-get update -q
 run env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    python3 python3-venv ca-certificates curl git cmake build-essential libcurl4-openssl-dev
+    python3 python3-venv ca-certificates curl git cmake build-essential libcurl4-openssl-dev \
+    bubblewrap shellcheck   # the Assistant's sandbox: its commands run under bubblewrap; shellcheck is for it to use there
 
 say "llama.cpp"
 # CPU or a GPU (vulkan, cuda or rocm): --gpu from the installer, else what was chosen before (Settings > Servers).

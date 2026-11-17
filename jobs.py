@@ -4,8 +4,9 @@ messages. The workers pick a job up only when their own work is done, and every 
 write is pushed:
   doc_draft    (Reviewer) a new version of a file in a Git server (read and write only), quoting vault notes. The Ask
                card shows the diff; Approve and commit commits and pushes exactly that file.
-  file_edit    (Assistant) the Assistant's own change to one file, made by propose_edit. The same card. On a read only
-               server nothing is kept or asked: the Assistant shows the change in its reply.
+  file_edit    (Assistant) one file from the Assistant's sandbox (sandbox.py), new, changed or deleted, made by
+               propose_file. The same card. On a read only server nothing is kept or asked: the Assistant shows the
+               change in its reply.
   updated_file (Assistant) a note of type updated-file under files/updated: a file as it is now, with a diff against the saved
                original and links to the chat and where the change is recorded. Made by propose_updated_file, local to
                the vault (nothing goes to Git); approving writes it, or replaces the one it was asked to edit.
@@ -267,10 +268,10 @@ def _doc_draft(j):
 def _commit(j):
     """An approved draft to a read-and-write Git server: commit and push exactly that file. -> the commit id."""
     r = j["result"]
-    text = (DIR / f"{j['id']}.draft").read_text(encoding="utf-8")
+    text = None if r.get("delete") else (DIR / f"{j['id']}.draft").read_bytes().decode("utf-8")
     msg = (f"{r.get('summary') or 'Update ' + r['path']}\n\nRequested through the memory agent's Assistant and "
            f"approved by you on its Ask page (job {j['id']}).")
-    return gitrepos.commit_file(r["server_id"], r["path"], text, r["base"], msg)
+    return gitrepos.commit_file(r["server_id"], r["path"], text, r["base"], msg, r.get("executable"))
 
 
 def _note_update(j):
@@ -367,13 +368,11 @@ def pending_change(server_id, path):
     return None
 
 
-def propose_edit(target, old, new, why="", chat=""):
-    """The Assistant's own edit of one file in a Git server: no model call and no Reviewer. old is exact text from the
-    file (it must occur once) and new replaces it; a blank old adds new at the end of the file, or creates the file.
-    The change waits as an Ask card with its diff and is committed only after you approve (read and write servers).
-    While a change to that file is waiting, another one is refused (Pending)."""
-    target = str(target or "").strip()
-    e, inner = _git_target(target, "pa")
+def propose_file(e, inner, text, why="", chat="", executable=None):
+    """One file from the Assistant's sandbox, as it should be in the repository of the Git server e: its whole new text,
+    or None to delete it. No model call and no Reviewer. The change waits as an Ask card with its diff and is committed
+    only after you approve (read and write servers). While a change to that file is waiting, another one is refused
+    (Pending). On a read only server nothing is kept or asked: the job is returned so the Assistant can show the diff."""
     root = gitrepos.copy(e["id"], "pa")
     if root is None:
         raise ValueError(f"could not get a copy of {e['name']}")
@@ -383,36 +382,35 @@ def propose_edit(target, old, new, why="", chat=""):
     if e["access"] == "write" and pending_change(e["id"], inner):
         raise Pending(f"There is already a pending change to {inner} in {e['name']}. You must wait for the pending edit to be "
                       "approved or denied before you can edit that file again. Nothing was proposed.")
-    current = f.read_text(encoding="utf-8", errors="replace") if f.is_file() else ""
-    old, new = str(old or ""), str(new if new is not None else "")
-    if old:
-        n = current.count(old)
-        if n != 1:
-            raise ValueError(f"the text to replace is {'not in' if not n else 'in more than one place in'} {inner}: open the "
-                             "file and copy the exact text (a longer piece, if it repeats), or leave old empty to add at the end")
-        text = current.replace(old, new, 1)
-    elif new.strip():
-        text = current + ("" if not current or current.endswith("\n") else "\n") + new + ("" if new.endswith("\n") else "\n")
-    else:
-        raise ValueError("give the new text to add, or old and new to replace")
-    diff = "".join(difflib.unified_diff(current.splitlines(True), text.splitlines(True), f"a/{inner}", f"b/{inner}"))
-    if not diff:
+    current = f.read_bytes().decode("utf-8", errors="replace") if f.is_file() else ""
+    if text is None and not f.is_file():
+        raise ValueError(f"{inner} is not in the repository, so there is nothing to delete")
+    diff = "".join(difflib.unified_diff(current.splitlines(True), (text or "").splitlines(True),
+                                        f"a/{inner}" if f.is_file() else "/dev/null", f"b/{inner}" if text is not None else "/dev/null"))
+    if text is not None and f.is_file() and text == current:
         raise ValueError("that is the same as the file now: nothing to change")
     why = " ".join(str(why or "").split())[:300] or f"Edit {inner}"
+    target = f"git/{e['name']}/{inner}"
     j = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "kind": "file_edit", "worker": "pa", "target": target,
          "instructions": why, "chat": chat, "status": "waiting", "created": datetime.now().isoformat(timespec="seconds"),
          "error": "", "result": {"summary": why, "diff": diff, "sources": [], "dropped": 0, "server": e["name"],
                                  "server_id": e["id"], "url": e["url"], "branch": e["branch"], "path": inner, "access": e["access"],
-                                 "base": gitrepos.content_sha(f), "new_file": not f.is_file()}}
+                                 "base": gitrepos.content_sha(f), "new_file": not f.is_file(), "delete": text is None,
+                                 "executable": executable}}
     if e["access"] != "write":   # nothing could be pushed, so nothing is kept or asked: the Assistant shows the change in its reply
         return j
     DIR.mkdir(parents=True, exist_ok=True)
-    (DIR / f"{j['id']}.draft").write_text(text, encoding="utf-8")
+    if text is not None:
+        (DIR / f"{j['id']}.draft").write_bytes(text.encode("utf-8"))
     _save(j)
-    _card(j, f"Commit a change to {inner} in {e['name']}? {why}",
-          f"Repository: {e['name']} ({e['url']}), branch {e['branch']}. File: {inner}"
-          + (" (a new file)" if j["result"]["new_file"] else "") + ". Approve commits exactly this diff and pushes it; nothing else changes.")
-    agent.log(f"jobs: the Assistant proposed an edit of {inner} in {e['name']}; waiting for you")
+    place = f"Repository: {e['name']} ({e['url']}), branch {e['branch']}."
+    if text is None:
+        _card(j, f"Delete {inner} from {e['name']}? {why}", f"{place} Approve deletes exactly this file and pushes that; nothing else changes.")
+    else:
+        _card(j, f"Commit a change to {inner} in {e['name']}? {why}",
+              f"{place} File: {inner}" + (" (a new file)" if j["result"]["new_file"] else "")
+              + ". Approve commits exactly this diff and pushes it; nothing else changes.")
+    agent.log(f"jobs: the Assistant proposed {'deleting' if text is None else 'a change to'} {inner} in {e['name']}; waiting for you")
     return j
 
 

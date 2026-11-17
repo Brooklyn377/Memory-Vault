@@ -232,10 +232,11 @@ class Changed(ValueError):
     """The file in the repository is no longer what the draft was written against."""
 
 
-def commit_file(eid, rel, text, base, message):
+def commit_file(eid, rel, text, base, message, executable=None):
     """Commit and push one file you approved. Only for an entry marked read and write, only if the file in the
-    repository is still exactly what the draft was based on. -> the commit id. Raises ValueError with a plain reason,
-    and then nothing is committed or pushed."""
+    repository is still exactly what the draft was based on. text None deletes the file. executable (True or False)
+    sets whether the file may be run; None leaves that as it is. -> the commit id. Raises ValueError with a plain
+    reason, and then nothing is committed or pushed."""
     e = get(eid)
     if not e:
         raise ValueError("that Git server is no longer listed")
@@ -256,9 +257,14 @@ def commit_file(eid, rel, text, base, message):
     g = agent.CFG.get("gitea") or {}
     who = ["-c", f"user.name={g.get('bot_name') or 'Memory agent'}", "-c", f"user.email={g.get('bot_email') or 'memory-agent@localhost'}"]
     try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
-        _git(["add", "--", rel], tok, cwd=dest)
+        if text is None:
+            _git(["rm", "-q", "--", rel], tok, cwd=dest)
+        else:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(text.encode("utf-8"))   # bytes: the line endings stay exactly as approved
+            if executable is not None:
+                os.chmod(f, 0o755 if executable else 0o644)
+            _git(["add", "--", rel], tok, cwd=dest)
         _git(who + ["commit", "-q", "-m", message, "--", rel], tok, cwd=dest)
         _git(["push", "origin", f"HEAD:refs/heads/{e['branch']}"], tok, cwd=dest)
         sha = _git(["rev-parse", "HEAD"], tok, cwd=dest).strip()

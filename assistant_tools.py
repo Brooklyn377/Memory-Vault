@@ -1,19 +1,22 @@
-"""The Assistant's tools: read-only look-ups over everything it may see. Results go to the Assistant's model, which may
-run on another machine, so secrets never come out of here: files named like keys, tokens, passwords or env files are
-refused, nothing under /etc/memory-agent is reachable, and every result goes through scrub.py.
+"""The Assistant's tools.
 
-Paths look like vault/entities/foo.md, state/review_log.jsonl, code/sweep.py or git/<server name>/README.md. A bare
-note path such as entities/foo.md means the vault."""
+Look-ups over the vault and the state folder (search, open, links and the lists): read only. Files named like keys,
+tokens, passwords or env files are refused there, nothing under /etc/memory-agent is reachable, and every result goes
+through scrub.py. Paths look like vault/entities/foo.md or state/review_log.jsonl; a bare note path such as
+entities/foo.md means the vault.
+
+Code is not read here. Every Git server the Assistant has a token for is a working copy in its sandbox (sandbox.py),
+with its own tools: list, grep, view, create, replace, insert, delete, rename, run, status, reset and propose. Those
+paths look like git/<server name>/README.md."""
 import json
 import re
-from pathlib import Path
 
 import agent
 import gitrepos
+import sandbox
 from scrub import chat_text, scrub
 
 VAULT, STATE = agent.VAULT, agent.STATE
-CODE = Path(__file__).resolve().parent
 SECRET_WORDS = {"key", "keys", "token", "tokens", "secret", "secrets", "password", "passwords", "passwd",
                 "credential", "credentials", "env", "pem", "id_rsa", "id_ed25519"}
 
@@ -34,31 +37,28 @@ def _t(key):
 
 
 def roots():
-    """Name -> folder for everything the Assistant may read. Git servers: only the ones it has a token for."""
-    out = {"vault": VAULT, "state": STATE, "code": CODE}
-    for e in gitrepos.readable("pa"):
-        d = gitrepos.copy(e["id"], "pa")
-        if d:
-            out["git/" + e["name"]] = d
-    return out
+    """Name -> folder for everything search and open may read. Git servers are read in the sandbox, not here."""
+    return {"vault": VAULT, "state": STATE}
 
 
 def _allowed(p, root):
-    """True if p (resolved) is inside root, is not a secret, and is not another Git server's copy."""
+    """True if p (resolved) is inside root, is not a secret, and is not a copy of a Git server."""
     try:
         rel = p.relative_to(root.resolve())
     except ValueError:
         return False
     if any(SECRET.search(part) for part in rel.parts):
         return False
-    if root == STATE and rel.parts[:1] == ("git",):
-        return False   # Git copies are reached as git/<name>, and only with a token
+    if root == STATE and rel.parts[:1] in (("git",), ("sandbox",)):
+        return False   # Git servers are read through the sandbox tools, and only with a token
     return True
 
 
 def resolve(path):
     """-> (label, Path) for a path the Assistant typed, or a ValueError saying why not."""
     path = str(path or "").strip().lstrip("/")
+    if path == "git" or path.startswith("git/"):
+        raise ValueError("files in a Git server are read with the sandbox tools: list, grep and view")
     rs = roots()
     name = next((n for n in sorted(rs, key=len, reverse=True) if path == n or path.startswith(n + "/")), None)
     if name is None:
@@ -81,20 +81,18 @@ def _files(root, under=None):
 
 def _where(where):
     """Search areas -> [(label prefix, root, subfolder)]."""
-    rs, where = roots(), str(where or "all").strip()
-    gits = [(n, r, None) for n, r in rs.items() if n.startswith("git/")]
+    where = str(where or "all").strip()
     areas = {
         "notes": [("vault", VAULT, None)], "vault": [("vault", VAULT, None)],
         "raw": [("vault", VAULT, "raw")], "inbox": [("vault", VAULT, "inbox")],
-        "state": [("state", STATE, None)], "code": [("code", CODE, None)],
+        "state": [("state", STATE, None)],
         "logs": [("state", STATE, "think"), ("state", STATE, None)],
-        "git": gits, "all": [("vault", VAULT, None)] + gits,
+        "all": [("vault", VAULT, None)],
     }
     if where in areas:
         return areas[where]
-    if "git/" + where in rs:
-        return [("git/" + where, rs["git/" + where], None)]
-    raise ValueError("where must be all, notes, raw, inbox, vault, state, code, logs, git, or a Git server's name")
+    raise ValueError("where must be all, notes, raw, inbox, vault, state or logs. Code in a Git server is searched with grep, "
+                     'like {"tool":"grep","args":{"path":"git/<Git server name>","pattern":"<regular expression>"}}')
 
 
 def _is_text(p):
@@ -183,17 +181,18 @@ def queue():
 
 
 def repos():
-    out = [f"- {e['name']} ({'read and write' if e['access'] == 'write' else 'read only'}): {e['description'] or 'no description'}"
-           for e in gitrepos.readable("pa")]
+    out = [f"- {e['name']} ({'read and write' if e['access'] == 'write' else 'read only'}), its files are under git/{e['name']}: "
+           f"{e['description'] or 'no description'}" for e in gitrepos.readable("pa")]
     return "\n".join(out) or "No Git servers the Assistant has a token for."
 
 
-CHAT = {"id": "", "web": [], "web_calls": 0}   # the chat message being answered: its id (so a queued job
-# records where it came from), and the web looked at so far
+CHAT = {"id": "", "web": [], "web_calls": 0, "cancel": None, "show": None}   # the chat message being answered: its id (so
+# a proposed change records where it came from), the web looked at so far, and for a sandbox command: cancel() says the
+# answer was stopped or deleted, show() tells the chat page what is running
 
 
-def start_message(mid):
-    CHAT.update(id=mid, web=[], web_calls=0)
+def start_message(mid, cancel=None, show=None):
+    CHAT.update(id=mid, web=[], web_calls=0, cancel=cancel, show=show)
 
 
 def _web_ready():
@@ -245,27 +244,6 @@ def web_note():
     return list(CHAT["web"])
 
 
-def queue_job(kind, target, instructions):
-    import jobs
-    j = jobs.create(kind, target, instructions, CHAT["id"])
-    return (f"Queued job {j['id']} ({kind}) for the {jobs.NICE[j['worker']]}. It runs when that model is idle, and "
-            "the result waits for the person's approval as an Ask card. Tell them it is queued.")
-
-
-def git_edit_file(path, old, new, why):
-    """Propose one change to one file in a Git server. Nothing changes until the person approves it."""
-    import jobs
-    j = jobs.propose_edit(path, old, new, why, CHAT["id"])
-    r = j["result"]
-    if r["access"] != "write":
-        return (f"NOT pushed, and nothing is waiting for the person: {r['server']} is set to Read only. Tell them exactly that, and "
-                f"show them this change for {r['path']} in your answer, in a code block, so they can apply it themselves:\n\n{r['diff']}\n\n"
-                f"If they want you to push it instead, they set {r['server']} to Read and write under Settings > Git servers (a read "
-                "and write key alone does not change that setting) and ask you again.")
-    return (f"Proposed the change to {r['path']} in {r['server']} ({r['branch']}). It is waiting for the person's approval on "
-            "their Ask page, which shows the exact diff; approving commits and pushes it. Tell them it is waiting there.")
-
-
 def _done(j):
     return (f"Done: the Assistant {j['result']['what']}, in the vault only (nothing went to Git). It is already in the vault and you can "
             "open it. The person has an Ask card showing exactly what changed, with OK and Undo. Tell them what you did.")
@@ -277,16 +255,6 @@ def note_tools():
     return {"write_note": lambda a: _done(jobs.write_note(a.get("path"), a.get("text"), a.get("why"), c)),
             "edit_note": lambda a: _done(jobs.edit_note(a.get("path"), a.get("old"), a.get("new"), a.get("why"), c)),
             "move_note": lambda a: _done(jobs.move_note(a.get("from"), a.get("to"), a.get("why"), c))}
-
-
-def updated_file(a):
-    """Propose an updated file (or an edit of one) in the vault. Nothing is written until the person approves it."""
-    import jobs
-    j = jobs.propose_updated_file(a.get("name"), a.get("what"), a.get("contents"), a.get("chat") or "", a.get("reference") or "",
-                                  a.get("path") or "", CHAT["id"])
-    verb = "replace" if j["result"]["editing"] else "add"
-    return (f"Proposed to {verb} {j['result']['path']}. It is waiting for the person's approval on their Ask page, which shows the start of "
-            "the note; approving writes it to their vault only, nothing goes to Git. Tell them it is waiting there.")
 
 
 def chats_tool(a):
@@ -315,15 +283,25 @@ TOOLS = {"search": do_search,
          "links": lambda a: links(a.get("path", "")),
          "tasks": lambda a: tasks(), "questions": lambda a: questions(), "queue": lambda a: queue(),
          "repos": lambda a: repos(), "jobs": lambda a: job_list(),
-         "queue_job": lambda a: queue_job(a.get("kind"), a.get("target"), a.get("instructions")),
          "web_search": lambda a: web_search(a.get("query") or a.get("text")),
          "web_open": lambda a: web_open(a.get("url"), a.get("start", 0)),
-         "updated_file": updated_file,
          "chats": chats_tool,
          "write_note": lambda a: note_tools()["write_note"](a),
          "edit_note": lambda a: note_tools()["edit_note"](a),
          "move_note": lambda a: note_tools()["move_note"](a),
-         "git_edit_file": lambda a: git_edit_file(a.get("path") or a.get("target"), a.get("old"), a.get("new"), a.get("why"))}
+         # the code sandbox (sandbox.py): a working copy of each Git server, changed only by these
+         "list": lambda a: sandbox.list_dir(a.get("path")),
+         "grep": lambda a: sandbox.grep(a.get("path"), a.get("pattern")),
+         "view": lambda a: sandbox.view(a.get("path"), a.get("start"), a.get("end")),
+         "create": lambda a: sandbox.create(a.get("path"), a.get("text")),
+         "replace": lambda a: sandbox.replace(a.get("path"), a.get("old"), a.get("new")),
+         "insert": lambda a: sandbox.insert(a.get("path"), a.get("line"), a.get("text")),
+         "delete": lambda a: sandbox.delete(a.get("path")),
+         "rename": lambda a: sandbox.rename(a.get("from"), a.get("to")),
+         "run": lambda a: sandbox.run(a.get("repo"), a.get("command"), a.get("hosts"), CHAT),
+         "status": lambda a: sandbox.status(a.get("repo")),
+         "reset": lambda a: sandbox.reset(a.get("path")),
+         "propose": lambda a: sandbox.propose(a.get("paths") or a.get("path"), a.get("why"), CHAT["id"])}
 
 
 def run(name, args):
