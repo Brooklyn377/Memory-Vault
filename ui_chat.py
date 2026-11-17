@@ -763,13 +763,10 @@ def watch():
             if isinstance(e, thinklog.Aborted):   # you switched or stopped the server: answer it again with what is current
                 m["status"], m["reply"] = "queued", ""
                 agent.log(f"chat: {m['id']} cut off by a server switch or stop; queued again")
-            elif who == "pa":   # no retry timer: mark it failed, say why, and leave "Send again" to you
-                m["status"], m["reply"] = "error", f"The Assistant could not answer ({type(e).__name__})."
-                import questions
-                questions.ask(f'The Assistant could not answer your chat message "{m["text"][:120]}": {why}',
-                              why="Try again queues the message again. Skip leaves it failed in the chat. Check the Assistant's server on "
-                                  "the Settings page.",
-                              kind="assistant", options=[{"label": "Try again", "value": "retry"}], payload={"chat": m["id"]})
+            elif who == "pa":   # no retry timer and no Ask card: the chat says why, and "Send again" is left to you
+                m["status"] = "error"
+                m["reply"] = (f"The Assistant could not answer: {why}. Send again queues this message again. If it keeps failing, "
+                              "check the Assistant's server on the Settings page.")
                 agent.log(f"chat: {m['id']} failed on the Assistant ({why})")
             else:
                 m["tries"] += 1
