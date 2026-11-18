@@ -58,12 +58,27 @@ def register(app, authed):
 
 
 TODO_HTML = r"""
+<style>
+.tbox{line-height:1.4;max-height:calc(10 * 1.4em + 24px)}
+/* A wide window: open tasks in a grid, as many across as fit (each at least 380px), each its own height; Finished recently
+   below, the full width and without a box. Phones keep the one column. */
+@media (min-width:1100px){
+ body.todopage main{max-width:none;padding:12px 32px}
+ body.todopage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start;margin-top:10px}
+ body.todopage #open>.card{margin:0}
+ body.todopage #open>.empty{grid-column:1/-1;background:none;border:0;border-radius:0;padding:0}
+ body.todopage details.fin{background:none;border:0;border-radius:0;padding:0;margin-top:28px}
+ body.todopage details.fin>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
+}
+</style>
 <p class="mut" style="margin:4px 2px">Things the reviewer found in your notes that look unfinished. Type what you did or where it stands, and it goes to the reviewer, which updates its notes.</p>
 <div id="open"></div>
-<details class="card"><summary class="mut">Finished recently</summary><div id="done" class="mut"></div></details>
+<details class="card fin"><summary class="mut">Finished recently</summary><div id="done" class="mut"></div></details>
 <script>
+document.body.classList.add("todopage");
 function task(t){
- const box=h("textarea",{rows:"3",placeholder:"What did you do, or where does it stand?"});
+ const box=h("textarea",{rows:"3",class:"tbox",placeholder:"What did you do, or where does it stand?"});
+ box.oninput=function(){box.style.height="auto";box.style.height=Math.min(box.scrollHeight+2,parseFloat(getComputedStyle(box).maxHeight))+"px"};   // grows to about 10 lines, then scrolls
  const send=async(path,body)=>{try{await api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});badgeTodo();load()}catch(e){alert(e.message)}};
  return h("div",{class:"card"},h("h3",{},t.title),h("div",{class:"mut"},t.detail),
   t.quote?h("div",{class:"mut",style:"border-left:3px solid var(--line);padding-left:8px;margin:6px 0"},t.quote):null,
@@ -75,7 +90,7 @@ function task(t){
   h("button",{onclick:()=>send("/api/todo/update",{id:t.id,text:box.value,finished:true})},"I finished this"),
   h("button",{onclick:()=>send("/api/todo/drop",{id:t.id})},"Not a task"))}
 async function load(){const d=await api("/api/todo");
- $("#open").replaceChildren(...(d.open.length?d.open.map(task):[h("div",{class:"card mut"},"Nothing open. The reviewer adds tasks here as it reads your notes.")]));
+ $("#open").replaceChildren(...(d.open.length?d.open.map(task):[h("div",{class:"card mut empty"},"Nothing open. The reviewer adds tasks here as it reads your notes.")]));
  $("#done").replaceChildren(...d.done.map(t=>h("div",{},"✔ "+t.title+(t.state_line?" — "+t.state_line:""))))}
 load();
 </script>
