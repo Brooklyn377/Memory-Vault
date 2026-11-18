@@ -60,15 +60,16 @@ def register(app, authed):
 TODO_HTML = r"""
 <style>
 .tbox{line-height:1.4;max-height:calc(10 * 1.4em + 24px)}
-/* A wide window: open tasks in a grid, as many across as fit (each at least 380px), each its own height; Finished recently
-   below, the full width and without a box. Phones keep the one column. */
+/* Finished recently: a heading with a line under it. The empty line has no divider. A wide window: open tasks in a grid, as
+   many across as fit (each at least 380px), each its own height, with a line along the top. Phones keep the one column. */
+body.todopage #open>.empty{border:0}
+body.todopage details.fin{border:0;padding:0;margin-top:28px}
+body.todopage details.fin>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
 @media (min-width:1100px){
  body.todopage main{max-width:none;padding:12px 32px}
- body.todopage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start;margin-top:10px}
- body.todopage #open>.card{margin:0}
- body.todopage #open>.empty{grid-column:1/-1;background:none;border:0;border-radius:0;padding:0}
- body.todopage details.fin{background:none;border:0;border-radius:0;padding:0;margin-top:28px}
- body.todopage details.fin>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
+ body.todopage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px 28px;align-items:start;margin-top:10px}
+ body.todopage #open>.card{border-bottom:0;border-top:1px solid var(--line);padding-top:12px}
+ body.todopage #open>.empty{grid-column:1/-1;border:0}
 }
 </style>
 <p class="mut" style="margin:4px 2px">Things the reviewer found in your notes that look unfinished. Type what you did or where it stands, and it goes to the reviewer, which updates its notes.</p>

@@ -1014,6 +1014,10 @@ CHAT_HTML = r"""
    box fill the rest. A message reaches two thirds of the way across from its own side. On every size a reply has no
    bubble (on a phone it uses the whole width); cards that ask you something keep their box. */
 body.chatpage .bot:not(.ask){width:auto;max-width:none;background:none;border:0;border-radius:0;padding:0}
+/* A card that asks you something (the sandbox's hosts): no box, accent lines above and below; its choices are words
+   underlined in the accent color, like the Delete and Stop answer links. */
+.bot.ask{width:auto;max-width:none;background:none;border:0;border-top:1px solid var(--acc);border-bottom:1px solid var(--acc);border-radius:0;padding:10px 0}
+.bot.ask button,.bot.ask button.pri{font:inherit;color:var(--ink);background:none;border:0;border-radius:0;padding:0;margin:10px 20px 0 0;text-decoration:underline;text-decoration-color:var(--acc);text-decoration-thickness:2px;text-underline-offset:4px;cursor:pointer}
 #cgrip{display:none}
 @media (min-width:1100px){
  body.chatpage{--cw:300px}

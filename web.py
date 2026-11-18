@@ -175,8 +175,8 @@ main{max-width:1500px;margin:0 auto}
 h1{font-size:26px;margin:4px 0 16px}
 h2{font-size:14px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
 section{margin:0 0 26px;scroll-margin-top:68px;min-width:0}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
-.tile{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;color:inherit;text-decoration:none;min-width:0;overflow-wrap:anywhere}
+.grid{display:grid;gap:12px 26px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.tile{display:block;border-top:1px solid var(--line);padding:12px 0 4px;color:inherit;text-decoration:none;min-width:0;overflow-wrap:anywhere}
 .tile b{font-size:17px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px}
 .chip{font-size:12px;font-weight:600;padding:2px 10px;border-radius:10px;background:var(--line);color:var(--mut);margin-left:8px;white-space:nowrap}

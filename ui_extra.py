@@ -285,7 +285,10 @@ nav{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line);ba
 nav a{padding:8px 10px;white-space:nowrap;border-radius:8px;color:var(--mut);text-decoration:none;font-weight:600}
 nav a.on{background:var(--acc);color:#fff}nav .n{background:var(--warn);color:#fff;border-radius:10px;padding:0 7px;margin-left:5px;font-size:12px}
 main{padding:12px;max-width:760px;margin:0 auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0}
+/* Flat on every page and every size: a card is a block of the page with a divider line under it, not a box. Only a pop-up,
+   which floats over the page, keeps its box. */
+.card{background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 0 12px;margin:0}
+.card.pop{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
 input[type=search],textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit}
 button{font:inherit;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin:4px 6px 4px 0}
 button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
@@ -316,7 +319,7 @@ function holdConfirm(title,text){return new Promise(res=>{
  const stop=()=>{clearTimeout(t);t=null;fill.style.transition="width .15s";fill.style.width="0"};
  yes.onpointerdown=e=>{e.preventDefault();fill.style.transition="width 1.5s cubic-bezier(.05,.8,.3,1)";fill.style.width="100%";t=setTimeout(()=>{if(navigator.vibrate)navigator.vibrate(40);done(true)},1500)};
  yes.onpointerup=stop;yes.onpointerleave=stop;yes.onpointercancel=stop;yes.oncontextmenu=e=>e.preventDefault();
- ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},title),h("div",{class:"mut",style:"margin-bottom:12px"},text),yes,h("button",{class:"pri",onclick:()=>done(false)},"No")));
+ ov.append(h("div",{class:"card pop",style:"max-width:420px;width:100%"},h("h3",{},title),h("div",{class:"mut",style:"margin-bottom:12px"},text),yes,h("button",{class:"pri",onclick:()=>done(false)},"No")));
  document.body.append(ov)})}
 (function(){const act="__ACTIVE__";document.querySelectorAll("nav a").forEach(a=>{if(a.getAttribute("href")==="/"+act)a.classList.add("on")})})();
 badge();
@@ -406,16 +409,18 @@ ASK_HTML = r"""
 .chip.working{background:var(--acc);color:#fff}
 .chip.done{background:#34d399;color:#000}
 .hb{margin-top:8px}
-/* A wide window: open cards in a grid, as many across as fit (each at least 380px), each its own height; a card with a diff
-   takes a whole row. History below, the full width and without a box. Phones keep the one column. */
+/* History: a heading with a line under it. The empty line has no divider. A wide window: open cards in a grid, as many
+   across as fit (each at least 380px), each its own height, with a line along the top; a card with a diff takes a whole
+   row. Phones keep the one column. */
+body.askpage #open>.empty{border:0}
+body.askpage details.hist{border:0;padding:0;margin-top:28px}
+body.askpage details.hist>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
 @media (min-width:1100px){
  body.askpage main{max-width:none;padding:12px 32px}
- body.askpage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start;margin-top:10px}
- body.askpage #open>.card{margin:0}
- body.askpage #open>.wide{grid-column:1/-1}
- body.askpage #open>.empty{grid-column:1/-1;background:none;border:0;border-radius:0;padding:0}
- body.askpage details.hist{background:none;border:0;border-radius:0;padding:0;margin-top:28px}
- body.askpage details.hist>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
+ body.askpage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px 28px;align-items:start;margin-top:10px}
+ body.askpage #open>.card{border-bottom:0;border-top:1px solid var(--line);padding-top:12px}
+ body.askpage #open>.wide,body.askpage #open>.empty{grid-column:1/-1}
+ body.askpage #open>.empty{border:0}
 }
 </style>
 <details class="card hist" open><summary class="mut">History (kept 30 days)</summary><div id="done"></div></details>
