@@ -37,12 +37,21 @@ HTML = r"""
 .hw{font-weight:600;font-size:13px}
 .ht{flex-basis:100%;margin-top:2px}
 .hd{white-space:pre-wrap;word-break:break-word;margin-top:6px;font-size:13px}
+.hwho{display:inline-flex;align-items:baseline;gap:6px}
+/* A wide window: one line per event, in columns When | Who | What; an opened row's detail is under it, the full width. */
+@media (min-width:1100px){
+ body.histpage main{max-width:none;padding:12px 32px}
+ body.histpage .hh{display:grid;grid-template-columns:150px 130px minmax(0,1fr);gap:16px;align-items:baseline}
+ body.histpage .hh>.mut{order:-1}
+ body.histpage .ht{margin-top:0}
+}
 </style>
 <div class="card"><div id="hw"></div><div id="hk"></div></div>
 <div id="hl"></div>
 <div id="hm" style="margin:12px 0"></div>
 <script>
 (function(){
+document.body.classList.add("histpage");
 const WHO={sweeper:["Sweeper","#4c9aff"],reviewer:["Reviewer","#f5a623"],curator:["Curator","#34d399"],assistant:["Assistant","#e879f9"],you:["You","#c084fc"],system:["System","#8b93a7"]};
 const KIND={vault:"Vault changes",fact:"Facts",task:"Tasks",link:"Links",review:"Reviews",prune:"Prunes",file:"Files",ask:"Questions",chat:"Chat",publish:"Publishing",setting:"Settings",import:"Imports",problem:"Problems",system:"Startup",call:"Model calls",web:"Websites",git:"Git servers",tool:"Assistant tools",turn:"Turns"};
 const onW=new Set(["sweeper","reviewer","curator","assistant","you"]);
@@ -51,7 +60,7 @@ let items=[],seen=new Set(),more=false,busy=false;
 function chips(keys,on,label){return keys.map(k=>{const s=h("span",{class:"chp"+(on.has(k)?" on":"")},label(k));s.onclick=()=>{on.has(k)?on.delete(k):on.add(k);s.classList.toggle("on");load(true)};return s})}
 function row(e){
  const d=new Date(e.t*1000);
- const r=h("div",{class:"hrw"},h("div",{class:"hh"},h("i",{style:"background:"+WHO[e.who][1]}),h("span",{class:"hw"},WHO[e.who][0]),
+ const r=h("div",{class:"hrw"},h("div",{class:"hh"},h("span",{class:"hwho"},h("i",{style:"background:"+WHO[e.who][1]}),h("span",{class:"hw"},WHO[e.who][0])),
   h("span",{class:"mut"},d.toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})),h("div",{class:"ht"},e.text)));
  if(e.detail||(e.open&&e.open.length)){const dt=h("div",{class:"hd mut"},e.detail||"");(e.open||[]).forEach(l=>dt.append(h("div",{style:"margin-top:8px"},h("a",{href:l.href,style:"color:var(--acc);font-weight:600",onclick:ev=>ev.stopPropagation()},l.label+" ›"))));dt.style.display="none";r.append(dt);r.onclick=()=>{dt.style.display=dt.style.display==="none"?"":"none"}}
  return r}
