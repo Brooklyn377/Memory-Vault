@@ -441,6 +441,27 @@ def _limit():
     return tuning.get("sandbox.output_chars")
 
 
+# ---------- line numbers the Assistant has seen ----------
+# The tools that work by line number (replace_lines, insert, copy) need the file as the Assistant last saw it: view, or
+# grep, shows the numbers, and its own edits keep them current. Anything else that changes the file (a command, the
+# repository moving on) makes them stale, and the tool asks it to view the file again. (Git server id, path) -> fingerprint.
+SEEN = {}
+
+
+def _saw(e, inner, p):
+    SEEN[(e["id"], inner)] = _sha(p)
+
+
+def _fresh(e, inner, p):
+    if SEEN.get((e["id"], inner)) != _sha(p):
+        raise Refused(f"Nothing was changed: {_label(e, inner)} changed since you last viewed it, or you have not viewed it yet, so "
+                      "its line numbers may be out of date. View it again and use the new line numbers.")
+
+
+def _numbered(lines, first):
+    return "\n".join(f"{n}: {l.rstrip(chr(10))}" for n, l in enumerate(lines, first))
+
+
 # ---------- the editor tools ----------
 def list_dir(path):
     e, inner = _split(path)
@@ -477,6 +498,8 @@ def grep(path, pattern):
             continue
         for n, line in enumerate(text.splitlines(), 1):
             if rx.search(line):
+                if (e["id"], rel) not in SEEN or SEEN[(e["id"], rel)] != _sha(f):
+                    _saw(e, rel, f)   # grep shows line numbers too
                 hits.append(f"{rel}:{n}: {line[:300]}" + (f" ...(the line goes on: {len(line)} characters)" if len(line) > 300 else ""))
     if not hits:
         return "Nothing matched."
@@ -494,6 +517,7 @@ def view(path, start=None, end=None):
     e, inner, p = _file(path, True, reading=True)
     label = _label(e, inner)
     lines = _text(p, label).splitlines()
+    _saw(e, inner, p)
     start = max(1, _int(start, "start", 1))
     end = min(len(lines), _int(end, "end", len(lines)))
     if lines and start > len(lines):
@@ -508,6 +532,7 @@ def create(path, text):
         raise Refused("Nothing was changed: give the whole file as text.")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(text.encode("utf-8"))
+    _saw(e, inner, p)   # it wrote the whole file, so it knows the numbers
     return (f"Created {_label(e, inner)} ({len(text.splitlines())} lines) in the working copy. It is not in the repository "
             "until you propose it and the person approves.")
 
@@ -524,7 +549,10 @@ def replace(path, old, new):
                       "View the file and copy the exact text (a longer piece, if it repeats).")
     if old == new:
         raise Refused("Nothing was changed: new is the same as old.")
+    was = SEEN.get((e["id"], inner)) == _sha(p)
     p.write_bytes(current.replace(old, new, 1).encode("utf-8"))
+    if was:   # its numbers were current: they still are, as far as it knows (the result says where)
+        _saw(e, inner, p)
     at = current[:current.index(old)].count("\n") + 1
     return f"Replaced it in {label}, starting at line {at}. The change is in the working copy only."
 
@@ -533,6 +561,7 @@ def insert(path, line, text):
     e, inner, p = _file(path, True)
     label = _label(e, inner)
     lines, text = _text(p, label).splitlines(keepends=True), str(text if text is not None else "")
+    _fresh(e, inner, p)
     at = _int(line, "line", None)
     if at is None or not 0 <= at <= len(lines):
         raise Refused(f"Nothing was changed: {label} has {len(lines)} lines, so line must be a number from 0 (the top) to {len(lines)}.")
@@ -542,7 +571,120 @@ def insert(path, line, text):
         lines[at - 1] += "\n"
     lines.insert(at, text if text.endswith("\n") else text + "\n")
     p.write_bytes("".join(lines).encode("utf-8"))
+    _saw(e, inner, p)
     return f"Added {len(text.splitlines())} line(s) to {label} after line {at}. The change is in the working copy only."
+
+
+def replace_lines(path, start, end, text):
+    """Lines start to end (counted from 1, both included) become text; empty text deletes them."""
+    e, inner, p = _file(path, True)
+    label = _label(e, inner)
+    lines = _text(p, label).splitlines(keepends=True)
+    _fresh(e, inner, p)
+    a, b = _int(start, "start", None), _int(end, "end", None)
+    if a is None or b is None:
+        raise Refused("Nothing was changed: give start and end, the first and last line to replace.")
+    if not 1 <= a <= b <= len(lines):
+        raise Refused(f"Nothing was changed: {label} has {len(lines)} lines, so start and end must be from 1 to {len(lines)}, "
+                      "with start not after end.")
+    text = str(text if text is not None else "")
+    new = text.splitlines(keepends=True)
+    if new and not new[-1].endswith("\n") and (b < len(lines) or lines[-1].endswith("\n")):
+        new[-1] += "\n"
+    lines[a - 1:b] = new
+    p.write_bytes("".join(lines).encode("utf-8"))
+    _saw(e, inner, p)
+    done = f"Replaced lines {a} to {b} of {label} with {len(new)} line{'s' if len(new) != 1 else ''}. The change is in the working copy only."
+    if not new:
+        return done + " Those lines are gone; the lines after them moved up."
+    return done + f" Those lines are now {a} to {a + len(new) - 1}:\n" + _numbered(new, a)
+
+
+def copy(src, start, end, dest, line, move=False):
+    """Copy lines start to end of src (a sandbox file, or a vault note or chat: read only) after line `line` of dest, a sandbox
+    file. No start and end: the whole file. A dest that does not exist becomes a new file. move: also take them out of src
+    (sandbox files only)."""
+    import assistant_tools
+    from scrub import scrub
+    src, move = str(src or "").strip(), move is True or str(move).lower() == "true"
+    if not src or not str(dest or "").strip():
+        raise Refused('Nothing was changed: give from and to, like {"from":"<file>","to":"git/<Git server name>/<file>"}.')
+    if src.strip("/").startswith("git/"):
+        se, sinner, sp = _file(src, True, reading=True)
+        slabel = _label(se, sinner)
+        stext = _text(sp, slabel)
+    else:
+        if move:
+            raise Refused("Nothing was changed: move only works between sandbox files; a vault note or chat can only be copied from.")
+        se = sinner = sp = None
+        try:
+            slabel, vp = assistant_tools.resolve(src)
+        except ValueError as ex:
+            raise Refused(f"Nothing was changed: {ex}.") from None
+        if not vp.is_file():
+            raise Refused(f"Nothing was changed: {slabel} is a folder: name a file.")
+        stext = scrub(_text(vp, slabel))[0]   # the same scrubbing open gives it: no hidden secret is copied
+    slines = stext.splitlines(keepends=True)
+    whole = (start is None or start == "") and (end is None or end == "")
+    if whole:
+        a, b = 1, len(slines)
+    else:
+        if se is not None:
+            _fresh(se, sinner, sp)
+        a, b = _int(start, "start", None), _int(end, "end", None)
+        if a is None or b is None:
+            raise Refused("Nothing was changed: give both start and end, or leave both out to copy the whole file.")
+        if not 1 <= a <= b <= len(slines):
+            raise Refused(f"Nothing was changed: {slabel} has {len(slines)} lines, so start and end must be from 1 to {len(slines)}, "
+                          "with start not after end.")
+    if not slines:
+        raise Refused(f"Nothing was changed: {slabel} is empty.")
+    block = slines[a - 1:b]
+    if not block[-1].endswith("\n"):
+        block[-1] += "\n"
+    de, dinner = _split(dest)
+    sync(de)
+    if not dinner:
+        raise Refused(f"{_label(de, dinner)} is the top folder: name a file in it. Nothing was done.")
+    if Path(dinner).parts[0] == OUT:
+        raise Refused(f"{OUT} holds saved command output only; it is not part of the repository. Nothing was done.")
+    dp, dlabel = _safe(_work(de), dinner), _label(de, dinner)
+    same = se is not None and se["id"] == de["id"] and sinner == dinner
+    if move and same and line is not None and line != "" and a - 1 <= _int(line, "line", 0) < b:
+        raise Refused("Nothing was changed: the place to move the lines to is inside the lines being moved.")
+    n = len(block)
+    if not (dp.exists() or dp.is_symlink()):
+        if line not in (None, "", 0, "0"):
+            raise Refused(f"Nothing was changed: {dlabel} does not exist yet, so the lines would start a new file: leave line out.")
+        dp.parent.mkdir(parents=True, exist_ok=True)
+        dp.write_bytes("".join(block).encode("utf-8"))
+        where, first = f"into a new file {dlabel}", 1
+    else:
+        if dp.is_dir() and not dp.is_symlink():
+            raise Refused(f"Nothing was changed: {dlabel} is a folder: name a file.")
+        if line is None or line == "":
+            raise Refused(f"Nothing was changed: {dlabel} already exists, so give line (0 for the top) to say where the lines go.")
+        dlines = _text(dp, dlabel).splitlines(keepends=True)
+        _fresh(de, dinner, dp)
+        at = _int(line, "line", None)
+        if not 0 <= at <= len(dlines):
+            raise Refused(f"Nothing was changed: {dlabel} has {len(dlines)} lines, so line must be a number from 0 (the top) to {len(dlines)}.")
+        if at and not dlines[at - 1].endswith("\n"):
+            dlines[at - 1] += "\n"
+        if move and same:   # one file: take the lines out, then put them in at the place counted before taking them out
+            del dlines[a - 1:b]
+            at = at - n if at >= b else at
+        dlines[at:at] = block
+        dp.write_bytes("".join(dlines).encode("utf-8"))
+        where, first = f"into {dlabel} after line {at}", at + 1
+    if move and not same:
+        rest = slines[:a - 1] + slines[b:]
+        sp.write_bytes("".join(rest).encode("utf-8"))
+        _saw(se, sinner, sp)
+    _saw(de, dinner, dp)
+    verb = "Moved" if move else "Copied"
+    return (f"{verb} lines {a} to {b} of {slabel} ({n} line{'s' if n != 1 else ''}) {where}; they are now lines {first} to "
+            f"{first + n - 1} there." + (f" They were removed from {slabel}." if move else "") + " The change is in the working copy only.")
 
 
 def delete(path):

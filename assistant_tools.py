@@ -6,7 +6,8 @@ through scrub.py. Paths look like vault/entities/foo.md or state/review_log.json
 entities/foo.md means the vault.
 
 Code is not read here. Every Git server the Assistant has a token for is a working copy in its sandbox (sandbox.py),
-with its own tools: list, grep, view, create, replace, insert, delete, rename, run, status, reset and propose. Those
+with its own tools: list, grep, view, create, replace, replace_lines, insert, copy, delete, rename, run, status, reset and
+propose. Those
 paths look like git/<server name>/README.md."""
 import json
 import re
@@ -295,6 +296,8 @@ TOOLS = {"search": do_search,
          "view": lambda a: sandbox.view(a.get("path"), a.get("start"), a.get("end")),
          "create": lambda a: sandbox.create(a.get("path"), a.get("text")),
          "replace": lambda a: sandbox.replace(a.get("path"), a.get("old"), a.get("new")),
+         "replace_lines": lambda a: sandbox.replace_lines(a.get("path"), a.get("start"), a.get("end"), a.get("text")),
+         "copy": lambda a: sandbox.copy(a.get("from"), a.get("start"), a.get("end"), a.get("to"), a.get("line"), a.get("move")),
          "insert": lambda a: sandbox.insert(a.get("path"), a.get("line"), a.get("text")),
          "delete": lambda a: sandbox.delete(a.get("path")),
          "rename": lambda a: sandbox.rename(a.get("from"), a.get("to")),
