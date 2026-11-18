@@ -188,6 +188,7 @@ body.setpage main{max-width:none}
 .sgrp{margin-top:30px;scroll-margin-top:108px}
 .sgrp>h2{font-size:22px;margin:0;padding-bottom:6px;border-bottom:2px solid var(--line)}
 .sgrp:empty,.sgrp.none{display:none}
+body.setpage #pp{display:none}
 body.setpage main .card{background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 0 12px;margin:0}
 body.setpage main .card>h3,body.setpage main .card>details>summary{font-size:17px}
 body.setpage main button{padding:6px 12px;border-radius:8px;font-size:14px}
@@ -202,8 +203,10 @@ body.setpage main button{padding:6px 12px;border-radius:8px;font-size:14px}
 (function(){
 document.body.classList.add("setpage");
 // The groups, in the order shown, and which of the page's blocks each holds. The Chats section is drawn by its own
-// script next to the model cards a moment after the page opens: tidy() moves it into its group.
-const GROUPS=[["Models",["mm","sp","cu"]],["Servers",["sv","srv","grp"]],["Chats",[]],["Git servers",["gitsv"]],["Prompts",["pp"]],
+// script next to the model cards a moment after the page opens: tidy() moves it into its group. The prompts have no group:
+// each model's prompts card is moved into a Prompts dropdown on that model's own card (power.py), and the block they
+// start in stays hidden so they do not show at the bottom first.
+const GROUPS=[["Models",["mm","sp","cu"]],["Servers",["sv","srv","grp"]],["Chats",[]],["Git servers",["gitsv"]],
  ["Limits",["tn"]],["Account",["ac","tc"]],["Updates",["upd"]]];
 const main=$("main"),idx=h("div",{id:"sidx","aria-label":"Sections of this page"}),box={};
 const secs=GROUPS.map(function(g){

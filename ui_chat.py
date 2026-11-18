@@ -1011,7 +1011,9 @@ CHAT_HTML = r"""
 #cbox{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(100% - 24px,736px);z-index:6;background:var(--bg);padding:8px 0}
 #cuse{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12px;margin:0 4px 4px}#cuseA{margin-left:auto;text-align:right}
 /* A wide window: the list of chats stays on screen down the left (drag its edge to resize it), and the thread and message
-   box fill the rest. A message reaches two thirds of the way across from its own side; a reply has no bubble. */
+   box fill the rest. A message reaches two thirds of the way across from its own side. On every size a reply has no
+   bubble (on a phone it uses the whole width); cards that ask you something keep their box. */
+body.chatpage .bot:not(.ask){width:auto;max-width:none;background:none;border:0;border-radius:0;padding:0}
 #cgrip{display:none}
 @media (min-width:1100px){
  body.chatpage{--cw:300px}
@@ -1020,7 +1022,7 @@ CHAT_HTML = r"""
  body.chatpage main{max-width:none;margin:0 0 0 var(--cw);padding:12px 24px}
  body.chatpage #cbox{left:calc(var(--cw) + 24px);right:24px;width:auto;transform:none}
  body.chatpage .me{max-width:66%}
- body.chatpage .bot:not(.ask){max-width:66%;background:none;border:0;border-radius:0;padding:0}
+ body.chatpage .bot:not(.ask){width:fit-content;max-width:66%}
  #cgrip{display:block;position:fixed;top:52px;bottom:0;left:calc(var(--cw) - 3px);width:7px;cursor:col-resize;z-index:21;touch-action:none}
  #cgrip:hover,#cgrip.on{background:var(--acc);opacity:.5}
 }
