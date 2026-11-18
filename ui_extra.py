@@ -406,9 +406,21 @@ ASK_HTML = r"""
 .chip.working{background:var(--acc);color:#fff}
 .chip.done{background:#34d399;color:#000}
 .hb{margin-top:8px}
+/* A wide window: open cards in a grid, as many across as fit (each at least 380px), each its own height; a card with a diff
+   takes a whole row. History below, the full width and without a box. Phones keep the one column. */
+@media (min-width:1100px){
+ body.askpage main{max-width:none;padding:12px 32px}
+ body.askpage #open{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;align-items:start;margin-top:10px}
+ body.askpage #open>.card{margin:0}
+ body.askpage #open>.wide{grid-column:1/-1}
+ body.askpage #open>.empty{grid-column:1/-1;background:none;border:0;border-radius:0;padding:0}
+ body.askpage details.hist{background:none;border:0;border-radius:0;padding:0;margin-top:28px}
+ body.askpage details.hist>summary{font-size:17px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid var(--line)}
+}
 </style>
-<details class="card" open><summary class="mut">History (kept 30 days)</summary><div id="done"></div></details>
+<details class="card hist" open><summary class="mut">History (kept 30 days)</summary><div id="done"></div></details>
 <script>
+document.body.classList.add("askpage");
 // A change to a file in a Git repository: exactly which repository, branch and file, a summary, and the diff line by line.
 function diffBox(p){const lines=String(p.diff||"").split("\n").map(function(l){
   const c=l.startsWith("+++")||l.startsWith("---")?"var(--mut)":l.startsWith("+")?"#34d399":l.startsWith("-")?"#f87171":l.startsWith("@@")?"#60a5fa":"inherit";
@@ -419,7 +431,7 @@ function diffBox(p){const lines=String(p.diff||"").split("\n").map(function(l){
   p.summary?h("div",{},h("b",{},"Summary: "),p.summary):null,
   p.local?null:h("div",{class:"mut",style:"margin-top:4px"},p.commit?"Approve and commit commits exactly this diff to that file and pushes it. Nothing else changes.":"This server is read only: approving only marks the draft approved."),
   h("div",{style:"font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:6px"},...lines))}
-function card(q){const c=h("div",{class:"card"},h("h3",{},q.question),q.why?h("div",{class:"mut"},q.why):null,q.payload&&q.payload.diff?diffBox(q.payload):null);
+function card(q){const c=h("div",{class:q.payload&&q.payload.diff?"card wide":"card"},h("h3",{},q.question),q.why?h("div",{class:"mut"},q.why):null,q.payload&&q.payload.diff?diffBox(q.payload):null);
  const finish=async(path,body)=>{try{await api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});c.remove();badge();load()}catch(e){alert(e.message)}};
  for(const o of q.options)c.append(h("button",{class:"pri",onclick:()=>finish("/api/questions/answer",{id:q.id,answer:o.value})},o.label));
  if(q.kind==="free"){const t=h("textarea",{rows:"3",placeholder:"Your answer..."});c.append(t,h("button",{class:"pri",onclick:()=>t.value.trim()&&finish("/api/questions/answer",{id:q.id,answer:t.value})},"Send"))}
@@ -434,7 +446,7 @@ function row(q){
  return r}
 let allDone=false;
 async function load(){const[o,d]=await Promise.all([api("/api/questions?status=open"),api("/api/questions?status=closed")]);
- $("#open").replaceChildren(...(o.questions.length?o.questions.map(card):[h("div",{class:"card mut"},"No questions right now. When the agent is unsure about something it will show up here.")]));
+ $("#open").replaceChildren(...(o.questions.length?o.questions.map(card):[h("div",{class:"card mut empty"},"No questions right now. When the agent is unsure about something it will show up here.")]));
  const shown=allDone?d.questions:d.questions.slice(0,10);
  $("#done").replaceChildren(...shown.map(row),...(d.questions.length>shown.length?[h("button",{onclick:()=>{allDone=true;load()}},"See more ("+(d.questions.length-shown.length)+")")]:[]))}
 load();
