@@ -332,27 +332,48 @@ PAGE = PAGE.replace("__DRAWER__", ui_nav.DRAWER).replace("__THEME_JS__", ui_nav.
 GRAPH_HTML = r"""
 <style>.lrow{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);cursor:pointer}.lt{flex:1;min-width:0}.lt>div{overflow-wrap:anywhere}.lp{font-size:12px}
 .tg{display:inline-block;font-size:13px;padding:4px 10px;margin:2px 4px 2px 0;border-radius:14px;border:1px solid var(--line);background:var(--card);cursor:pointer;user-select:none}.tg.off{opacity:.35}.tg i{display:inline-block;width:9px;height:9px;border-radius:5px;margin-right:6px}
-.gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}</style>
+.gdel{color:#f87171;background:none;border:0;padding:0 8px;font-size:13px;margin:0 0 0 6px}
+.lrow{scroll-margin-top:60px}
+.lback{display:inline-block;color:var(--acc);cursor:pointer;margin:10px 0 0;font-size:14px}
+/* A note opens under its own row in the list, on every size; several can be open. A wide window: the list uses the full
+   width, one line per note in columns Title | Path | Type; an open note's map keeps the size it has on a phone. */
+@media (min-width:1100px){
+ body.listpage main{max-width:none;padding:12px 32px}
+ body.listpage .lt{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;align-items:baseline}
+ body.listpage .lnote svg{max-width:736px}
+}</style>
 <input id="q" type="search" placeholder="Search notes, names, aliases..." autocomplete="off">
 <div id="stats" class="mut" style="margin:6px 2px"></div>
 <div id="view"></div>
 <div id="tags"></div>
 <div id="list"></div>
 <script>
+document.body.classList.add("listpage");
 const COL={entity:"#5b8def",summary:"#34d399",timeline:"#f5a524",conversation:"#8b93a7",raw:"#8b93a7","claude-memory":"#c084fc",note:"#f472b6",file:"#22d3ee","file-note":"#22d3ee","updated-file":"#facc15","derived-file":"#a78bfa",hub:"#a3e635"};   // the fallback; the colors set under Settings, Tag colors replace them
 const col=t=>COL[t]||COL.note;
-function row(n){return h("div",{class:"lrow",onclick:()=>openNote(n.path)},h("div",{class:"lt"},h("div",{},n.title),h("div",{class:"mut lp"},n.path)),h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
-function chip(n,on){return h("span",{class:"chip",onclick:()=>openNote(n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
+// Notes open under their own row. OPEN: row path -> {stack: the notes opened there, newest last; el: where they show}. A
+// linked note opened from inside one takes its place there, and Back returns to the one before. TOP: a note opened from
+// another page (the address ends #<path>) that is not in the list: it shows at the top.
+const OPEN=new Map();let TOP=null;
+function row(n){
+ const r=h("div",{class:"lrow",onclick:()=>toggle(n.path)},h("div",{class:"lt"},h("div",{},n.title),h("div",{class:"mut lp"},n.path)),h("span",{class:"badge",style:"background:"+col(n.type)},n.type));
+ const o=OPEN.get(n.path);
+ return o?[r,o.el]:[r]}
+function toggle(path){
+ if(OPEN.has(path)){OPEN.delete(path);paint();return}
+ const o={stack:[path],el:h("div",{class:"lnote"})};OPEN.set(path,o);paint();show(o)}
+function go(o,path){o.stack.push(path);show(o)}
+function chip(n,o){return h("span",{class:"chip",onclick:()=>go(o,n.path)},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type))}
 const hide=new Set();let curD=null,curLabel="";
 async function showList(url,label){const d=await api(url);if(d.stats)$("#stats").textContent=d.stats.notes+" notes, "+d.stats.links+" links, "+d.stats.broken_links+" broken, "+d.stats.orphans+" unlinked";
  curD=d;curLabel=label;paint()}
 function paint(){const d=curD,types={};d.notes.forEach(n=>types[n.type]=(types[n.type]||0)+1);
  const shown=d.notes.filter(n=>!hide.has(n.type));
  $("#tags").replaceChildren(...Object.keys(types).sort().map(t=>h("span",{class:"tg"+(hide.has(t)?" off":""),onclick:()=>{hide.has(t)?hide.delete(t):hide.add(t);paint()}},h("i",{style:"background:"+col(t)}),t+" "+types[t])));
- $("#list").replaceChildren(h("div",{class:"mut"},curLabel+" ("+shown.length+(shown.length<d.notes.length?" of "+d.notes.length:"")+")"),...shown.map(row))}
+ $("#list").replaceChildren(h("div",{class:"mut"},curLabel+" ("+shown.length+(shown.length<d.notes.length?" of "+d.notes.length:"")+")"),...shown.flatMap(row))}
 let t;$("#q").addEventListener("input",e=>{clearTimeout(t);t=setTimeout(()=>{const v=e.target.value.trim();
  v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Everything, most connected first")},250)});
-let hops=1,cur=null;
+let hops=1;
 function layout(d,W,H){const N=d.nodes,idx={};N.forEach((n,i)=>{idx[n.path]=i;const a=i*2.4,r=n.dist?60*n.dist+((i*37)%25):0;n.x=W/2+r*Math.cos(a);n.y=H/2+r*Math.sin(a);n.vx=n.vy=0});
  const E=d.edges.map(e=>[idx[e.s],idx[e.t]]);
  const its=Math.max(30,Math.min(260,Math.floor(4e7/(N.length*N.length+1))));   // a very busy note gets fewer passes so the page stays quick
@@ -365,37 +386,41 @@ function layout(d,W,H){const N=d.nodes,idx={};N.forEach((n,i)=>{idx[n.path]=i;co
    n.vx+=(W/2-n.x)*.004;n.vy+=(H/2-n.y)*.004;n.x+=Math.max(-12,Math.min(12,n.vx))*cool;n.y+=Math.max(-12,Math.min(12,n.vy))*cool;n.vx*=.6;n.vy*=.6;
    n.x=Math.max(14,Math.min(W-14,n.x));n.y=Math.max(14,Math.min(H-14,n.y))}}
  return E}
-function svg(d){const W=360,H=340,E=layout(d,W,H),N=d.nodes,S="http://www.w3.org/2000/svg",s=document.createElementNS(S,"svg");
+function svg(d,o){const W=360,H=340,E=layout(d,W,H),N=d.nodes,S="http://www.w3.org/2000/svg",s=document.createElementNS(S,"svg");
  s.setAttribute("viewBox","0 0 "+W+" "+H);
  for(const[a,b]of E){const l=document.createElementNS(S,"line");l.setAttribute("x1",N[a].x);l.setAttribute("y1",N[a].y);l.setAttribute("x2",N[b].x);l.setAttribute("y2",N[b].y);l.setAttribute("stroke","#8892a6");l.setAttribute("stroke-opacity",".45");s.append(l)}
  for(const n of N){const c=document.createElementNS(S,"circle");c.setAttribute("cx",n.x);c.setAttribute("cy",n.y);const rad=n.dist?5+Math.min(n.deg,8):12;c.setAttribute("r",rad);
-  c.setAttribute("fill",col(n.type));c.setAttribute("stroke",n.dist?"none":"#fff");c.setAttribute("stroke-width","2");c.style.cursor="pointer";c.addEventListener("click",()=>openNote(n.path));
+  c.setAttribute("fill",col(n.type));c.setAttribute("stroke",n.dist?"none":"#fff");c.setAttribute("stroke-width","2");c.style.cursor="pointer";c.addEventListener("click",()=>go(o,n.path));
   const tt=document.createElementNS(S,"title");tt.textContent=n.title;c.append(tt);s.append(c);
   if(n.dist===0||n.deg>=4||N.length<=14){const x=document.createElementNS(S,"text");x.setAttribute("x",n.x);x.setAttribute("y",n.y-rad-4);x.setAttribute("text-anchor","middle");x.setAttribute("font-size","10");
    x.setAttribute("fill","currentColor");x.setAttribute("pointer-events","none");x.textContent=n.title.length>22?n.title.slice(0,21)+"…":n.title;s.append(x)}}
  return s}
-async function openNote(path){cur=path;const[n,g]=await Promise.all([api("/api/graph/note?path="+encodeURIComponent(path)),api("/api/graph/hood?path="+encodeURIComponent(path)+"&hops="+hops)]);
- const body=h("div",{class:"body"});body.innerHTML=n.body;body.querySelectorAll("a.wl").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();openNote(a.dataset.p)}));
- const hopBtn=h("button",{onclick:()=>{hops=hops===1?2:1;openNote(cur)}},hops===1?"Show 2 hops":"Show 1 hop");
+async function show(o){const path=o.stack[o.stack.length-1];const[n,g]=await Promise.all([api("/api/graph/note?path="+encodeURIComponent(path)),api("/api/graph/hood?path="+encodeURIComponent(path)+"&hops="+hops)]);
+ const body=h("div",{class:"body"});body.innerHTML=n.body;body.querySelectorAll("a.wl").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();go(o,a.dataset.p)}));
+ const hopBtn=h("button",{onclick:()=>{hops=hops===1?2:1;show(o)}},hops===1?"Show 2 hops":"Show 1 hop");
  const legend=h("div",{class:"legend"},...Object.entries({entity:1,summary:1,timeline:1,raw:1,file:1,"file-note":1,"updated-file":1,"claude-memory":1}).map(([k])=>h("span",{},h("i",{style:"background:"+col(k)}),k)));
- $("#view").replaceChildren(h("div",{class:"card"},
+ o.el.replaceChildren(o.stack.length>1?h("a",{class:"lback",onclick:()=>{o.stack.pop();show(o)}},"‹ Back"):null,h("div",{class:"card"},
   h("h2",{},n.title,h("span",{class:"badge",style:"background:"+col(n.type)},n.type)),h("div",{class:"mut"},n.path),
   n.aliases.length?h("div",{class:"mut"},"aliases: "+n.aliases.join(", ")):null,
-  svg(g),legend,h("div",{class:"mut"},g.nodes.length+" notes within "+hops+" hop"+(hops>1?"s":"")+(g.truncated?" (showing the closest "+g.nodes.length+")":"")),hopBtn,h("button",{class:"gdel",onclick:()=>deleteEntry(n)},"Delete")),
-  h("div",{class:"card"},n.files&&n.files.length?h("div",{},h("h3",{},"Files ("+n.files.length+")"),...n.files.map(chip)):null,h("h3",{},"Links out ("+n.out.length+")"),...(n.out.length?n.out.map(chip):[h("span",{class:"mut"},"none")]),
-   h("h3",{},"Backlinks ("+n.back.length+")"),...(n.back.length?n.back.map(chip):[h("span",{class:"mut"},"none")]),
+  svg(g,o),legend,h("div",{class:"mut"},g.nodes.length+" notes within "+hops+" hop"+(hops>1?"s":"")+(g.truncated?" (showing the closest "+g.nodes.length+")":"")),hopBtn,h("button",{class:"gdel",onclick:()=>deleteEntry(n,o)},"Delete")),
+  h("div",{class:"card"},n.files&&n.files.length?h("div",{},h("h3",{},"Files ("+n.files.length+")"),...n.files.map(x=>chip(x,o))):null,h("h3",{},"Links out ("+n.out.length+")"),...(n.out.length?n.out.map(x=>chip(x,o)):[h("span",{class:"mut"},"none")]),
+   h("h3",{},"Backlinks ("+n.back.length+")"),...(n.back.length?n.back.map(x=>chip(x,o)):[h("span",{class:"mut"},"none")]),
    n.broken.length?h("div",{class:"mut",style:"color:var(--warn)"},"Broken links: "+n.broken.join(", ")):null),
-  h("div",{class:"card"},h("div",{class:"mut"},Object.entries(n.meta).map(([k,v])=>k+": "+v).join("  ·  ")),h("hr"),body,n.truncated?h("div",{class:"mut"},"(shortened)"):null));
- window.scrollTo({top:$("#view").offsetTop-60,behavior:"smooth"})}
+  h("div",{class:"card"},h("div",{class:"mut"},Object.entries(n.meta).map(([k,v])=>k+": "+v).join("  ·  ")),h("hr"),body,n.truncated?h("div",{class:"mut"},"(shortened)"):null))}
 function refreshList(){const v=$("#q").value.trim();return v?showList("/api/graph/search?q="+encodeURIComponent(v),"Matches"):showList("/api/graph/hubs","Everything, most connected first")}
-async function deleteEntry(n){
+async function deleteEntry(n,o){
  if(!await holdConfirm("Delete "+n.title+"?",n.path+" will be deleted from the vault and cannot be undone. Anything that links to it will have a broken link."))return;
  try{await api("/api/graph/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:n.path})});
-  history.replaceState(null,"",location.pathname);$("#view").replaceChildren(h("div",{class:"card mut"},"Deleted "+n.path));await refreshList()}
+  history.replaceState(null,"",location.pathname);
+  if(o===TOP)TOP=null;else for(const[k,v]of OPEN)if(v===o)OPEN.delete(k);   // the place it was open in closes
+  $("#view").replaceChildren(h("div",{class:"card mut"},"Deleted "+n.path));await refreshList()}
  catch(e){alert(e.message)}}
 api("/api/tagcolors").then(d=>Object.assign(COL,d.colors)).catch(()=>{}).then(()=>{
- showList("/api/graph/hubs","Everything, most connected first");
- if(location.hash.length>1)openNote(decodeURIComponent(location.hash.slice(1)))});
+ showList("/api/graph/hubs","Everything, most connected first").then(()=>{
+  if(location.hash.length<=1)return;
+  const p=decodeURIComponent(location.hash.slice(1));
+  if(curD&&curD.notes.some(x=>x.path===p&&!hide.has(x.type))){toggle(p);OPEN.get(p).el.previousSibling.scrollIntoView({block:"start"})}   // under its row
+  else{TOP={stack:[p],el:h("div",{class:"lnote"})};$("#view").replaceChildren(TOP.el);show(TOP)}})});
 </script>
 """
 
