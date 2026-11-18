@@ -40,11 +40,13 @@ def register(app, authed):
 
 HTML = r"""
 <style>
-.pp textarea{width:100%;height:50vh;min-height:120px;resize:vertical;overflow-y:auto;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box}
-.pp details.pi{border-top:1px solid var(--line);padding:8px 0}
-.pp summary{cursor:pointer}
-.pp pre{white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}
-.pp .pb button{margin:8px 8px 0 0}
+/* Each prompt is a details.pi. power.py moves them out of #pp into each model's Prompts dropdown, so these rules are on
+   the item itself, not on #pp. */
+details.pi textarea{width:100%;height:50vh;min-height:120px;resize:vertical;overflow-y:auto;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box}
+details.pi{border-top:1px solid var(--line);padding:8px 0}
+details.pi>summary{cursor:pointer}
+details.pi pre{white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}
+details.pi .pb button{margin:8px 8px 0 0}
 </style>
 <div id="pp" class="pp"></div>
 <script>
