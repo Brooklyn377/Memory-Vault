@@ -105,10 +105,22 @@ HTML = r"""
 .qn{padding:10px 0 2px;font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase}
 .qr{padding:8px 0;border-top:1px solid var(--line)}
 .qs{font-size:13px}
+/* A wide window: the models side by side, as many across as fit (each at least 340px), each column its own height, with no
+   boxes; the Failed list below, the full width and without a box, one line per task. Phones keep the stacked cards. */
+@media (min-width:1100px){
+ body.queuepage main{max-width:none;padding:12px 32px}
+ body.queuepage #qp{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px 28px;align-items:start}
+ body.queuepage #qp>.card,body.queuepage #fq>.card{background:none;border:0;border-radius:0;padding:0;margin:10px 0 0}
+ body.queuepage #qp .qh{padding-bottom:6px;border-bottom:2px solid var(--line)}
+ body.queuepage #fq>.card{margin-top:32px}
+ body.queuepage #fq h3{font-size:17px;margin:0 0 6px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+ body.queuepage #fq .qr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:16px;align-items:center}
+}
 </style>
 <div id="qp"></div>
 <script>
 (function(){
+document.body.classList.add("queuepage");
 const M=[["sweeper","Sweeper","#4c9aff"],["reviewer","Reviewer","#f5a623"],["curator","Curator","#34d399"],["assistant","Assistant","#e879f9"]];
 let D=null;const SHOWN={};
 function dur(s){s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+"h "+m+"m":m?m+"m "+(s%60)+"s":s+"s"}
@@ -144,8 +156,8 @@ async function act(body){const r=await fetch("/api/failed/act",{method:"POST",he
  const j=await r.json().catch(function(){return{}});if(!r.ok)window.alert(j.detail||"Could not do that");load();return j}
 async function load(){try{const d=await api("/api/failed");
  const rows=d.items.map(function(x){return h("div",{class:"qr"},h("div",{},x.what),h("div",{class:"mut qs"},(x.why||"")+(x.at?" · "+x.at:"")),
-  h("button",{class:"pri",onclick:function(){act({source:x.source,key:x.key,action:"retry"})}},"Retry"),
-  h("button",{onclick:function(){act({source:x.source,key:x.key,action:"skip"})}},"Skip"))});
+  h("span",{},h("button",{class:"pri",onclick:function(){act({source:x.source,key:x.key,action:"retry"})}},"Retry"),
+  h("button",{onclick:function(){act({source:x.source,key:x.key,action:"skip"})}},"Skip")))});
  $("#fq").replaceChildren(h("div",{class:"card"},h("h3",{},"Failed, waiting for you"+(d.items.length?" ("+d.items.length+")":"")),
   d.items.length?h("div",{class:"mut"},"Nothing here retries by itself. Retry all also has the file checker go over every file again."):h("div",{class:"mut"},"Nothing failed. Retry all still has the file checker go over every file again."),
   h("button",{class:"pri",onclick:async function(){const j=await act({all:true});if(j&&j.ok)window.alert("Queued again: "+j.retried+(j.retried===1?" task":" tasks")+", and every file is read again.")}},"Retry all"),...rows))}catch(e){}}
