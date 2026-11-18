@@ -21,7 +21,7 @@ textarea{resize:none;overflow-y:auto}
 .dn{background:#fb923c;color:#fff;border-radius:10px;padding:0 8px;font-size:13px;font-weight:600}
 .dn[hidden]{display:none}
 #dwr .dn{background:none;color:inherit;font-size:15px;padding:0}
-#dchat{position:fixed;top:52px;bottom:0;left:0;width:min(80vw,300px);background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-right:1px solid var(--line,#2b3240);z-index:36;transform:translateX(102%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;padding:8px;overflow-y:auto;box-sizing:border-box}
+#dchat{position:fixed;top:52px;bottom:0;left:0;width:min(80vw,300px);background:var(--card,#1b2029);color:var(--ink,#e6e9f0);border-right:1px solid var(--line,#2b3240);z-index:36;transform:translateX(-102%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;padding:8px;overflow-y:auto;box-sizing:border-box}
 #dchat.open{transform:none;visibility:visible;transition:transform .2s ease,visibility 0s}
 #dchat .dh{display:flex;align-items:center;gap:6px;padding:0 0 6px}
 #dchat .dh b{font-size:17px}
