@@ -205,9 +205,10 @@ document.body.classList.add("setpage");
 // The groups, in the order shown, and which of the page's blocks each holds. The Chats section is drawn by its own
 // script next to the model cards a moment after the page opens: tidy() moves it into its group. The prompts have no group:
 // each model's prompts card is moved into a Prompts dropdown on that model's own card (power.py), and the block they
-// start in stays hidden so they do not show at the bottom first.
+// start in stays hidden so they do not show at the bottom first. Limits have no group either: each model's limits go into
+// its own card (ui_tuning.py), and the Assistant's are in the Chats section.
 const GROUPS=[["Models",["mm","sp","cu"]],["Servers",["sv","srv","grp"]],["Chats",[]],["Git servers",["gitsv"]],
- ["Limits",["tn"]],["Account",["ac","tc"]],["Updates",["upd"]]];
+ ["Account",["ac","tc"]],["Updates",["upd"]]];
 const main=$("main"),idx=h("div",{id:"sidx","aria-label":"Sections of this page"}),box={};
 const secs=GROUPS.map(function(g){
  const s=h("section",{class:"sgrp"},h("h2",{},g[0]));box[g[0]]=s;

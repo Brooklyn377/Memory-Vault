@@ -81,10 +81,7 @@ function place(){
  Object.keys(MN).forEach(function(m){const rows=d.items.filter(function(x){return x.model===m});if(rows.length)SEC[m]=build(rows);else placed[m]=true});
  if(place()===0)return;
  const mo=new MutationObserver(function(){if(place()===0)mo.disconnect()});
- mo.observe(document.body,{childList:true,subtree:true});
- setTimeout(function(){
-  mo.disconnect();
-  Object.keys(MN).forEach(function(m){if(!placed[m]&&SEC[m]){$("#tn").append(h("div",{class:"card"},h("h3",{},MN[m]+" limits"),SEC[m]));placed[m]=true}})},10000)})();
+ mo.observe(document.body,{childList:true,subtree:true})})();   // no time limit: it waits for the model cards as long as the page is open
 })();
 </script>
 """
