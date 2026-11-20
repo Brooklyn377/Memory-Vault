@@ -529,7 +529,7 @@ def view(path, start=None, end=None):
 def create(path, text):
     e, inner, p = _file(path, False)
     if not isinstance(text, str):
-        raise Refused("Nothing was changed: give the whole file as text.")
+        raise Refused("Nothing was changed: give the start of the file as text, in text.")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(text.encode("utf-8"))
     _saw(e, inner, p)   # it wrote the whole file, so it knows the numbers

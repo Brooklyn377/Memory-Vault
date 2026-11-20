@@ -42,9 +42,12 @@ ASSIST_SYS = (
     'context. Carry out tasks requested by the user: look things up, answer, and make the file edits and config '
     'changes they ask for. If you are unsure whether to do something yourself ask the person in your answer. Reply '
     'with ONLY JSON. DO NOT PUT ANY TEXT OUTSIDE OF THE JSON: a reply with anything outside it is sent back to you '
-    'and never shown to the person. To use tools, reply with one or more tool calls, one after another or as a JSON '
-    'list: {"tool":"<name>","args":{...}}. They run in order and stop at the first one that fails. When you are '
-    'ready, reply with only {"answer":"<your reply>"}, never in the same reply as a tool call. Tools: search '
+    'and never shown to the person. Messages that start with HANDLER come from the system that runs your tools, not '
+    'from the person. They give you tool results and say exactly why a reply was not accepted. The person never sees '
+    'them. To use a tool, reply with exactly ONE tool call, {"tool":"<name>","args":{...}}, then wait for its result. '
+    'The text you write in one tool call (text, old, new or command) can be at most {CALL_CHARS} characters. Work in '
+    'small steps: create a file with its first line or two, then add the rest with insert, one small piece per call. '
+    'When you are ready, reply with only {"answer":"<your reply>"}, never in the same reply as a tool call. Tools: search '
     '{"text":"<words>","where":"all|notes|raw|inbox|vault|state|logs"} finds files in the vault and state; open '
     '{"path":"<path>","start":<line>} reads one of those files or lists a folder; links {"path":"<note path>"} lists '
     'linked notes; chats {"id":"<chat id, optional>"} lists your chats, or reads one; tasks {} lists open to-do '
@@ -73,8 +76,8 @@ ASSIST_SYS = (
     'whole file; a new "to" path makes a new file; "move":true also removes them from "from", between sandbox files '
     'only); replace {"path":"<file>","old":"<exact text that is in the file once>","new":"<replacement>"} changes '
     'exact text that is in the file once; insert {"path":"<file>","line":<line number, 0 for the '
-    'top>,"text":"<text>"} adds text after a line; create {"path":"<file>","text":"<the whole file>"} makes a new '
-    'file; delete {"path":"<file>"} removes a file; rename {"from":"<file>","to":"<file>"} moves one. Use copy and '
+    'top>,"text":"<text>"} adds text after a line; create {"path":"<file>","text":"<the start of the file, at most {CALL_CHARS} '
+    'characters>"} makes a new file; delete {"path":"<file>"} removes a file; rename {"from":"<file>","to":"<file>"} moves one. Use copy and '
     'replace_lines instead of retyping text. 3. TEST: run {"repo":"<Git server name>","command":"<shell '
     'command>","hosts":["<host name>"]} runs a shell command in the top folder of that working copy and returns its '
     'exit code and output. Run the tests after you change code. repo is the Git server name exactly as repos lists '
@@ -429,19 +432,111 @@ def cited(reply):
     return reply
 
 
-FORMAT = ('Tool calls are {"tool":"<name>","args":{...}}; a reply to the person is {"answer":"<your reply>"}, and anything you '
-          'want them to read goes inside "answer".')
+H = "HANDLER (automatic message from the system, not from the person): "   # starts everything the handler says to the model
+QUOTE_MAX = 300   # longest piece of the model's own text quoted back to it; a longer one says how much is shown
+
+# How each tool is called, as the Assistant's instructions give it: sent back with a call that did not work.
+USAGE = {
+    "search": '{"text":"<words>","where":"all|notes|raw|inbox|vault|state|logs"}',
+    "open": '{"path":"<path>","start":<line>}',
+    "links": '{"path":"<note path>"}',
+    "chats": '{"id":"<chat id, optional>"}',
+    "tasks": "{}", "questions": "{}", "queue": "{}", "repos": "{}", "jobs": "{}",
+    "web_search": '{"query":"<words>"}',
+    "web_open": '{"url":"<address>","start":<character>}',
+    "write_note": '{"path":"<vault path ending .md>","text":"<the note>","why":"<one sentence>"}',
+    "edit_note": '{"path":"<note path>","old":"<exact text from the note>","new":"<replacement>","why":"<one sentence>"}',
+    "move_note": '{"from":"<note path>","to":"<new path>","why":"<one sentence>"}',
+    "list": '{"path":"<folder>"}',
+    "grep": '{"path":"<folder or file>","pattern":"<regular expression>"}',
+    "view": '{"path":"<file>","start":<line>,"end":<line>}',
+    "replace_lines": '{"path":"<file>","start":<first line>,"end":<last line>,"text":"<new text for those lines>"}',
+    "copy": ('{"from":"<sandbox file, vault note or chat>","start":<line>,"end":<line>,"to":"<sandbox file>",'
+             '"line":<line number, 0 for the top>,"move":true}'),
+    "replace": '{"path":"<file>","old":"<exact text that is in the file once>","new":"<replacement>"}',
+    "insert": '{"path":"<file>","line":<line number, 0 for the top>,"text":"<text>"}',
+    "create": '{"path":"<file>","text":"<the start of the file>"}',
+    "delete": '{"path":"<file>"}',
+    "rename": '{"from":"<file>","to":"<file>"}',
+    "run": '{"repo":"<Git server name>","command":"<shell command>","hosts":["<host name>"]}',
+    "status": '{"repo":"<Git server name>"}',
+    "reset": '{"path":"<file, or git/<Git server name> for everything>"}',
+    "propose": '{"paths":["<file>"],"why":"<one sentence>"}',
+}
+
+# The arguments that hold text the model writes, per tool: each is held to chat.call_chars characters per call.
+SIZED = {"create": ("text",), "insert": ("text",), "replace_lines": ("text",), "replace": ("old", "new"),
+         "run": ("command",), "write_note": ("text",), "edit_note": ("old", "new")}
 
 
-def _outside(where):
-    return (f"Your reply had text {where} the JSON, so nothing ran and nothing was shown to the person. Reply with ONLY JSON: no "
-            "words, no code fence, nothing before or after it. " + FORMAT)
+def _size_hint(name, field, lim):
+    """What to do instead of a call whose field is over the size limit."""
+    if field == "command":
+        return "Shorten the command, or write it into a script file with create and insert, then run that file."
+    if field == "old":
+        return ("Use a shorter piece of text that appears in the note only once." if name == "edit_note" else
+                "Use a shorter piece of text that appears in the file only once, or use replace_lines with line numbers.")
+    more = "edit_note" if name in ("write_note", "edit_note") else "insert"
+    return f"Send the first {lim} characters or fewer now, then add the rest with {more} in later calls."
+
+
+def _too_big(name, args, lim):
+    """The handler's message for a call whose written text is over the limit, or "" if it is within it."""
+    over = [(f, len(args[f])) for f in SIZED.get(name, ()) if isinstance(args.get(f), str) and len(args[f]) > lim]
+    if not over:
+        return ""
+    sizes = " and its ".join(f'"{f}" is {n:,} characters' for f, n in over)
+    hints = " ".join(dict.fromkeys(_size_hint(name, f, lim) for f, _ in over))
+    return H + f"your call to {name} was not run. Its {sizes}, and the limit is {lim} per call. {hints}"
+
+
+def _sentence(t):
+    t = str(t).strip()
+    return t if t[-1:] in ".!?" else t + "."
+
+
+def _quote(t):
+    """A piece of the model's reply, quoted exactly; a long one is cut and says how much of it is shown."""
+    t = t.strip()
+    return f'"{t[:QUOTE_MAX]}" (the first {QUOTE_MAX} of {len(t):,} characters)' if len(t) > QUOTE_MAX else f'"{t}"'
+
+
+def _kind_of(v):
+    if isinstance(v, str):
+        return "empty"
+    if isinstance(v, bool):
+        return "true or false"
+    if isinstance(v, (int, float)):
+        return "a number"
+    if isinstance(v, list):
+        return "a list"
+    if isinstance(v, dict):
+        return "an object"
+    return "null"
+
+
+def _outside(gaps, fenced):
+    """The handler's message for a reply with text outside its JSON: the exact text, and where it is."""
+    clean = [re.sub(r"```[^\n]*", "", g).strip() for g in gaps]
+    before, after, between = clean[0], clean[-1], " ".join(g for g in clean[1:-1] if g)
+    said = ([f"The text before it: {_quote(before)}."] if before else []) + \
+           ([f"The text between the JSON parts: {_quote(between)}."] if between else []) + \
+           ([f"The text after it: {_quote(after)}."] if after else [])
+    if fenced:
+        msg = (H + "your reply was not run and not shown to the person, because the JSON was inside a code fence. It starts "
+               f'with "{fenced}" and ends with "```". Remove those fence lines and send only the JSON.')
+        return msg + (" It also had text outside the JSON, which must go too. " + " ".join(said) if said else "")
+    where = ("before and after" if before and after else "before" if before else "after" if after else "between the parts of")
+    if between and (before or after):
+        where = "around and between the parts of"
+    return (H + f"your reply was not run and not shown to the person, because only JSON is accepted and it had text {where} "
+            "the JSON. " + " ".join(said) + " Remove that text and send the JSON alone.")
 
 
 def _read_reply(text):
-    """A reply is accepted only when, with its <think> blocks taken out, it is nothing but JSON: one answer, or one or more tool
-    calls (objects one after another, or one JSON list of them). Nothing is ever dropped: anything else goes back to the model.
-    -> (kind, value): ("tools", [call, ...]), ("answer", text), or ("problem", what to tell the model)."""
+    """A reply is accepted only when, with its <think> blocks taken out, it is nothing but JSON: one answer, or ONE tool call.
+    Nothing is ever dropped: anything else goes back to the model with exactly what is wrong.
+    -> (kind, value): ("tool", call), ("answer", text), or ("problem", what to tell the model)."""
     s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     dec, objs, spans, i = json.JSONDecoder(), [], [], 0
     while True:   # every JSON value that starts at an object or a list, and where each sits
@@ -461,41 +556,40 @@ def _read_reply(text):
     calls += [o for o in objs if isinstance(o, list) and o and all(isinstance(x, dict) and ("tool" in x or "answer" in x) for x in o)]
     if not calls:   # nothing usable: broken JSON, a wrong shape, or plain text
         if re.search(r'"tool"\s*:', s):
-            return "problem", _json_problem(text)
-        return "problem", _not_a_call(text) or ("Your reply was plain text with no JSON, so it was not shown to the person. Send it "
-                                                'again as only {"answer":"<your reply>"}.')
+            return "problem", _json_problem(s)
+        return "problem", _not_a_call(s) or (H + "your reply was not shown to the person, because it was plain text with no "
+                                             'JSON. Send it again as {"answer":"<your reply>"}.')
     gaps = [s[:spans[0][0]]] + [s[spans[k][1]:spans[k + 1][0]] for k in range(len(spans) - 1)] + [s[spans[-1][1]:]]
     if any(g.strip() for g in gaps):
-        if "```" in "".join(gaps):
-            return "problem", ("Your reply put the JSON inside a code fence, which is text outside the JSON, so nothing ran and "
-                               "nothing was shown to the person. Send the JSON alone, without the fence.")
-        before, after = bool(gaps[0].strip()), bool(gaps[-1].strip())
-        between = any(g.strip() for g in gaps[1:-1])
-        where = ("before and after" if before and after else "before" if before else "after" if after else "between the parts of")
-        if between and (before or after):
-            where = "around and between the parts of"
-        return "problem", _outside(where)
+        fence = re.search(r"```[^\n]*", "".join(gaps))
+        return "problem", _outside(gaps, fence.group(0).strip() if fence else "")
     flat = []
     for o in objs:   # only JSON is left: every value must be a tool call or an answer
         for x in (o if isinstance(o, list) else [o]):
             if not isinstance(x, dict) or not ("tool" in x or "answer" in x):
                 pairs = list(x.items()) if isinstance(x, dict) else []
                 return "problem", (_shape_message(pairs) if pairs else
-                                   "Your reply had JSON that is neither a tool call nor an answer, so nothing ran and nothing was "
-                                   "shown to the person. " + FORMAT)
+                                   H + f"your reply was not run: it has JSON ({_kind_of(x)}) that is neither a tool call nor an "
+                                   'answer. A tool call is {"tool":"<name>","args":{...}} and an answer is '
+                                   '{"answer":"<your reply>"}. Send one corrected JSON object.')
             flat.append(x)
     tools, answers = [x for x in flat if "tool" in x], [x for x in flat if "tool" not in x]
+    names = ", ".join(str(x.get("tool")) for x in tools)
     if tools and answers:
-        return "problem", ("Your reply had tool calls and an answer together, so nothing ran and the answer was not shown to the "
-                           "person. Send the tool calls alone, wait for their results, then send the answer alone.")
+        what = "a tool call" if len(tools) == 1 else f"{len(tools)} tool calls"
+        return "problem", (H + f"your reply had {what} ({names}) and an answer together, so nothing ran and the answer was not "
+                           "shown. Send the tool call alone, wait for its result, then send the answer alone.")
+    if len(tools) > 1:
+        return "problem", (H + f"your reply had {len(tools)} tool calls ({names}), so none of them ran. Send exactly one tool "
+                           "call per reply, then wait for its result.")
     if len(answers) > 1:
-        return "problem", 'Your reply had more than one answer, so none was shown to the person. Send one {"answer":"<your reply>"}.'
+        return "problem", H + f'your reply had {len(answers)} answers, so none was shown. Send exactly one {{"answer":"<your reply>"}}.'
     if tools:
-        return "tools", tools
+        return "tool", tools[0]
     answer = answers[0].get("answer")
     if not isinstance(answer, str) or not answer.strip():
-        return "problem", ('The "answer" in your reply was empty or was not text, so nothing was shown to the person. Send '
-                           '{"answer":"<your reply>"} with your reply as text inside it.')
+        return "problem", (H + f'the "answer" in your reply was {_kind_of(answer)}, so nothing was shown. Put your reply as text '
+                           'inside it: {"answer":"<your reply>"}.')
     pairs = _misplaced_call(answer)   # an answer that is itself a tool call written out as text
     if pairs:
         return "problem", _shape_message(pairs, in_answer=True)
@@ -525,46 +619,74 @@ def _shape_message(pairs, in_answer=False):
     keys = [k for k, _ in pairs]
     dup = sorted({k for k in keys if keys.count(k) > 1})
     tool = next((k for k in keys if k in assistant_tools.TOOLS), None)
-    return (("Your answer is a tool call written out as text, so nothing ran and it was not shown to the person. A tool call is not an answer: "
-             "send it as the reply itself. " if in_answer else
-             "That reply is a JSON object that is neither a tool call nor an answer, so nothing ran and nothing was shown to the person. ")
-            + f"Its key{'s are' if len(set(keys)) != 1 else ' is'} {', '.join(repr(k) for k in dict.fromkeys(keys))}. "
-            + (f"The key {', '.join(repr(k) for k in dup)} is there more than once: send ONE tool call per reply, then wait for its result. " if dup else "")
-            + 'A tool call is {"tool":"<name>","args":{...}} and an answer is {"answer":"<your reply>"}: the first key must be "tool" or "answer". '
-            + (f'The tool name goes after "tool", for example {{"tool":"{tool}","args":{{...}}}}. ' if tool else "")
+    if in_answer:
+        return (H + 'your "answer" contains a tool call written as text, so nothing ran and it was not shown to the person. '
+                f'Send the tool call as the whole reply: {{"tool":"{tool}","args":{{...}}}}.')
+    return (H + f"your reply was not run: it is a JSON object with the key{'s' if len(set(keys)) != 1 else ''} "
+            + ", ".join(f'"{k}"' for k in dict.fromkeys(keys))
+            + ', but a tool call must start with "tool" and an answer with "answer". '
+            + (f"The key {', '.join(repr(k) for k in dup)} is there more than once. " if dup else "")
+            + (f'The tool name goes after "tool": {{"tool":"{tool}","args":{{...}}}}. ' if tool else "")
             + "Send one corrected JSON object.")
 
 
-def _not_a_call(text):
+def _not_a_call(s):
     """A reply that is no tool call and no answer but looks like an attempt at one: what is wrong with it, for the model, or "" if it
     is not that. It is never shown as the answer and nothing in it is run."""
-    s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     if s.startswith("{"):
         try:
             pairs, _ = json.JSONDecoder(object_pairs_hook=list).raw_decode(s)
         except ValueError:
-            return _json_problem(text)
-        return _shape_message(pairs)
+            return _json_problem(s)
+        return _shape_message(pairs) if isinstance(pairs, list) and pairs and all(isinstance(p, tuple) for p in pairs) else ""
     pairs = _misplaced_call(s)   # after a sentence, or inside a code fence
     return _shape_message(pairs) if pairs else ""
 
 
-def _json_problem(text):
-    """What is wrong with a tool call that did not parse, in words the model can act on (where, and what was there)."""
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    hit = re.search(r'"tool"\s*:', text)
-    start = text.rfind("{", 0, hit.start()) if hit else text.find("{")
-    why = ""
-    if start >= 0:
-        try:
-            json.JSONDecoder().raw_decode(text, start)
-        except ValueError as e:
-            pos = getattr(e, "pos", start)
-            near = text[max(start, pos - 25):pos] + "<<HERE>>" + text[pos:pos + 15]
-            why = f" The problem: {e.msg}, at the place marked here: {near}"
-    return ("That tool call is NOT valid JSON, so it did not run, and sending it again unchanged will fail the same way." + why +
-            ' Every key and every text value needs double quotes, e.g. {"tool": "search", "text": "Bazzite", "where": "all"}. '
-            'Send one corrected JSON object, or {"answer": "..."} if you can answer without a look-up.')
+# json's own error -> (the problem in plain words, what usually causes it)
+_JSON_WORDS = [
+    ("Expecting ',' delimiter", 'expected a comma "," or a closing "}" or "]"',
+     'This usually means a double quote inside a text value that is not written as \\".'),
+    ("Invalid control character", "a line break or tab is inside a text value",
+     "A line break inside a text value must be written as \\n."),
+    ("Unterminated string", 'a text value starts here with " but is never closed', 'A text value was opened with " but never closed.'),
+    ("Expecting property name enclosed in double quotes", "expected a key in double quotes",
+     "Every key needs double quotes, and there must be no comma just before }."),
+    ("Expecting ':' delimiter", 'expected a colon ":" after a key', 'Every key is followed by a colon, like "path": "<file>".'),
+    ("Expecting value", "expected a value: text in double quotes, a number, true, false, null, a list or an object",
+     "Text values need double quotes, and there must be no comma just before } or ]."),
+    ("Invalid \\escape", "a backslash starts an escape that JSON does not allow",
+     "A backslash inside a text value must be written as \\\\."),
+    ("Illegal trailing comma", 'there is a comma just before the closing "}" or "]"', 'Remove that comma.'),
+]
+_SHOWN = {"\n": "a line break", "\r": "a carriage return", "\t": "a tab"}
+
+
+def _json_problem(s):
+    """What is wrong with a tool call that did not parse: the line and column, the problem in plain words, the text there with
+    the spot marked, and what usually causes it. s is the reply without its <think> blocks."""
+    hit = re.search(r'"tool"\s*:', s)
+    start = s.rfind("{", 0, hit.start()) if hit else s.find("{")
+    try:
+        json.JSONDecoder().raw_decode(s, max(start, 0))
+    except json.JSONDecodeError as e:
+        words, hint = next(((w, h) for k, w, h in _JSON_WORDS if e.msg.startswith(k)), (e.msg, ""))
+        ch = s[e.pos] if e.pos < len(s) else ""
+        found = ""
+        if e.msg.startswith("Invalid control character"):
+            words = f"{_SHOWN.get(ch, 'a control character')} is inside a text value"
+        elif not e.msg.startswith(("Unterminated", "Illegal trailing comma")):
+            found = f', but found {_SHOWN.get(ch, chr(34) + ch + chr(34))}' if ch else ", but the reply ended there"
+        if e.msg.startswith("Expecting ',' delimiter") and ch == '"':
+            hint = 'A comma is missing here: put "," between the two values.'
+        near = s[max(start, e.pos - 20):e.pos] + "<<HERE>>" + s[e.pos:e.pos + 20]
+        for c, w in _SHOWN.items():
+            near = near.replace(c, f"<{w[2:].upper()}>")
+        return (H + f"your tool call was not run because it is not valid JSON. At line {e.lineno}, column {e.colno}: "
+                f'{words}{found}. The text there, with the problem marked <<HERE>>: "{near}". '
+                + (hint + " " if hint else "") + "Fix that spot and send the call again.")
+    return (H + 'your reply was not run: it has "tool" in it, but no JSON object in it is a tool call. A tool call is '
+            '{"tool":"<name>","args":{...}}. Send one corrected JSON object.')
 
 
 def _check(m):
@@ -617,13 +739,15 @@ def assistant_answer(m):
         text += "\n\n" + extra
     content = [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": u}} for u in images] if images else text
     msgs = earlier_turns(m) + [{"role": "user", "content": content}]
-    opened, used, m["work"] = [], 0, []   # work: what it does for this reply, kept with the message for later messages
+    opened, used, m["work"] = [], 0, []   # work: what it does for this reply, kept with the message for the chat's summary
+    last_fail = None   # (the call, why it failed) while the newest call that ran has failed: the same call again is not run
     while True:
         _check(m)
         text = _ask_assistant(ASSIST_SYS, msgs, "chat" if not used else "assist", m)
         if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():   # blank, and no limit was hit: send it back
             msgs += [{"role": "assistant", "content": "(empty reply)"},
-                     {"role": "user", "content": 'Your last reply was empty. Reply with one JSON object: a tool call such as {"tool": "search", "text": "..."}, or {"answer": "..."}.'}]
+                     {"role": "user", "content": H + 'your last reply was empty, so nothing ran. Reply with one tool call '
+                      '{"tool":"<name>","args":{...}} or with {"answer":"<your reply>"}.'}]
             continue
         kind, value = _read_reply(text)
         if kind == "problem":   # never shown as the answer, and nothing in it is run: it goes back with the reason
@@ -632,26 +756,36 @@ def assistant_answer(m):
             continue
         if kind == "answer":
             return cited(value), opened
-        _check(m)   # deleted or stopped while it was thinking: its tools are not run
-        results, n = [], len(value)
-        for k, call in enumerate(value, 1):   # every tool call in the reply, in the order written, until one fails
+        _check(m)   # deleted or stopped while it was thinking: its tool is not run
+        name, args = str(value.get("tool")), value.get("args")
+        if not isinstance(args, dict):   # models often put the arguments beside "tool" instead of inside "args"
+            args = {a: v for a, v in value.items() if a not in ("tool", "args")}
+        same = json.dumps([name, args], sort_keys=True, ensure_ascii=False, default=str)
+        big = _too_big(name, args, __import__("tuning").get("chat.call_chars"))
+        if name not in assistant_tools.TOOLS:
+            say = H + f'there is no tool called "{name}", so nothing ran. The tools are: {", ".join(assistant_tools.TOOLS)}.'
+        elif last_fail and last_fail[0] == same:
+            say = (H + f"this call to {name} is exactly the same as the one that just failed, so it was not run again. It "
+                   f"failed because: {_sentence(last_fail[1])} Change what that reason points to before you send it again.")
+        elif big:
+            say = big
+        else:
             used += 1
-            name, args = str(call.get("tool")), call.get("args")
-            if not isinstance(args, dict):   # models often put the arguments beside "tool" instead of inside "args"
-                args = {a: v for a, v in call.items() if a not in ("tool", "args")}
             if name in ("open", "view") and args.get("path"):
                 opened.append(str(args["path"]))
             result, failed = assistant_tools.run_call(name, args)
             m["work"].append(_did(name, args, result, failed))
             _check(m)   # stopped while a tool ran (a sandbox command, or waiting for your answer on its hosts)
-            results.append(f"TOOL RESULT ({name}):\n{result}" if n == 1 else f"TOOL RESULT {k} of {n} ({name}):\n{result}")
-            if failed and k < n:   # the rest are not run, and the model is told exactly which
-                rest = [f"call {x} of {n} ({str(value[x - 1].get('tool'))})" for x in range(k + 1, n + 1)]
-                results.append(f"NOT RUN: {', '.join(rest)} did not run because call {k} failed. Send "
-                               f"{'it' if len(rest) == 1 else 'them'} again if you still want {'it' if len(rest) == 1 else 'them'}.")
-                agent.log(f"chat: call {k} of {n} ({name}) failed, so {len(rest)} later tool call(s) in that reply did not run")
-                break
-        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": "\n\n".join(results)}]
+            if failed:
+                said = chat_text(json.dumps(args, ensure_ascii=False, default=str))
+                say = (H + f"your call to {name} with {said} did not work, and nothing was changed. The reason: "
+                       f"{_sentence(result)} The correct form is: {name} {USAGE.get(name, '(see the tool list in your instructions)')}.")
+                last_fail = (same, result)
+            else:
+                say, last_fail = H + f"the result of your call to {name}:\n{result}", None
+        if not say.startswith(H + "the result"):
+            agent.log(f"chat: sent the Assistant's {name} call back: " + " ".join(say[len(H):].split())[:160])
+        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": say}]
 
 
 def earlier_turns(m):

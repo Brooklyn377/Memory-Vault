@@ -228,11 +228,16 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   apply, and says to set the server to read and write if you want it pushed. Under its answer, the files it read
   show as one line ("Notes used: N notes") with **See more**. Every commit is an ordinary commit in the repository's
   history, so it can be reverted.
-- **Its replies are JSON and nothing else:** a reply is one answer, or one or more tool calls (one after another, or a
-  list). A reply with anything outside the JSON (a sentence before a tool call, a code fence, plain text) is not used and
-  not shown: it is sent back to the Assistant with the reason, as often as it takes, and the log records each time.
-  Several tool calls in one reply all run, in order; if one fails, the ones after it are not run and the Assistant is
-  told which. Reasoning inside `<think>` tags is allowed.
+- **Its replies are JSON and nothing else:** a reply is one answer, or exactly one tool call. A reply with anything
+  outside the JSON (a sentence before a tool call, a code fence, plain text), broken JSON, or more than one tool call is
+  not used and not shown: it is sent back to the Assistant saying exactly what is wrong (the text it put outside the
+  JSON, or the line, column and character where the JSON breaks), as often as it takes, and the log records each time.
+  Everything the app sends the Assistant starts with `HANDLER`, so it never mistakes it for you. Reasoning inside
+  `<think>` tags is allowed.
+- **It works in small steps:** the text it writes in one tool call (a file's text, the text to replace, a command) can be
+  at most 100 characters (**Chat: characters per tool call** on the Tuning page). A bigger call is not run and is sent
+  back with its size and what to do instead. A call that just failed, sent again unchanged, is not run again: it gets
+  the same reason back.
 - **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses

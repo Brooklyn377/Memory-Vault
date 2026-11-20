@@ -129,14 +129,9 @@ def check(text):
 
 
 # ---------- what the Assistant sees ----------
-def work_line(m):
-    """What the Assistant did for a reply, as it is shown with that reply: "" if it used no tools."""
-    w = [str(x) for x in m.get("work") or []]
-    return f"[What you did for this reply: {'; '.join(w)}]" if w else ""
-
-
 def _reply(m):
-    return m["reply"] + ("\n\n" + work_line(m) if work_line(m) else "")
+    """A reply exactly as the Assistant wrote it. What it did for it (m["work"]) goes only into the chat's summary."""
+    return m["reply"]
 
 
 def cost(m):
@@ -184,8 +179,7 @@ def _when(m):
 
 
 def turns(m):
-    """The earlier part of THIS chat as messages for the model: its summary, then the messages word for word, each reply
-    with what the Assistant did for it. Other chats are not shown; a new chat starts empty."""
+    """The earlier part of THIS chat as messages for the model: its summary, then the messages word for word. Other chats are not shown; a new chat starts empty."""
     import chatfiles
     import ui_chat
     cid = ui_chat.chat_of(m)

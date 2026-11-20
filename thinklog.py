@@ -94,9 +94,19 @@ def _with_prompt(label, body):
     """Swap in a system prompt edited on the Settings page. Returns the body and a note for the call log."""
     try:
         import prompts
-        return prompts.apply(body, label)
+        body, note = prompts.apply(body, label)
     except Exception:
-        return body, ""
+        note = ""
+    return _fill(body), note
+
+
+def _fill(body):
+    """Put the current Tuning values into a system prompt's placeholders: {CALL_CHARS} is the Assistant's size limit per call."""
+    msgs = body.get("messages") or []
+    if msgs and msgs[0].get("role") == "system" and "{CALL_CHARS}" in str(msgs[0].get("content")):
+        import tuning
+        msgs[0] = {**msgs[0], "content": msgs[0]["content"].replace("{CALL_CHARS}", str(tuning.get("chat.call_chars")))}
+    return body
 
 
 def _with_sampling(model, label, body):

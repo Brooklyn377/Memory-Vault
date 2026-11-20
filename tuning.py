@@ -30,6 +30,7 @@ REG = [
     ("history.max_mb", "chat", "History size (MB)", "The change journal behind the History page keeps this much; over it, the oldest entries are deleted first. 1024 is 1 GB. With no limit nothing is ever deleted.", 1024, 100, 10240, ""),
     ("chat.scrub", "chat", "Hide secrets in chat (1 = on)", "Replaces tokens, keys, passwords and other secret-looking text with [REDACTED] in what you type, in what the Assistant reads with its tools, and in the chat saved to the vault. 0 passes chat text exactly as written. The activity log is always redacted.", 1, 0, 1, ""),
     ("chat.fix_tries", "chat", "Tries for a /fix message", "How many times a /fix correction is tried again when the Reviewer's server fails, before the message is marked failed; with no limit it keeps trying.", 3, 1, 20, ""),
+    ("chat.call_chars", "chat", "Chat: characters per tool call", "Most characters the Assistant may write in one tool call's text, old, new or command. A bigger call is not run and is sent back with its size, so it works in small steps.", 100, 20, 5000, ""),
     ("chat.linked_chars", "chat", "Chat: characters read per linked note", "Text taken from each linked note.", 300, 50, 3000, ""),
     ("curator.note_chars", "cur", "Note text shown", "Characters of the note under review.", 8000, 1000, 40000, ""),
     ("curator.candidates", "cur", "Unlinked candidate notes shown", "Notes it could link to, shown with each note.", 60, 0, 300, ""),
