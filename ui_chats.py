@@ -29,7 +29,7 @@ async function limits(keys,title){const d=await window.buildTuning(keys,title);r
  const card=h("div",{class:"card"},h("h3",{},"Chats"));
  card.append(
   sec("Memory and compression",[memoryBlock(),...await limits(["assistant.history","assistant.memory_words","assistant.summary_words"])]),
-  sec("Notes and messages",[toggle("chat.scrub","Hide secrets in chat (tokens, keys, passwords): what you type, what the Assistant reads, and the saved chat"),...await limits(["chat.notes","chat.hop_notes","chat.linked","chat.note_chars","chat.linked_chars","chat.page_messages","chat.fix_tries"])]),
+  sec("Notes and messages",[toggle("chat.scrub","Hide secrets in chat (tokens, keys, passwords): what you type, what the Assistant reads, and the saved chat"),...await limits(["chat.call_chars","chat.notes","chat.hop_notes","chat.linked","chat.note_chars","chat.linked_chars","chat.page_messages","chat.fix_tries"])]),
   sec("Web access",[window.webAccessNode||h("div",{class:"mut"},"Loading..."),...await limits(["web.search_results","web.timeout","web.max_mb","assistant.web_calls"])]),
   sec("Sandbox internet",[window.sandboxNode||h("div",{class:"mut"},"Loading..."),...await limits(["sandbox.output_chars"])]));
  for(let i=0;i<200&&!$("#mm");i++)await new Promise(function(r){setTimeout(r,50)});   // the model cards are drawn by the script after this one

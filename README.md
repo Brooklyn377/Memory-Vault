@@ -235,7 +235,7 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   Everything the app sends the Assistant starts with `HANDLER`, so it never mistakes it for you. Reasoning inside
   `<think>` tags is allowed.
 - **It works in small steps:** the text it writes in one tool call (a file's text, the text to replace, a command) can be
-  at most 100 characters (**Chat: characters per tool call** on the Tuning page). A bigger call is not run and is sent
+  at most 100 characters (**Chat: characters per tool call** in Settings → Chats → Notes and messages). A bigger call is not run and is sent
   back with its size and what to do instead. A call that just failed, sent again unchanged, is not run again: it gets
   the same reason back.
 - **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
