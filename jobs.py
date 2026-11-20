@@ -236,17 +236,17 @@ def _did(kind, what, why, changes, chat):
 
 
 def write_note(path, text, why="", chat=""):
-    """Create a vault note, or replace one whole. Done at once."""
+    """Create a new vault note. Done at once. It never replaces a note that exists: those change only with edit_note."""
     rel, p = _vault_note(path, False)
+    if p.exists():
+        import tuning
+        raise ValueError(f"{rel} already exists, and write_note only creates new notes. Change it with edit_note, a piece of "
+                         f"at most {tuning.get('chat.call_chars')} characters at a time")
     text = scrub(str(text or ""))[0]
     if not text.strip():
-        raise ValueError("give the note's whole text")
-    before = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
-    if before == text:
-        raise ValueError("that is the same as the note now: nothing to change")
+        raise ValueError("give the start of the note as text, in text")
     _put(p, text)
-    return _did("write", f"{'replaced' if before is not None else 'created'} the note {rel}", " ".join(str(why or "").split())[:300],
-                [(rel, before, text)], chat)
+    return _did("write", f"created the note {rel}", " ".join(str(why or "").split())[:300], [(rel, None, text)], chat)
 
 
 def edit_note(path, old, new, why="", chat=""):

@@ -262,7 +262,8 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   Settings → Git servers), checks the commits made after the chat, and if one makes the update the chat describes and the Reviewer agrees, writes a note of
   type `updated-file` under `files/updated/`: the file as of that commit, the git diff, and links to the chat, the saved original and the commit. The look-up
   for one chat stops after **File look-up time per chat** (60 s). Nothing here pushes to Git.
-- **Local notes:** the Assistant has `write_note`, `edit_note` and `move_note` for notes in your vault (never Git; `raw/` is refused). They
+- **Local notes:** the Assistant has `write_note`, `edit_note` and `move_note` for notes in your vault (never Git; `raw/` is refused).
+  `write_note` only creates new notes: it is refused for a note that already exists, which changes only with `edit_note`. They
   happen at once, and an Ask card shows the diff with **OK** (keep) and **Undo** (restore; refused if the note changed again since). Files in a Git server it changes in its sandbox (above), which still waits for your approval.
 - **The web (Settings → Chats → Web access, off by default):** when on, the Assistant can search the web (DuckDuckGo, or your
   own SearXNG) and read pages (its prompt says to try the vault and your Git servers first, but nothing enforces it), and
