@@ -26,8 +26,13 @@ Setup writes model_runner.json next to this file and prints a token once, for th
 Safety: every request needs the token. Only model files inside the models folder can be used, numbers must be numbers,
 and a flag is passed only if that llama-server's own --help lists it, with a plain value. Commands are run as lists,
 never through a shell, and only the configured program or container engine with fixed subcommands. A change that does
-not come up is rolled back to the previous settings, and the reply carries llama-server's last lines."""
+not come up is rolled back to the previous settings, and the reply carries llama-server's last lines.
+
+Updates: the agent asks for one with a commit and the sha256 it expects; the runner downloads model_runner.py from GitHub
+at that commit (from REPO, or "repo" in model_runner.json, never from the request), installs it only if the sha256
+matches and it is valid Python, and restarts."""
 import argparse
+import hashlib
 import hmac
 import json
 import os
@@ -61,6 +66,10 @@ MANAGED = ("--model", "--ctx-size", "--threads", "--parallel")
 
 state = {"proc": None, "lock": threading.Lock(), "help": None, "dl": {}, "stop": set()}
 HF = ("huggingface.co", "hf.co")
+REPO = "Brooklyn377/Memory-Vault"   # where /update downloads this file from; "repo" in model_runner.json overrides it
+SELF = Path(__file__).resolve()
+RUNNING = hashlib.sha256(SELF.read_bytes()).hexdigest()   # the file this process runs: a later swap does not change it
+STARTED = time.time()
 CHUNK = 1024 * 1024
 
 
@@ -460,9 +469,72 @@ def watchdog(interval=15):
             wait = min(300, wait * 2)
 
 
+# ---------- updating itself: the agent asks, the file comes from GitHub ----------
+def version(c):
+    """What this runner runs: its file's sha256, the commit it came from (if an update put it here) and when it started."""
+    u = c.get("update") or {}
+    return {"sha256": RUNNING, "commit": u.get("commit", "") if u.get("sha256") == RUNNING else "", "started": STARTED}
+
+
+def update(body):
+    """Install model_runner.py from GitHub at the agent's commit, if it is the file the agent has, and restart. The request
+    carries only the commit and the expected sha256: the file itself always comes from GitHub, from this runner's repo."""
+    commit, want = str(body.get("commit", "")), str(body.get("sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return {"ok": False, "kind": "bad", "error": f'the commit must be 40 characters 0-9 and a-f; got "{commit[:60]}"'}
+    if not re.fullmatch(r"[0-9a-f]{64}", want):
+        return {"ok": False, "kind": "bad", "error": f'the sha256 must be 64 characters 0-9 and a-f; got "{want[:80]}"'}
+    if want == RUNNING:
+        return {"ok": True, "same": True}
+    c = load()
+    repo = str(c.get("repo") or REPO)
+    if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", repo):
+        return {"ok": False, "kind": "bad", "error": f'"repo" in model_runner.json must be owner/name; got "{repo[:80]}"'}
+    url = f"https://raw.githubusercontent.com/{repo}/{commit}/model_runner.py"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            data = r.read(4 * CHUNK + 1)
+        if len(data) > 4 * CHUNK:
+            raise ValueError("the file is larger than 4 MB")
+    except Exception as e:
+        return {"ok": False, "kind": "download",
+                "error": f"could not download model_runner.py from {url}: {type(e).__name__}: {str(e)[:150]}. Nothing was changed."}
+    got = hashlib.sha256(data).hexdigest()
+    if got != want:
+        return {"ok": False, "kind": "mismatch",
+                "error": f"the downloaded file does not match the agent's copy (expected sha256 {want}, got {got}), so it was not "
+                         f"installed. This runner downloads from {repo}; check that the agent uses the same repository."}
+    try:
+        compile(data, str(SELF), "exec")
+    except (SyntaxError, ValueError) as e:
+        return {"ok": False, "kind": "python", "error": f"the downloaded file is not valid Python ({type(e).__name__}: {e}), so it was not installed."}
+    tmp = SELF.with_name(SELF.name + ".new")
+    tmp.write_bytes(data)
+    os.chmod(tmp, SELF.stat().st_mode & 0o7777)
+    os.replace(tmp, SELF)
+    c["update"] = {"commit": commit, "sha256": got}
+    save(c)
+    msg = f"updated model_runner.py to commit {commit[:7]} from GitHub; restarting"
+    _note(msg)
+    print(msg, flush=True)
+    threading.Thread(target=_restart, daemon=True).start()
+    return {"ok": True}
+
+
+def _restart():
+    """Run the new file in this same process (as a service or in a terminal alike). A llama-server program it started is
+    stopped first so the new runner can start it again on its port; a container keeps running."""
+    time.sleep(1)   # the reply to /update goes out first
+    with state["lock"]:
+        c = load()
+        if not c.get("container"):
+            _stop(c)
+        os.execv(sys.executable, [sys.executable, str(SELF)] + sys.argv[1:])
+
+
 def status():
     c = load()
-    return {"running": running(c), "health": health(c), "settings": c.get("settings"), "stopped": bool(c.get("stopped")),
+    return {"version": version(c), "running": running(c), "health": health(c), "settings": c.get("settings"), "stopped": bool(c.get("stopped")),
             "models": models(c), "flags": flags_supported(c), "llama_port": c["llama_port"],
             "container": (c.get("container") or {}).get("name"), "log": _tail(c, 6), "downloads": downloads(c)}
 
@@ -494,6 +566,8 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             if self.path == "/apply":
                 return self._send(200, apply(body))
+            if self.path == "/update":
+                return self._send(200, update(body))
             c = load()
             if self.path == "/download":
                 try:

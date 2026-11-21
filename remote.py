@@ -452,6 +452,8 @@ def register(app, authed):
         merge_presets()   # once, after the update that brings the server list
     except Exception as e:
         agent.log(f"settings: merging the server presets failed ({type(e).__name__}: {str(e)[:100]})")
+    import runner_update
+    runner_update.start()   # keeps each runner on this agent's model_runner.py
 
     @router.get("/api/servers")
     def server_list(request: Request):
@@ -461,7 +463,8 @@ def register(app, authed):
             notice = json.loads(NOTICE.read_text())
         except (OSError, ValueError):
             notice = []
-        return {"servers": servers(), "notice": notice}
+        ru = runner_update.load()
+        return {"servers": [dict(p, runner_update=ru.get(p["id"])) for p in servers()], "notice": notice}
 
     @router.post("/api/servers/save")
     async def server_save(request: Request):
