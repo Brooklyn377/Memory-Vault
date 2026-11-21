@@ -2,8 +2,9 @@
 
 Once a minute, each server with a runner is asked for its /status. If its file (sha256) differs from this agent's copy,
 the runner is asked to update to this agent's commit: it downloads the file from GitHub itself and checks it against the
-sha256 sent here, so no code goes over the link. Nothing is sent while a model on that server has calls running, or while
-the runner cannot be reached; it is sent as soon as it can be. A refused update (the file did not match, or was not valid
+sha256 sent here, so no code goes over the link. It is sent at once, also while models on that server have calls running:
+those calls are stopped once the runner has accepted it, the same way Apply stops them. While the runner cannot be reached, it is sent as soon as it
+can be. A refused update (the file did not match, or was not valid
 Python) is not asked again until this agent's version or the runner changes; a failed download is tried again each minute,
 which covers a GitHub outage. Each server's state is kept in STATE for the Servers card."""
 import hashlib
@@ -38,19 +39,18 @@ def _store(d):
     os.replace(tmp, STATE)
 
 
-def _busy(sid):
-    """True if a model that runs on this server has a call running now."""
-    import ui_think
+def _stop_calls(sid):
+    """The calls of the models on this server are stopped before its runner restarts, as Apply does: the restart would
+    cut them off anyway."""
+    import thinklog
     s = settings.load()
     for m in remote.PORT:
         r = s[m].get("remote") or {}
         if r.get("enabled") and r.get("server") == sid:
             try:
-                if ui_think.slots(m).get("busy"):
-                    return True
+                thinklog.abort(m)
             except Exception:
                 pass
-    return False
 
 
 def check_one(p, mine, commit, prev):
@@ -74,13 +74,13 @@ def check_one(p, mine, commit, prev):
         return prev   # the same request would be refused the same way
     if not commit:
         return dict(rec, state="unknown")
-    if _busy(sid):
-        return dict(rec, state="busy")
     try:
         r = remote.server_runner(sid, "POST", "/update", {"commit": commit, "sha256": mine}, timeout=120)
     except ValueError:
         return dict(rec, state="waiting")
     if r.get("ok"):
+        if not r.get("same"):
+            _stop_calls(sid)   # it restarts a second after saying yes; a refused or failed update cuts nothing off
         return dict(rec, state="current" if r.get("same") else "updating")
     why = str(r.get("error") or "the runner gave no reason")
     if prev.get("state") != "failed" or prev.get("error") != why:   # a download retried each minute is logged once

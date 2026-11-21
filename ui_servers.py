@@ -114,7 +114,6 @@ function runnerLine(u){
   case "updating":return "Runner: updating to commit "+c+". It downloads model_runner.py from GitHub and restarts; llama-server restarts with it.";
   case "failed":return "Runner: the update failed at "+t+": "+String(u.error||"").replace(/\.$/,"")+". It keeps running its current version.";
   case "waiting":return "Runner: an update is waiting (commit "+c+"); the runner cannot be reached now. It updates as soon as it can be reached.";
-  case "busy":return "Runner: an update is waiting (commit "+c+") until the models on that server have no calls running.";
   case "old":return "Runner: this runner is too old to update itself. Update it once by hand (README, \"Model runner\"); after that it updates along with the agent.";
   case "unknown":return "Runner: it differs from this agent's copy, but it cannot be updated from here: this agent's installed version is unknown (no /opt/memory-agent/VERSION).";
  }
