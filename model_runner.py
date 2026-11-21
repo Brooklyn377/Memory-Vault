@@ -64,7 +64,8 @@ SAME = {"--model": ["-m"], "--ctx-size": ["-c"], "--threads": ["-t"], "--paralle
         "--model-draft": ["-md"], "--draft-max": ["--draft", "--draft-n"], "--draft-min": ["--draft-n-min"]}
 MANAGED = ("--model", "--ctx-size", "--threads", "--parallel")
 
-state = {"proc": None, "lock": threading.Lock(), "help": None, "dl": {}, "stop": set()}
+state = {"proc": None, "lock": threading.Lock(), "help": None, "dl": {}, "stop": set(),
+         "cache": None}   # the prompt cache size worked out since this runner started (see _measure)
 HF = ("huggingface.co", "hf.co")
 REPO = "Brooklyn377/Memory-Vault"   # where /update downloads this file from; "repo" in model_runner.json overrides it
 SELF = Path(__file__).resolve()
@@ -404,6 +405,79 @@ def _wait_ready(c):
     return False
 
 
+# ---------- the prompt cache in RAM: sized once per runner start from this machine's memory limit ----------
+CG = Path("/sys/fs/cgroup")
+MIB = 1024 * 1024
+
+
+def _memory():
+    """(limit, in use) in bytes for this container as a whole, or (None, None). In use is the working set: what is in use
+    minus file cache the kernel can free (inactive_file), as Docker and Kubernetes count it. From the container's cgroup
+    when it has a limit, else from /proc/meminfo (in a Proxmox LXC that shows the container's own limit)."""
+    try:
+        lim = (CG / "memory.max").read_text().strip()
+        if lim.isdigit():
+            stat = dict(l.split() for l in (CG / "memory.stat").read_text().splitlines() if len(l.split()) == 2)
+            return int(lim), int((CG / "memory.current").read_text()) - int(stat.get("inactive_file", 0))
+    except (OSError, ValueError):
+        pass
+    try:
+        mi = {l.split(":")[0]: int(l.split()[1]) * 1024 for l in Path("/proc/meminfo").read_text().splitlines() if len(l.split()) >= 2}
+        return mi["MemTotal"], mi["MemTotal"] - mi["MemAvailable"]
+    except (OSError, ValueError, KeyError, IndexError):
+        return None, None
+
+
+def _measure():
+    """With llama-server up and its prompt cache off: the size that fits, = limit - in use - margin (10%, at least 512 MiB)."""
+    time.sleep(3)   # let it settle after it says it is ready
+    lim, used = _memory()
+    if lim is None:
+        info = {"state": "unknown", "mib": 0}
+        _note("prompt cache in RAM: off (the memory limit could not be read)")
+        return info
+    margin = max(lim // 10, 512 * MIB)
+    mib = (lim - used - margin) // MIB
+    info = {"state": "set" if mib > 0 else "off", "mib": max(0, int(mib)), "limit": lim // MIB, "used": used // MIB, "margin": margin // MIB}
+    size = f"{info['mib']:,} MiB" if info["mib"] else "off"
+    _note(f"prompt cache in RAM: {size} (memory limit {info['limit']:,} MiB, in use with the cache empty "
+          f"{info['used']:,} MiB, margin {info['margin']:,} MiB)")
+    return info
+
+
+def _launch(c, s, wait=False):
+    """Start llama-server with these settings and the prompt cache size. If it has not been worked out since this runner
+    started, start with the cache off, wait until ready, measure, and start again with that size. -> True if it is up
+    (always True when not waiting and nothing had to be measured)."""
+    args = _strip(build(c, s), ["--cache-ram"])
+    if "--cache-ram" not in flags_supported(c):
+        state["cache"] = {"state": "none", "mib": 0}
+        _start(c, args)
+        return _wait_ready(c) if wait else True
+    if state["cache"] is None or state["cache"].get("state") == "none":
+        _start(c, args + ["--cache-ram", "0"])
+        if not _wait_ready(c):
+            return False   # nothing measured; the next start tries again
+        state["cache"] = _measure()
+        if not state["cache"]["mib"]:
+            return True
+        _stop(c)
+    _start(c, args + ["--cache-ram", str(state["cache"]["mib"])])
+    return _wait_ready(c) if wait else True
+
+
+def _launch_bg(c, s):
+    """_launch in the background, for a start that may have to measure (it waits for llama-server to load)."""
+    def run():
+        with state["lock"]:
+            try:
+                if not load().get("stopped"):
+                    _launch(c, s)
+            except (ValueError, RuntimeError) as e:
+                _note(f"could not start llama-server: {e}")
+    threading.Thread(target=run, daemon=True).start()
+
+
 def apply(s):
     """Restart llama-server with these settings; roll back to the previous ones if it does not come up."""
     c = load()
@@ -412,8 +486,7 @@ def apply(s):
         old = c.get("settings")
         _stop(c)
         try:
-            _start(c, args)
-            ok = _wait_ready(c)
+            ok = _launch(c, s, wait=True)
         except RuntimeError as e:
             ok, early = False, str(e)
         else:
@@ -426,8 +499,7 @@ def apply(s):
         _stop(c)
         if old:
             try:
-                _start(c, build(c, old))
-                _wait_ready(c)
+                _launch(c, old, wait=True)
             except (ValueError, RuntimeError):
                 pass
         return {"ok": False, "error": "llama-server did not come up with these settings; the previous ones were put back",
@@ -460,7 +532,7 @@ def watchdog(interval=15):
                     continue
                 quick = time.time() - started < 120
                 _stop(c)   # an exited container still holds its name
-                _start(c, build(c, c["settings"]))
+                _launch(c, c["settings"])
                 started = time.time()
                 _note("llama-server was not running; the runner started it again" + (" (it died again soon after the last start)" if quick else ""))
             wait = min(300, wait * 2) if quick else interval
@@ -536,7 +608,7 @@ def status():
     c = load()
     return {"version": version(c), "running": running(c), "health": health(c), "settings": c.get("settings"), "stopped": bool(c.get("stopped")),
             "models": models(c), "flags": flags_supported(c), "llama_port": c["llama_port"],
-            "container": (c.get("container") or {}).get("name"), "log": _tail(c, 6), "downloads": downloads(c)}
+            "container": (c.get("container") or {}).get("name"), "cache_ram": state["cache"], "log": _tail(c, 6), "downloads": downloads(c)}
 
 
 class H(BaseHTTPRequestHandler):
@@ -597,11 +669,12 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/start":
                 if not c.get("settings"):
                     raise ValueError("nothing to start yet: pick a model under Model on that server on a card, and press Apply all")
+                build(c, c["settings"])   # settings that cannot be used are refused here, not later in the background
                 with state["lock"]:
-                    if not running(c):
-                        _start(c, build(c, c["settings"]))
                     c["stopped"] = False
                     save(c)
+                    if not running(c):
+                        _launch_bg(c, c["settings"])
                 return self._send(200, {"ok": True})
         except (ValueError, TypeError, RuntimeError) as e:
             return self._send(400, {"error": str(e)})
@@ -731,11 +804,11 @@ def main():
     if not CONFIG.exists():
         sys.exit("run once with --setup first (see --help)")
     c = load()
-    if c.get("settings") and not c.get("stopped") and not running(c):
-        try:
-            _start(c, build(c, c["settings"]))
-        except (ValueError, RuntimeError) as e:
-            print("not starting llama-server:", e)
+    if c.get("settings") and not c.get("stopped"):
+        # The prompt cache is sized at each runner start, so a container still running from before is started again.
+        if running(c):
+            _stop(c)
+        _launch_bg(c, c["settings"])
     threading.Thread(target=watchdog, daemon=True).start()
     srv = ThreadingHTTPServer((c.get("listen", "0.0.0.0"), int(c.get("port", 8090))), H)
     print(f"model runner listening on {c.get('listen')}:{c.get('port')}, llama-server on port {c['llama_port']}")

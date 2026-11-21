@@ -96,7 +96,7 @@ def _apply_ext(m, vals, before):
         r = remote.runner(m, "POST", "/apply", {"model_file": vals["model_file"], "context": vals["context"],
                                                  "threads": None,   # its own default: threads are not set for an external server
                                                  "parallel": vals["parallel"],
-                                                 "flags": serverflags.runner_flags(vals, sup)}, timeout=1000)
+                                                 "flags": serverflags.runner_flags(vals, sup)}, timeout=2000)   # two starts when it sizes the prompt cache
         if not r.get("ok"):
             raise ValueError(r.get("error", "the runner could not apply it") + ". llama-server said: "
                              + " | ".join(l[-200:] for l in (r.get("log") or [])[-3:]))
@@ -341,6 +341,14 @@ const lastEl=h("div",{class:"card mut"},"");
 async function post(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));return{ok:r.ok,detail:j.detail||"",data:j}}
 function num(v){const e=h("input",{type:"number"});e.value=v;return e}
 function fld(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
+// The prompt cache in RAM that the runner sized from that machine's memory (model_runner.py _measure).
+function cacheLine(c,flags){
+ const n=function(x){return Number(x||0).toLocaleString()+" MiB"};
+ if(!c)return (flags||[]).length&&(flags||[]).indexOf("--cache-ram")<0?"Prompt cache in RAM: this llama-server build has none, so there is nothing to limit.":"Prompt cache in RAM: not measured yet; the runner measures it the next time it starts llama-server.";
+ if(c.state==="set")return "Prompt cache in RAM: "+n(c.mib)+", set by the runner from this machine's memory limit ("+n(c.limit)+"), minus what is in use with the cache empty ("+n(c.used)+") and a margin ("+n(c.margin)+"). When it is full, llama-server drops the oldest prompts. It is measured again each time the runner starts.";
+ if(c.state==="off")return "Prompt cache in RAM: off. This machine's memory limit ("+n(c.limit)+") leaves no room after what is in use ("+n(c.used)+") and the margin ("+n(c.margin)+"). Prompts that are not in a slot are read again from the start. To have a cache, give this container more memory, or use a smaller model or context.";
+ if(c.state==="unknown")return "Prompt cache in RAM: off. The runner could not read this machine's memory limit (no /sys/fs/cgroup/memory.max or /proc/meminfo), so it turned the cache off rather than let it grow without limit.";
+ return "Prompt cache in RAM: this llama-server build has none, so there is nothing to limit."}
 function fmt(v){return v.model_file+", context "+Number(v.context).toLocaleString()+", "+v.threads+" threads, "+v.parallel+" slots"}
 function ask3(text){return new Promise(res=>{
  const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
@@ -400,8 +408,8 @@ function mk(m,s,models,maxT){
  e.askNames=function(){const p=e.srv();if(!p)return;
   fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id,url:p.url,api:p.api})})
    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){})};
- e.rrm=h("div",{class:"mut"});
- e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm);
+ e.rrm=h("div",{class:"mut"});e.rcache=h("div",{class:"mut"});
+ e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm,e.rcache);
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),...(vrow?[vrow]:[]),e.adv];
@@ -453,6 +461,7 @@ async function stat(){clearTimeout(T);
    (s.remote&&s.remote.enabled&&!s.runner?" (set on that server)":" (llama.cpp lowered it, most likely to the model's own maximum or to fit memory; see Fit context under Advanced server flags)");
   if(s.runner){   // the model runner on that machine
    e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
+   e.rcache.textContent=s.runner.error?"":("cache_ram" in s.runner?cacheLine(s.runner.cache_ram,s.runner.flags):"");
    if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
   if(e.vis){const saved=!!(s.flags&&s.flags.vision);
    e.vis.textContent=s.vision?"Images: the server reports vision, so images and photos work in chat."
