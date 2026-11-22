@@ -11,7 +11,7 @@ import thinklog
 import ui_extra
 
 SERVERS = {"qwen": "http://127.0.0.1:8080", "gpt": "http://127.0.0.1:8081", "cur": "http://127.0.0.1:8082",
-           "pa": "http://127.0.0.1:8083"}
+           "pa": "http://127.0.0.1:8083", "hp": ""}   # the Helper has no local server: only its external one
 BUCKET = 30  # seconds per point on the speed chart
 CHAR_BUDGET = 16000  # characters of thinking text loaded per scroll
 
@@ -283,6 +283,7 @@ THINK_HTML = r"""
     <div class="mrow" id="row-gpt"><i style="background:#f5a623"></i><b>Reviewer</b><span class="st">…</span><span class="nm"></span></div>
     <div class="mrow" id="row-cur"><i style="background:#34d399"></i><b>Curator</b><span class="st">...</span><span class="nm"></span></div>
     <div class="mrow" id="row-pa"><i style="background:#e879f9"></i><b>Assistant</b><span class="st">...</span><span class="nm"></span></div>
+    <div class="mrow" id="row-hp"><i style="background:#22d3ee"></i><b>Helper</b><span class="st">...</span><span class="nm"></span></div>
     <div class="tot" id="tot"></div>
   </div>
 </div>
@@ -290,12 +291,12 @@ THINK_HTML = r"""
 <script>
 (function(){
 document.body.classList.add("thinkpage");
-const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"},pa:{name:"Assistant",color:"#e879f9"}};
+const M={qwen:{name:"Sweeper",color:"#4c9aff"},gpt:{name:"Reviewer",color:"#f5a623"},cur:{name:"Curator",color:"#34d399"},pa:{name:"Assistant",color:"#e879f9"},hp:{name:"Helper",color:"#22d3ee"}};
 const IDS=Object.keys(M);
 const LABELS=__LABELS__;
 const chat=document.getElementById("chat"),head=document.getElementById("head"),cv=document.getElementById("cv"),tot=document.getElementById("tot");
-const B={},S={qwen:{kind:"",prev:null},gpt:{kind:"",prev:null},cur:{kind:"",prev:null},pa:{kind:"",prev:null}},E={};
-let oldest="0",newest="0",more=false,loading=false,ticking=false,rates={qwen:[],gpt:[],cur:[],pa:[]};
+const B={},S={qwen:{kind:"",prev:null},gpt:{kind:"",prev:null},cur:{kind:"",prev:null},pa:{kind:"",prev:null},hp:{kind:"",prev:null}},E={};
+let oldest="0",newest="0",more=false,loading=false,ticking=false,rates={qwen:[],gpt:[],cur:[],pa:[],hp:[]};
 IDS.forEach(m=>{E[m]={st:document.querySelector("#row-"+m+" .st"),nm:document.querySelector("#row-"+m+" .nm")};});
 const j=async u=>{const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(r.status);return r.json();};
 const fmt=n=>Number(n||0).toLocaleString();
