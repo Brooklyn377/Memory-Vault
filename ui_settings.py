@@ -254,7 +254,7 @@ window.warnPop=function(title,items,yes,no){return new Promise(res=>{
  const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
  const done=v=>{ov.remove();res(v)};
  const btns=yes?[h("button",{class:"pri",onclick:()=>done(true)},yes),h("button",{onclick:()=>done(false)},no||"Go back")]:[h("button",{class:"pri",onclick:()=>done(true)},"OK")];
- ov.append(h("div",{class:"card",style:"max-width:520px;width:100%;max-height:90vh;overflow:auto"},h("h3",{},"⚠ "+title),
+ ov.append(h("div",{class:"card pop",style:"max-width:520px;width:100%;max-height:90vh;overflow:auto"},h("h3",{},"⚠ "+title),
   h("ul",{style:"margin:0 0 12px;padding-left:18px"},...items.map(t=>h("li",{class:"mut",style:"margin-bottom:6px"},t))),...btns));
  document.body.append(ov)})};
 // After a settings change: tasks that failed earlier (often because a limit was too small) can go again now.

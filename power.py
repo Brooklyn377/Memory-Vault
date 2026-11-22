@@ -162,7 +162,11 @@ def register(app, authed):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
         with ThreadPoolExecutor(max_workers=len(MODELS)) as pool:   # each model's server is asked at once
-            return dict(zip(MODELS, pool.map(state, MODELS)))
+            out = dict(zip(MODELS, pool.map(state, MODELS)))
+        bad = applier.failed()   # the last Apply all that did not take, per model: shown in red on its card
+        for m in out:
+            out[m]["failed"] = str(bad.get(m) or "")
+        return out
 
     @router.post("/api/model/power")
     async def post(request: Request):
@@ -253,7 +257,7 @@ async function refresh(){try{
  const L={loaded:"loaded",loading:"loading",unloaded:"unloaded",waiting:"waiting for its turn"};
  M.forEach(function(a){const u=UI[a[0]],s=d[a[0]];if(!u||!s)return;
   u.chip.textContent=(s.enabled?"On":"Off")+" · "+(L[s.state]||s.state);u.chip.className="mc"+(s.state==="loaded"?" on":"");
-  u.sub.textContent=s.detail||"";
+  u.sub.textContent=s.detail||"";u.bad.textContent=s.failed||"";u.bad.hidden=!s.failed;
   if(!u.tog.disabled)u.tog.checked=!!s.enabled;
   const up=s.state==="loaded"||s.state==="loading";
   u.act=up?"unload":"load";u.btn.disabled=false;u.txt.textContent=s.external?(up?"Hold to stop":"Hold to start"):(up?"Hold to unload":"Hold to load")})
@@ -275,9 +279,10 @@ function merge(){
   const key=a[0],name=a[1],col=a[2];
   const u=UI[key]={act:""};
   u.chip=h("span",{class:"mc"},"...");u.sub=h("div",{class:"mut"});u.msg=h("div",{class:"mut"});
+  u.bad=h("div",{style:"color:#ef4444;font-weight:600;margin:4px 0"});u.bad.hidden=true;
   u.secSrv=sec("Server and where it runs",[],false);u.secGen=sec("Generation settings",[],false);u.secPr=sec("Prompts",[],false);
   if(key==="cur")u.secCur=sec("Curator behavior",[],false);
-  const card=h("div",{class:"card"},h("div",{class:"mh"},h("i",{style:"background:"+col}),h("b",{},name),u.chip,enableSlider(key,u),powerButton(key,u)),u.sub,u.msg);
+  const card=h("div",{class:"card"},h("div",{class:"mh"},h("i",{style:"background:"+col}),h("b",{},name),u.chip,enableSlider(key,u),powerButton(key,u)),u.bad,u.sub,u.msg);
   card.append(u.secSrv,u.secGen);
   if(key==="cur")card.append(u.secCur);
   card.append(u.secPr);

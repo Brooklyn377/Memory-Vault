@@ -136,6 +136,28 @@ def _wait_ready(model, old_pid, limit=600):
     raise TimeoutError("server did not come back ready")
 
 
+FAILED = agent.STATE / "apply_failed.json"   # {model: what the card says} for the last Apply all that did not take
+
+
+def failed(model=None):
+    """What a model's card says about its last Apply all that did not take: the text, or "" (all of them without model)."""
+    try:
+        d = json.loads(FAILED.read_text())
+    except (OSError, ValueError):
+        d = {}
+    return d if model is None else str(d.get(model) or "")
+
+
+def set_failed(model, text):
+    """text: shown in red on the model's card until an Apply all for it works ("" clears it)."""
+    d = failed()
+    if text:
+        d[model] = text
+    else:
+        d.pop(model, None)
+    _atomic(FAILED, json.dumps(d))
+
+
 def apply_now(model, vals):
     new = settings.load()
     before = dict(new[model])
@@ -158,6 +180,7 @@ def apply_now(model, vals):
         except Exception:
             pass
         _atomic(LAST, json.dumps({"model": model, "at": now, "error": f"{type(e).__name__}: {str(e)[:100]}"}))
+        set_failed(model, f"The last Apply all did not take: {type(e).__name__}: {str(e)[:150]}. The previous settings are running again.")
         try:   # say so where you will see it, not only on the Settings page
             import questions
             nice = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant", "hp": "Helper"}.get(model, model)
@@ -172,6 +195,7 @@ def apply_now(model, vals):
         raise
     _atomic(LAST, json.dumps({"model": model, "at": now, "before": {k: before[k] for k in KEYS},
                               "after": {k: new[model][k] for k in KEYS}}))
+    set_failed(model, "")
     agent.log(f"settings: restarted {UNIT[model]} with {new[model]['model_file']}, context {new[model]['context']}")
 
 

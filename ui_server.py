@@ -96,22 +96,41 @@ def _apply_ext(m, vals, before):
         r = remote.runner(m, "POST", "/apply", {"model_file": vals["model_file"], "context": vals["context"],
                                                  "threads": None,   # its own default: threads are not set for an external server
                                                  "parallel": vals["parallel"],
-                                                 "flags": serverflags.runner_flags(vals, sup)}, timeout=2000)   # two starts when it sizes the prompt cache
+                                                 "flags": serverflags.runner_flags(vals, sup)}, timeout=2000)   # a big model can take long to load
         if not r.get("ok"):
-            raise ValueError(r.get("error", "the runner could not apply it") + ". llama-server said: "
-                             + " | ".join(l[-200:] for l in (r.get("log") or [])[-3:]))
+            e = ValueError(r.get("error", "the runner could not apply it") + ". llama-server said: "
+                           + " | ".join(l[-200:] for l in (r.get("log") or [])[-3:]))
+            e.lost = r.get("kept") is False   # the previous settings could not be put back: nothing runs there
+            raise e
         applier._atomic(applier.LAST, json.dumps({"model": m, "at": now, "before": {k: before.get(k) for k in applier.KEYS},
                                                   "after": {k: vals.get(k) for k in applier.KEYS}}))
         agent.log(f"settings: {NICE[m]} on its external server restarted with {vals['model_file']}, context {vals['context']}")
+        applier.set_failed(m, "")
         import power
         power._flag(m, "off").unlink(missing_ok=True)   # the server is running now: it is no longer "stopped by you"
     except Exception as e:
-        s = settings.load()
-        s[m].update({k: before[k] for k in ("model_file", "context", "threads", "parallel", "flags") if k in before})
-        settings.save(s)
+        lost = getattr(e, "lost", False)
+        why = str(e).split(". llama-server said: ")
+        reason = (why[1] if len(why) > 1 and why[1].strip() else why[0])[-300:]
+        if not lost:   # that machine runs its previous settings again: so do these, and the card shows its model again
+            s = settings.load()
+            s[m].update({k: before[k] for k in ("model_file", "context", "threads", "parallel", "flags") if k in before})
+            try:
+                back = (remote.runner(m, "GET", "/status", timeout=15).get("settings") or {}).get("model_file")
+            except ValueError:
+                back = None
+            if back and isinstance(s[m].get("remote"), dict):
+                s[m]["remote"]["model"] = back
+            settings.save(s)
+            applier.set_failed(m, f"The last Apply all did not take: {reason}. The previous settings are running again.")
+        else:
+            applier.set_failed(m, f"The last Apply all did not take: {reason}. The previous settings could not be put back "
+                                  "either, so nothing is running. Pick a model under Model on that server and press Apply all.")
         applier._atomic(applier.LAST, json.dumps({"model": m, "at": now, "error": str(e)[:200]}))
         import questions
-        questions.ask(f"The {NICE[m]}'s external server did not take the new settings (context {vals['context']:,}, "
+        questions.ask(f"The {NICE[m]}'s external server did not start with the new settings (context {vals['context']:,}, "
+                      f"{vals['model_file']}), and its previous settings could not be put back either, so nothing is running there."
+                      if lost else f"The {NICE[m]}'s external server did not take the new settings (context {vals['context']:,}, "
                       f"{vals['model_file']}), so its previous settings were kept.", why=str(e)[-450:],
                       kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"model": m, "at": now})
 
@@ -368,19 +387,11 @@ const lastEl=h("div",{class:"card mut"},"");
 async function post(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));return{ok:r.ok,detail:j.detail||"",data:j}}
 function num(v){const e=h("input",{type:"number"});e.value=v;return e}
 function fld(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
-// The prompt cache in RAM that the runner sized from that machine's memory (model_runner.py _measure).
-function cacheLine(c,flags){
- const n=function(x){return Number(x||0).toLocaleString()+" MiB"};
- if(!c)return (flags||[]).length&&(flags||[]).indexOf("--cache-ram")<0?"Prompt cache in RAM: this llama-server build has none, so there is nothing to limit.":"Prompt cache in RAM: not measured yet; the runner measures it the next time it starts llama-server.";
- if(c.state==="set")return "Prompt cache in RAM: "+n(c.mib)+", set by the runner from this machine's memory limit ("+n(c.limit)+"), minus what is in use with the cache empty ("+n(c.used)+") and a margin ("+n(c.margin)+"). When it is full, llama-server drops the oldest prompts. It is measured again each time the runner starts.";
- if(c.state==="off")return "Prompt cache in RAM: off. This machine's memory limit ("+n(c.limit)+") leaves no room after what is in use ("+n(c.used)+") and the margin ("+n(c.margin)+"). Prompts that are not in a slot are read again from the start. To have a cache, give this container more memory, or use a smaller model or context.";
- if(c.state==="unknown")return "Prompt cache in RAM: off. The runner could not read this machine's memory limit (no /sys/fs/cgroup/memory.max or /proc/meminfo), so it turned the cache off rather than let it grow without limit.";
- return "Prompt cache in RAM: this llama-server build has none, so there is nothing to limit."}
 function fmt(v){return v.model_file+", context "+Number(v.context).toLocaleString()+", "+v.threads+" threads, "+v.parallel+" slots"}
 function ask3(text){return new Promise(res=>{
  const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
  const done=v=>{ov.remove();res(v)};
- ov.append(h("div",{class:"card",style:"max-width:420px;width:100%"},h("h3",{},"Restart needed"),h("div",{class:"mut",style:"margin-bottom:12px"},text),
+ ov.append(h("div",{class:"card pop",style:"max-width:420px;width:100%"},h("h3",{},"Restart needed"),h("div",{class:"mut",style:"margin-bottom:12px"},text),
   h("button",{class:"pri",onclick:()=>done("now")},"Apply now"),h("button",{onclick:()=>done("idle")},"Apply when idle"),h("button",{onclick:()=>done(null)},"Cancel")));
  document.body.append(ov)})}
 function mk(m,s,models,maxT){
@@ -435,8 +446,8 @@ function mk(m,s,models,maxT){
  e.askNames=function(){const p=e.srv();if(!p)return;
   fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id,url:p.url,api:p.api})})
    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){})};
- e.rrm=h("div",{class:"mut"});e.rcache=h("div",{class:"mut"});
- e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm,e.rcache);
+ e.rrm=h("div",{class:"mut"});
+ e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm);
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),...(vrow?[vrow]:[]),e.adv];
@@ -492,7 +503,6 @@ async function stat(){clearTimeout(T);
    (s.remote&&s.remote.enabled&&!s.runner?" (set on that server)":" (llama.cpp lowered it, most likely to the model's own maximum or to fit memory; see Fit context under Advanced server flags)");
   if(s.runner){   // the model runner on that machine
    e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
-   e.rcache.textContent=s.runner.error?"":("cache_ram" in s.runner?cacheLine(s.runner.cache_ram,s.runner.flags):"");
    if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
   if(e.vis){const saved=!!(s.flags&&s.flags.vision);
    e.vis.textContent=s.vision?"Images: the server reports vision, so images and photos work in chat."

@@ -112,7 +112,7 @@ function runnerLine(u){
  const c=String(u.commit||"").slice(0,7),t=u.at?new Date(u.at*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
  switch(u.state){
   case "current":return "Runner: up to date (same as this agent, commit "+c+").";
-  case "updating":return "Runner: updating to commit "+c+". It downloads model_runner.py from GitHub and restarts; llama-server restarts with it.";
+  case "updating":return "Runner: updating to commit "+c+". It downloads model_runner.py from GitHub and restarts.";
   case "failed":return "Runner: the update failed at "+t+": "+String(u.error||"").replace(/\.$/,"")+". It keeps running its current version.";
   case "waiting":return "Runner: an update is waiting (commit "+c+"); the runner cannot be reached now. It updates as soon as it can be reached.";
   case "old":return "Runner: this runner is too old to update itself. Update it once by hand (README, \"Model runner\"); after that it updates along with the agent.";
