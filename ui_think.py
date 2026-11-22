@@ -87,33 +87,46 @@ def _row(r):
             "s": r.get("s", ""), "n": r.get("n", 0), "w": r.get("w", "")}
 
 
-def _older_for(model, before, limit):
-    files = _files()
-    got, more = [], False
-    for i in range(len(files) - 1, -1, -1):
-        got = [r for r in _records(files[i], model) if r["t"] < before] + got
-        if len(got) > limit:
-            more = True
-            break
-    return [_row(r) for r in got[-limit:]], more
+def _all_records(path):
+    """Every record of the models on this page in one log file, oldest first: from the cache for the newest files, read
+    once otherwise."""
+    if path in _files()[-_KEEP:]:
+        by = _parsed(path)
+        recs = [r for m in SERVERS for r in by.get(m, [])]
+    else:
+        recs = []
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict) and r.get("m") in SERVERS and isinstance(r.get("t"), int):
+                        recs.append(r)
+        except OSError:
+            pass
+    recs.sort(key=lambda r: r["t"])
+    return recs
 
 
 def read_older(before, limit):
-    rows, more = [], False
-    for m in SERVERS:
-        r, mo = _older_for(m, before, limit)
-        rows += r
-        more = more or mo
-    rows.sort(key=lambda x: int(x["t"]))
-    keep, used = [], 0
-    for r in reversed(rows):
-        used += len(r.get("s", "")) + 40
-        if keep and used > CHAR_BUDGET:
-            more = True
+    """The newest records before `before`, of all models together, up to `limit` records and about CHAR_BUDGET characters
+    of text: the files are read newest first, and no further than that. (Reading back per model read every file for a
+    model with few calls, up to the whole 5 GB of logs, each time the page opened.)"""
+    files = _files()
+    keep, used, more = [], 0, False
+    for i in range(len(files) - 1, -1, -1):
+        for r in reversed([r for r in _all_records(files[i]) if r["t"] < before]):
+            used += len(r.get("s", "")) + 40
+            if keep and (used > CHAR_BUDGET or len(keep) >= limit):
+                more = True
+                break
+            keep.append(r)
+        if more:
             break
-        keep.append(r)
     keep.reverse()
-    return keep, more
+    return [_row(r) for r in keep], more
 
 
 def read_newer(after):
