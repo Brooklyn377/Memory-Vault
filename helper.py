@@ -179,6 +179,43 @@ def tokens(chars):
     return int(chars / 2.2)   # the same rough estimate as the token checks in tuning.py: on the safe side
 
 
+_COUNTS = {}   # text hash -> tokens, for the texts counted again and again (a summary between calls)
+
+
+def count(text):
+    """The exact number of tokens of text for the Helper's model, from its server's /tokenize. When that cannot be asked
+    (another kind of server, or no answer), the rough count from its length, which is on the high side."""
+    import hashlib
+    import urllib.request
+    import remote
+    text = str(text or "")
+    if not text:
+        return 0
+    key = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+    if key in _COUNTS:
+        return _COUNTS[key]
+    n = None
+    try:
+        exact = (remote.raw(MODEL).get("api") or "llamacpp") == "llamacpp"
+    except Exception:
+        exact = False
+    if exact:
+        try:
+            k = remote.saved_key(MODEL)
+            req = urllib.request.Request(remote.base(MODEL) + "/tokenize", data=json.dumps({"content": text}).encode(),
+                                         headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + k} if k else {})})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                n = len(json.load(r).get("tokens") or [])
+        except Exception:
+            n = None
+    if n is None:
+        return tokens(len(text))   # not kept: the exact count is asked again next time
+    if len(_COUNTS) > 500:
+        _COUNTS.clear()
+    _COUNTS[key] = n
+    return n
+
+
 def summary_tokens():
     """About how many tokens a summary at its full length takes (Summary length, in words)."""
     return int(_tune("assistant.summary_words") * 1.4)

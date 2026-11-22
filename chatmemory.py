@@ -407,15 +407,28 @@ def helper_running(cid):
         return False
 
 
-def _fit(cid, d=None):
-    """Whether one Helper slot holds this chat's summary now: (fits, tokens in a slot, tokens the summary needs). Worked
-    out from the slot as it is now, every time: a slot that grew takes the chat back at once."""
+def _room(cid, d=None):
+    """What one call to the Helper has room for, from the summary as it is now (counted exactly): {"slot", "keep" (kept
+    free for the reply: Memory max tokens with thinking), "instr" (the instructions), "summary" (the summary now), "left"
+    (what is left for the message)}."""
     import helper
     d = saved(cid) if d is None else d
-    slot = helper.slot_tokens()
-    room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
-    summ = max(helper.tokens(len(render(d.get("memory") or {}))), helper.summary_tokens())   # as it may grow while folding
-    return summ + 300 <= room, slot, summ + 300 + slot - room
+    slot, keep = helper.slot_tokens(), helper.reserve("memory")
+    instr = helper.count(helper.MEMORY_SYS) + 150   # and the chat template around the messages
+    summ = helper.count("THE MEMORY SO FAR:\n" + (render(d.get("memory") or {}) or "(empty)"))
+    return {"slot": slot, "keep": keep, "instr": instr, "summary": summ, "left": slot - keep - instr - summ}
+
+
+def _fit(cid, d=None):
+    """Whether one Helper slot holds this chat's summary as it is now and some of a message: (fits, the room). Worked out
+    every time, so a slot that grew, or a summary that shrank, takes the chat back at once."""
+    r = _room(cid, d)
+    return r["left"] >= 300, r
+
+
+def _too_small(r):
+    return (f"the summary is {r['summary']:,} tokens, the instructions {r['instr']:,}, and {r['keep']:,} are kept free for the "
+            f"reply (Memory max tokens on the Helper's card), which leaves {max(0, r['left']):,} for the message")
 
 
 def _helper_chat(cid):
@@ -507,14 +520,15 @@ def fold_with_helper(cid):
         if not todo:
             return
         x = todo[0]
-        fits, slot, need = _fit(cid, d)
-        if not fits:   # not even the summary and a few lines of the message fit, as the slot is now
-            agent.log(f"chat memory: one Helper slot ({slot:,} tokens) is too small for the summary of chat {cid}; the Assistant keeps it")
+        fits, r = _fit(cid, d)
+        if not fits:   # not even the summary as it is now and a few lines of the message fit
+            agent.log(f"chat memory: one Helper slot ({r['slot']:,} tokens) is too small for the summary of chat {cid}: "
+                      f"{_too_small(r)}; the Assistant keeps it")
             if not d.get("helper_small"):   # said once on an Ask card, until it fits again
                 _update(cid, lambda d: d.update(helper_small=True))
-                questions.ask(f"The Helper's context is too small for this chat's summary: one Helper slot holds {slot:,} tokens "
-                              f"and the summary needs about {need:,}. Until that changes, the "
-                              "Assistant keeps the chat memory as before. Raise Context on the Helper's card, or lower its Slots.",
+                questions.ask(f"The Helper's context is too small for this chat's summary: one Helper slot holds {r['slot']:,} tokens; "
+                              f"{_too_small(r)}. Until that changes, the Assistant keeps the chat memory as before. Lower Memory max "
+                              "tokens or Slots on the Helper's card, or raise its Context.",
                               kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"chat": cid})
             return
         if d.get("helper_small"):
@@ -528,17 +542,24 @@ def fold_with_helper(cid):
         helper.progress_done(cid, x["id"])   # its own progress entries go into the summary with it
         d = saved(cid)
         mem = d.get("memory") or {}
-        slot = helper.slot_tokens()
-        room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
-        summ = max(helper.tokens(len(render(mem))), helper.summary_tokens())   # the summary as it may grow while folding
-        parts = _parts(_for_helper(x, d), max(400, int((room - summ) * 2.2)))
+        text_all = _for_helper(x, d)
+        per = len(text_all) / max(1, helper.count(text_all))   # characters per token in this message, counted exactly
         fp = d.get("fold_part") or []
-        start = int(fp[1]) if len(fp) == 2 and fp[0] == x["id"] else 0
-        for k in range(start, len(parts)):
-            head = ("NEWEST MESSAGE:" if len(parts) == 1 else
-                    f"NEWEST MESSAGE, part 1 of {len(parts)} (the rest comes in the next calls):" if k == 0 else
-                    f"NEWEST MESSAGE, part {k + 1} of {len(parts)} (the memory already holds parts 1 to {k}):")
-            msgs = [{"role": "user", "content": f"THE MEMORY SO FAR:\n{render(mem) or '(empty)'}\n\n{head}\n{parts[k]}"}]
+        done, k = (int(fp[1]), int(fp[2])) if len(fp) == 3 and fp[0] == x["id"] else (0, 0)   # characters folded in, parts
+        while True:
+            r = _room(cid, {"memory": mem})   # sized from the summary as it is before this call
+            rest = text_all[done:]
+            if r["left"] < 300:
+                _helper_fail(cid, x["id"], f"after part {k} of the message, {_too_small(r)}")
+                return
+            take = _parts(rest, max(200, int((r["left"] - 100) * per * 0.95)))[0]
+            last = len(take) >= len(rest)
+            k += 1
+            head = ("NEWEST MESSAGE:" if k == 1 and last else
+                    "NEWEST MESSAGE, part 1 (the rest comes in the next calls):" if k == 1 else
+                    f"NEWEST MESSAGE, part {k} (the memory already holds parts 1 to {k - 1}; "
+                    + ("this is the last part):" if last else "more parts come in the next calls):"))
+            msgs = [{"role": "user", "content": f"THE MEMORY SO FAR:\n{render(mem) or '(empty)'}\n\n{head}\n{take}"}]
             while True:
                 try:
                     text = helper.memory_call(helper.MEMORY_SYS, msgs, "memory", fill={"{SUMMARY_WORDS}": _g("assistant.summary_words")})
@@ -562,11 +583,13 @@ def fold_with_helper(cid):
                          {"role": "user", "content": f"That is not the memory format, so it was not saved. What is wrong: {wrong}. Reply with ONLY "
                                                      "the JSON object, with all six keys: goal, decisions, done, files, open, facts."}]
             mem = {kk: (chat_text(v) if isinstance(v, str) else [chat_text(y) for y in v]) for kk, v in new.items()}
-            last = k == len(parts) - 1
-            _update(cid, lambda d, mem=mem, k=k, last=last: (d.update(memory=mem), d.update(folded=x["id"]) if last else None,
-                                                            d.pop("fold_part", None) if last else d.update(fold_part=[x["id"], k + 1])))
+            done += len(take)
+            _update(cid, lambda d, mem=mem, done=done, k=k, last=last: (d.update(memory=mem), d.update(folded=x["id"]) if last else None,
+                                                                         d.pop("fold_part", None) if last else d.update(fold_part=[x["id"], done, k])))
+            if last:
+                break
         agent.log(f"chat memory: the Helper wrote message {x['id']} of chat {cid} into its summary ({words(render(mem)):,} words"
-                  + (f", in {len(parts)} parts)" if len(parts) > 1 else ")"))
+                  + (f", in {k} parts)" if k > 1 else ")"))
 
 
 def _helper_fail(cid, mid, why):
