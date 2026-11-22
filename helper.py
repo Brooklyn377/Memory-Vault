@@ -15,7 +15,6 @@ When the Helper is off, has no server, or its server does not answer, nothing he
 the chat memory works as before."""
 import difflib
 import json
-import queue
 import re
 import threading
 import time
@@ -261,6 +260,7 @@ class Job:
         self.edits = []            # {"n", "kind", "path", "old", "new", "text", "why", "state"}
         self.decision = None       # set by approve / reject / a refused approve; the job reads it and goes on
         self.used = 0              # its tool calls that ran
+        self.holds = False         # it holds one of the Helper's slots
 
     def stop(self):
         return self.cancelled
@@ -321,12 +321,51 @@ def collect(mid):
         return out
 
 
-def _running(run):
-    return [j for j in run["jobs"].values() if j.state in ("running", "server")]
+# ---------- the Helper's slots: one pool for jobs, progress entries and summaries, first come, first served ----------
+# A job holds its slot while it works (also while one of its tools runs), and gives it up while an edit waits for the
+# Assistant. A progress entry or a summary holds one for each call. So the Helper is never sent more than it can run.
+POOL = {"busy": {"job": 0, "memory": 0}, "line": []}   # line: the callers waiting for a slot, oldest first
 
 
-def _line(run):
-    return sorted((j for j in run["jobs"].values() if j.state == "waiting" and not j.cancelled), key=lambda j: j.queued)
+def _acquire(kind, stop=None):
+    """Wait for a free slot, in turn. stop(): called while waiting; raise from it to give up. The caller must _release."""
+    me = object()
+    with LOCK:
+        POOL["line"].append(me)
+    try:
+        while True:
+            if stop:
+                stop()   # outside the lock: it may ask the Helper's server whether it is up
+            with LOCK:
+                if sum(POOL["busy"].values()) < slots() and POOL["line"][0] is me:
+                    POOL["busy"][kind] += 1
+                    return
+                LOCK.wait(1)
+    finally:
+        with LOCK:
+            POOL["line"].remove(me)
+            LOCK.notify_all()
+
+
+def _release(kind):
+    with LOCK:
+        POOL["busy"][kind] = max(0, POOL["busy"][kind] - 1)
+        LOCK.notify_all()
+
+
+def memory_call(system, msgs, label, fill=None):
+    """One chat-memory call (a progress entry or a summary) in a slot of its own. Ends (thinklog.Aborted) when the Helper
+    is turned off or its server is switched, also while it waits for a slot."""
+    import thinklog
+
+    def stop():
+        if not on():
+            raise thinklog.Aborted("helper: the Helper is off")
+    _acquire("memory", stop)
+    try:
+        return _call(system, msgs, label, fill=fill, cancel=lambda: not on())
+    finally:
+        _release("memory")
 
 
 def _take_slot(job):
@@ -335,19 +374,25 @@ def _take_slot(job):
         if job.cancelled:
             raise Cancel()
         job.state, job.queued = "waiting", time.time()
-        while True:
-            if job.cancelled:
-                raise Cancel()
-            run = RUNS.get(job.mid)
-            if run is None:
-                raise Cancel()
-            line = _line(run)
-            if len(_running(run)) < slots() and line and line[0] is job:
-                job.state = "running"
-                _show(run)
-                LOCK.notify_all()
-                return
-            LOCK.wait(1)
+
+    def stop():
+        if job.cancelled or RUNS.get(job.mid) is None:
+            raise Cancel()
+    _acquire("job", stop)
+    with LOCK:
+        job.holds, job.state = True, "running"
+        run = RUNS.get(job.mid)
+        if run is not None:
+            _show(run)
+        LOCK.notify_all()
+
+
+def _free(job):
+    """The job gives up its slot (it ended, or an edit of it waits for the Assistant)."""
+    with LOCK:
+        held, job.holds = getattr(job, "holds", False), False
+    if held:
+        _release("job")
 
 
 def blocking(mid):
@@ -449,17 +494,23 @@ def _start(mid, args, halted):
         run = RUNS.get(mid)
         if run is None:
             raise Refused("no answer is running, so no job can be started.")
-        busy, ahead, most = len(_running(run)), len(_line(run)), slots()   # before this job joins the line
+        busy, ahead, most = dict(POOL["busy"]), len(POOL["line"]), slots()   # before this job joins the line
         run["next"] += 1
         job = Job(mid, run["next"], task.strip(), limit)
         run["jobs"][job.n] = job
         _show(run)
     threading.Thread(target=_run, args=(job,), daemon=True, name=f"helper-job-{job.n}").start()
     agent.log(f"helper: job {job.n} started for {mid}: {task.strip()[:120]}")
-    if busy < most and not ahead:
+    used = sum(busy.values())
+    if used < most and not ahead:
         return f"Helper job {job.n} started. Its result will come in a later HANDLER message; carry on with your own work."
-    return (f"Helper job {job.n} is waiting in line: {busy} job{'s are' if busy != 1 else ' is'} running (the most at once "
-            f"is {most}) and it is number {ahead + 1} in line. It starts when one finishes.")
+    if used < most:   # a slot is free, but others asked for it first
+        return (f"Helper job {job.n} is waiting in line: it is number {ahead + 1} in line for the Helper's {most} slots. "
+                "It starts when one is free.")
+    what = " and ".join(x for x in (f"{busy['job']} job{'s' if busy['job'] != 1 else ''}" if busy["job"] else "",
+                                     f"{busy['memory']} chat memory call{'s' if busy['memory'] != 1 else ''}" if busy["memory"] else "") if x)
+    return (f"Helper job {job.n} is waiting in line: all {most} of the Helper's slots are busy ({what}), and it is number "
+            f"{ahead + 1} in line. It starts when one is free.")
 
 
 def _wait(mid, args, halted):
@@ -755,6 +806,7 @@ def _run(job):
         _finish(job, "failed", f"Helper job {job.n} failed: {type(e).__name__}: {str(e)[:300]}. What it searched (from its "
                                f"own calls): {_searched(job)}.")
     finally:
+        _free(job)
         with LOCK:
             if job.state in OPEN:
                 job.state = "cancelled" if job.cancelled else "failed"
@@ -884,6 +936,7 @@ def _reply(job, text, plain, back, last_fail):
 
 def _propose(job, e, diff):
     """Hand an edit to the Assistant and wait for its decision, holding no slot. -> what to tell the Helper."""
+    _free(job)
     with LOCK:
         e["n"], e["state"] = len(job.edits) + 1, "waiting"
         job.edits.append(e)
@@ -907,8 +960,8 @@ def _propose(job, e, diff):
 
 
 # ---------- recent progress (after each of the Assistant's tool calls) ----------
-_PQ = {}          # chat id -> queue of calls to write entries for, in order
-_PQ_LOCK = threading.Lock()
+_PEND = {}                      # (chat id, message id) -> progress entries still being written
+_PEND_LOCK = threading.Condition()
 
 
 def _target(name, a):
@@ -945,41 +998,39 @@ def label(n, name, args):
 
 
 def note_call(m, n, name, args, result, failed):
-    """The Assistant's call number n ran: the Helper writes its progress entry, in the background and in order."""
+    """The Assistant's call number n ran: the Helper writes its progress entry in the background, in a slot of its own,
+    alongside the other entries, jobs and summaries. Entries are saved in call order whatever order they finish in."""
     if not on():
         return
     import ui_chat
     cid = ui_chat.chat_of(m)
-    item = {"cid": cid, "mid": m["id"], "text": m["text"], "label": label(n, name, args),
+    item = {"cid": cid, "mid": m["id"], "n": n, "text": m["text"], "label": label(n, name, args),
             "args": args, "result": str(result), "failed": failed}
-    with _PQ_LOCK:
-        q = _PQ.get(cid)
-        if q is None:
-            q = _PQ[cid] = queue.Queue()
-            threading.Thread(target=_progress_loop, args=(q,), daemon=True, name=f"helper-progress-{cid}").start()
-    q.put(item)
+    with _PEND_LOCK:
+        _PEND[(cid, m["id"])] = _PEND.get((cid, m["id"]), 0) + 1
+    threading.Thread(target=_progress_one, args=(item,), daemon=True, name=f"helper-progress-{n}").start()
 
 
-def progress_done(cid, wait=None):
-    """Wait until every progress entry asked for in this chat is written (or given up). wait: most seconds, None for no limit."""
-    with _PQ_LOCK:
-        q = _PQ.get(cid)
-    if q is None:
-        return
+def _progress_one(item):
+    try:
+        _progress(item)
+    except Exception as e:
+        agent.log(f"chat memory: the progress entry for {item['label']} was not written ({type(e).__name__}: {str(e)[:160]})")
+    finally:
+        with _PEND_LOCK:
+            key = (item["cid"], item["mid"])
+            _PEND[key] = _PEND.get(key, 1) - 1
+            if _PEND[key] <= 0:
+                _PEND.pop(key, None)
+            _PEND_LOCK.notify_all()
+
+
+def progress_done(cid, mid, wait=None):
+    """Wait until the progress entries of this one message are written (or given up). wait: most seconds, None: no limit."""
     end = None if wait is None else time.time() + wait
-    while q.unfinished_tasks and (end is None or time.time() < end):
-        time.sleep(0.5)
-
-
-def _progress_loop(q):
-    while True:
-        item = q.get()
-        try:
-            _progress(item)
-        except Exception as e:
-            agent.log(f"chat memory: the progress entry for {item['label']} was not written ({type(e).__name__}: {str(e)[:160]})")
-        finally:
-            q.task_done()
+    with _PEND_LOCK:
+        while _PEND.get((cid, mid)) and (end is None or time.time() < end):
+            _PEND_LOCK.wait(1)
 
 
 def _cut(text, room):
@@ -1019,13 +1070,13 @@ def _progress(item):
     lim = _calls()
     while True:
         try:
-            text = _call(PROGRESS_SYS, msgs, "progress", fill={"{LABEL}": lab}, cancel=lambda: not on())
+            text = memory_call(PROGRESS_SYS, msgs, "progress", fill={"{LABEL}": lab})
         except thinklog.Aborted:
             agent.log(f"chat memory: the progress entry for {lab} was not written: the Helper was turned off or switched")
             return
         entry, wrong = _check_entry(text, lab, lim)
         if entry:
-            chatmemory.add_progress(item["cid"], item["mid"], entry)
+            chatmemory.add_progress(item["cid"], item["mid"], entry, item["n"])
             return
         agent.log(f"chat memory: sent the progress entry for {lab} back: {' '.join(wrong.split())[:160]}")
         msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": h + wrong}]
@@ -1075,7 +1126,6 @@ def fold_soon(cid):
 
     def go():
         try:
-            progress_done(cid)
             import chatmemory
             chatmemory.fold_with_helper(cid)
         except Exception as e:

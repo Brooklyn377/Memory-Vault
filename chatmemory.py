@@ -132,13 +132,18 @@ def progress_entries(cid, mid):
     return list(p.get("entries") or []) if p.get("msg") == mid else []
 
 
-def add_progress(cid, mid, entry):
-    """The Helper's entry for one of the Assistant's calls. The first entry of a new reply replaces the last reply's."""
+def add_progress(cid, mid, entry, n=None):
+    """The Helper's entry for the Assistant's call number n. The first entry of a new reply replaces the last reply's.
+    Entries are written side by side, so they are kept in call order, not in the order they were finished."""
+    def num(e):
+        m = re.match(r"#(\d+)\b", str(e))
+        return int(m.group(1)) if m else 0
+
     def fn(d):
         p = d.get("progress") if isinstance(d.get("progress"), dict) else {}
         if p.get("msg") != mid:
             p = {"msg": mid, "entries": []}
-        p["entries"] = list(p.get("entries") or []) + [entry]
+        p["entries"] = sorted(list(p.get("entries") or []) + [entry], key=num)
         d["progress"] = p
     _update(cid, fn)
 
@@ -473,6 +478,8 @@ def fold_with_helper(cid):
         if not todo:
             return
         x = todo[0]
+        helper.progress_done(cid, x["id"])   # its own progress entries go into the summary with it
+        d = saved(cid)
         mem = d.get("memory") or {}
         slot = helper.slot_tokens()
         room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
@@ -498,8 +505,7 @@ def fold_with_helper(cid):
             msgs = [{"role": "user", "content": f"THE MEMORY SO FAR:\n{render(mem) or '(empty)'}\n\n{head}\n{parts[k]}"}]
             while True:
                 try:
-                    text = helper._call(helper.MEMORY_SYS, msgs, "memory", fill={"{SUMMARY_WORDS}": _g("assistant.summary_words")},
-                                        cancel=lambda: not helper.on())
+                    text = helper.memory_call(helper.MEMORY_SYS, msgs, "memory", fill={"{SUMMARY_WORDS}": _g("assistant.summary_words")})
                 except thinklog.Aborted:
                     return   # turned off or switched: the Assistant's compression covers it until the Helper is back
                 except (helper.Full, helper.Limit) as e:
