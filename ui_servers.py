@@ -100,10 +100,11 @@ function modelsBox(p){
   if(r.detail.indexOf("third_party:")===0){
    if(await window.warnPop("This link is not on Hugging Face",["The file would be downloaded from "+r.detail.slice(12)+" onto "+p.name+". Only go on if you trust it."],"Download anyway","Cancel"))download(true);return}
   msg.textContent=r.detail;window.warnPop("Could not start the download",[r.detail])}
- const d=h("details",{class:"sec"},h("summary",{},"Models on that machine"),list,
+ // Plain content of the server's own dropdown (no dropdown of its own): the list is asked for when that one opens.
+ const d=h("div",{},h("div",{style:"font-weight:600;margin-top:10px"},"Models on that machine"),list,
   h("div",{class:"fld"},h("label",{},"Download from a link (a .gguf file; it downloads on that machine)"),link),
   h("button",{class:"pri",onclick:function(){download(false)}},"Download"),msg);
- d.ontoggle=function(){if(d.open)refresh()};return d}
+ d.refresh=refresh;return d}
 function field(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
 // Whether this server's runner runs the same model_runner.py as this agent (runner_update.py keeps it so).
 function runnerLine(u){
@@ -142,6 +143,7 @@ function serverForm(p,isNew){
   if(!await window.warnPop("Remove the server "+p.name+"?",["Models that use it keep their settings and keys, but no longer follow this list."],"Remove","Keep it"))return;
   const r=await postJ("/api/servers/delete",{id:p.id});if(!r.ok){msg.textContent=r.detail;return}
   await loadServers();window.refreshServers&&window.refreshServers()}},"Remove");
+ const mb=isNew||!p.runner?null:modelsBox(p);
  const d=h("details",{class:"sec"},h("summary",{},isNew?"New server":p.name+" · "+p.url+" · "+p.limit+" at a time"),
   field("Name",name),field("Address",url),field("Type",api_),field("API key",key),field("Clear the saved key",kc),
   field("Server is outside my network: send my notes to it",ack),
@@ -149,8 +151,9 @@ function serverForm(p,isNew){
   field("Runner address",run),field("Runner token",rk),field("Clear the saved token",rc),
   isNew||!p.runner?null:h("div",{class:"mut"},runnerLine(p.runner_update)),
   field("Models that may work on it at the same time",lim),
-  isNew||!p.runner?null:modelsBox(p),
+  mb,
   test,save,isNew?null:del,msg);
+ if(mb)d.ontoggle=function(){if(d.open)mb.refresh()};
  d.open=isNew;return d}
 async function loadServers(){try{const d=await api("/api/servers");SERVERS=d.servers;
  const add=h("button",{class:"pri",style:"margin-top:8px",onclick:function(){add.before(serverForm({},true))}},"Add server");
