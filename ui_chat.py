@@ -552,11 +552,12 @@ def _outside(gaps, fenced):
             "the JSON. " + " ".join(said) + " Remove that text and send the JSON alone.")
 
 
-def _read_reply(text, finals=("answer",), whole=False):
+def _read_reply(text, finals=("answer",), whole=False, passed="shown to the person"):
     """A reply is accepted only when, with its <think> blocks taken out, it is nothing but JSON: one answer, or ONE tool call.
     Nothing is ever dropped: anything else goes back to the model with exactly what is wrong.
     finals: the keys that make an object a final reply (the Helper also has "not_found"). whole: return the final reply's
-    whole object, which the caller checks itself (the Helper's answer carries its quotes).
+    whole object, which the caller checks itself (the Helper's answer carries its quotes). passed: what did not happen to
+    a broken answer, in its message ("passed on" for the Helper, whose answers go to the Assistant).
     -> (kind, value): ("tool", call), ("answer", text or object), or ("problem", what to tell the model)."""
     def final(o):
         return "tool" in o or any(k in o for k in finals)
@@ -579,8 +580,8 @@ def _read_reply(text, finals=("answer",), whole=False):
     calls += [o for o in objs if isinstance(o, list) and o and all(isinstance(x, dict) and final(x) for x in o)]
     if not calls:   # nothing usable: broken JSON, a wrong shape, or plain text
         if re.search(r'"tool"\s*:', s):
-            return "problem", _json_problem(s)
-        return "problem", _not_a_call(s) or (H + "your reply was not shown to the person, because it was plain text with no "
+            return "problem", _json_problem(s, passed)
+        return "problem", _not_a_call(s, passed) or (H + "your reply was not shown to the person, because it was plain text with no "
                                              'JSON. Send it again as {"answer":"<your reply>"}.')
     gaps = [s[:spans[0][0]]] + [s[spans[k][1]:spans[k + 1][0]] for k in range(len(spans) - 1)] + [s[spans[-1][1]:]]
     if any(g.strip() for g in gaps):
@@ -655,14 +656,14 @@ def _shape_message(pairs, in_answer=False):
             + "Send one corrected JSON object.")
 
 
-def _not_a_call(s):
+def _not_a_call(s, passed="shown to the person"):
     """A reply that is no tool call and no answer but looks like an attempt at one: what is wrong with it, for the model, or "" if it
     is not that. It is never shown as the answer and nothing in it is run."""
     if s.startswith("{"):
         try:
             pairs, _ = json.JSONDecoder(object_pairs_hook=list).raw_decode(s)
         except ValueError:
-            return _json_problem(s)
+            return _json_problem(s, passed)
         return _shape_message(pairs) if isinstance(pairs, list) and pairs and all(isinstance(p, tuple) for p in pairs) else ""
     pairs = _misplaced_call(s)   # after a sentence, or inside a code fence
     return _shape_message(pairs) if pairs else ""
@@ -687,10 +688,13 @@ _JSON_WORDS = [
 _SHOWN = {"\n": "a line break", "\r": "a carriage return", "\t": "a tab"}
 
 
-def _json_problem(s):
-    """What is wrong with a tool call that did not parse: the line and column, the problem in plain words, the text there with
-    the spot marked, and what usually causes it. s is the reply without its <think> blocks."""
+def _json_problem(s, passed="shown to the person"):
+    """What is wrong with a tool call or an answer that did not parse: the line and column, the problem in plain words, the
+    text there with the spot marked, and what usually causes it. s is the reply without its <think> blocks. A reply with no
+    "tool" but an "answer" (or the Helper's "not_found") is an answer: it is called that, and passed says what did not
+    happen to it."""
     hit = re.search(r'"tool"\s*:', s)
+    answer = not hit and re.search(r'"(answer|not_found)"\s*:', s)
     start = s.rfind("{", 0, hit.start()) if hit else s.find("{")
     try:
         json.JSONDecoder().raw_decode(s, max(start, 0))
@@ -707,6 +711,12 @@ def _json_problem(s):
         near = s[max(start, e.pos - 20):e.pos] + "<<HERE>>" + s[e.pos:e.pos + 20]
         for c, w in _SHOWN.items():
             near = near.replace(c, f"<{w[2:].upper()}>")
+        if answer:
+            if e.msg.startswith("Unterminated"):
+                hint = ""   # the problem in plain words already says it
+            return (H + f"your answer was not {passed} because it is not valid JSON. At line {e.lineno}, column {e.colno}: "
+                    f'{words}{found}. The text there, with the problem marked <<HERE>>: "{near}". '
+                    + (hint + " " if hint else "") + "Fix that spot and send the answer again.")
         return (H + f"your tool call was not run because it is not valid JSON. At line {e.lineno}, column {e.colno}: "
                 f'{words}{found}. The text there, with the problem marked <<HERE>>: "{near}". '
                 + (hint + " " if hint else "") + "Fix that spot and send the call again.")

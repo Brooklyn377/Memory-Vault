@@ -34,7 +34,9 @@ ASSIST_PART = (
     'it does, or write one small code change. It can read the vault, state, logs and your sandbox, and it can propose '
     'edits to sandbox files. It cannot run commands, use the web or change notes. When a job finishes, its result is added '
     'to the HANDLER message after your next tool call, so keep working meanwhile. helper_wait {} waits until the next job '
-    'finishes; use it only when you have nothing else to do. helper_cancel {"job":<number>} stops a job. The system checks '
+    'finishes; use it only when you have nothing else to do. Add "calls":<number> to stop a job after that many replies '
+    'from the Helper (tool calls and replies that were sent back); leave it out for no limit. helper_cancel '
+    '{"job":<number>} stops a job. The system checks '
     'that every quote in its answers is really in that file at that line, but check its conclusions before you rely on '
     'them. An edit it proposes is NOT in your sandbox until you approve it: read the diff, then helper_approve '
     '{"job":<number>,"edit":<number>} applies it exactly, or helper_reject {"job":<number>,"edit":<number>,"why":"<what '
@@ -95,7 +97,7 @@ HUSAGE = {
 }
 # The Assistant's helper tools, as its instructions give them.
 AUSAGE = {
-    "helper_start": '{"task":"<what to do>"}',
+    "helper_start": '{"task":"<what to do>","calls":<number, optional>}',
     "helper_wait": "{}",
     "helper_cancel": '{"job":<number>}',
     "helper_approve": '{"job":<number>,"edit":<number>}',
@@ -251,8 +253,9 @@ class Cancel(Exception):
 
 
 class Job:
-    def __init__(self, mid, n, task):
-        self.mid, self.n, self.task = mid, n, task
+    def __init__(self, mid, n, task, limit=None):
+        self.mid, self.n, self.task, self.limit = mid, n, task, limit   # limit: most replies, set by the Assistant (None: none)
+        self.replies = 0           # its replies so far: tool calls, and replies that were sent back
         self.state, self.cancelled, self.queued = "waiting", False, time.time()
         self.calls = []            # (tool, args) of its look-ups, for "what it searched"
         self.edits = []            # {"n", "kind", "path", "old", "new", "text", "why", "state"}
@@ -430,6 +433,15 @@ def _start(mid, args, halted):
     task = args.get("task")
     if not isinstance(task, str) or not task.strip():
         raise Refused('give the job as text in "task".')
+    limit = args.get("calls")
+    if limit is not None:
+        try:
+            limit = int(limit)
+            ok = limit == float(args["calls"]) and limit > 0
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            raise Refused('"calls" must be a whole number above 0, like {"task":"<what to do>","calls":20}, or left out for no limit.')
     why = why_off()
     if why:
         return f"the Helper is off ({why}), so nothing was started. Do this work yourself with your own tools."
@@ -439,7 +451,7 @@ def _start(mid, args, halted):
             raise Refused("no answer is running, so no job can be started.")
         busy, ahead, most = len(_running(run)), len(_line(run)), slots()   # before this job joins the line
         run["next"] += 1
-        job = Job(mid, run["next"], task.strip())
+        job = Job(mid, run["next"], task.strip(), limit)
         run["jobs"][job.n] = job
         _show(run)
     threading.Thread(target=_run, args=(job,), daemon=True, name=f"helper-job-{job.n}").start()
@@ -779,6 +791,17 @@ def _work(job):
             if run is not None:
                 _show(run)
 
+    back = None   # (the reply, why it was sent back) while the last reply was sent back
+
+    def stuck():
+        """The limit the Assistant set is reached: the job ends with what it did. -> True when it ended."""
+        if not job.limit or job.replies < job.limit:
+            return False
+        why = f" Its last reply was sent back because: {ui_chat._sentence(back[1])}" if back else ""
+        _finish(job, "failed", f"Helper job {job.n} stopped at the limit of {job.limit} replies you set, without an answer. "
+                               f"What it searched (from its own calls): {_searched(job)}.{why}")
+        return True
+
     _take_slot(job)
     while True:
         if job.cancelled:
@@ -789,64 +812,75 @@ def _work(job):
                 job.state = "running"
         if job.cancelled:
             raise Cancel()
-        if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():
-            msgs += [{"role": "assistant", "content": "(empty reply)"},
-                     {"role": "user", "content": h + 'your last reply was empty, so nothing ran. Reply with one tool call '
-                      '{"tool":"<name>","args":{...}} or with {"answer":"<your reply>"}.'}]
-            continue
-        kind, value = ui_chat._read_reply(text, finals=("answer", "not_found"), whole=True)
-        if kind == "problem":
-            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": value}]
-            continue
-        if kind == "answer":
-            what, said, quotes = _check_answer(value)
-            if what == "problem":
-                agent.log(f"helper: job {job.n}: sent its answer back: {' '.join(said[len(h):].split())[:160]}")
-                msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": said}]
-                continue
-            if what == "not_found":
-                _finish(job, "done", f'Helper job {job.n} finished without finding it. Task: "{job.task}"\nWhat it says: '
-                                     f"{said}\nWhat it searched (from its own calls): {_searched(job)}")
-            else:
-                shown = "\n".join(f'- {q["path"]}:{int(q["line"])}: "{q["text"].strip()}"' for q in quotes)
-                _finish(job, "done", f'Helper job {job.n} finished. Task: "{job.task}"\nAnswer: {said}\n'
-                                     f"Quotes (checked: each is in that file at that line):\n{shown}")
+        job.replies += 1
+        plain = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        say, sent_back = _reply(job, text, plain, back, last_fail)
+        if say is None:   # its answer was accepted: the job is done
             return
-        name, args = str(value.get("tool")), value.get("args")
-        if not isinstance(args, dict):
-            args = {a: v for a, v in value.items() if a not in ("tool", "args")}
-        same = json.dumps([name, args], sort_keys=True, ensure_ascii=False, default=str)
-        big = ui_chat._too_big(name, args, _calls())
-        if name not in HUSAGE:
-            say = h + f'there is no tool called "{name}", so nothing ran. The tools are: {", ".join(HUSAGE)}.'
-        elif last_fail and last_fail[0] == same:
-            say = (h + f"this call to {name} is exactly the same as the one that just failed, so it was not run again. It "
-                   f"failed because: {ui_chat._sentence(last_fail[1])} Change what that reason points to before you send it again.")
-        elif big:
-            say = big
-        elif name in ("propose_edit", "propose_file"):
-            job.used += 1
-            try:
-                e, diff = _proposal(job, name, args)
-            except Refused as ex:
-                say, last_fail = h + str(ex), (same, str(ex))
-            else:
-                last_fail = None
-                say = _propose(job, e, diff)
+        if isinstance(say, tuple):   # a tool call ran: (what to tell it, the failed call or None)
+            say, last_fail = say
+        if sent_back:
+            back = (plain, say[len(h):])
+            agent.log(f"helper: job {job.n}: sent its reply back: {' '.join(say[len(h):].split())[:160]}")
         else:
-            job.used += 1
-            result, failed = _tool(job, name, args)
-            if not failed:
-                job.calls.append((name, args))
-            if failed:
-                said = ui_chat.chat_text(json.dumps(args, ensure_ascii=False, default=str))
-                say = (h + f"your call to {name} with {said} did not work, and nothing was changed. The reason: "
-                       f"{ui_chat._sentence(result)} The correct form is: {name} {HUSAGE[name]}.")
-                last_fail = (same, result)
-            else:
-                say, last_fail = h + f"the result of your call to {name}:\n{result}", None
-        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": say}]
+            back = None
+        msgs += [{"role": "assistant", "content": text or "(empty reply)"}, {"role": "user", "content": say}]
+        if stuck():
+            return
 
+
+def _reply(job, text, plain, back, last_fail):
+    """One reply of the Helper -> (what to tell it, whether it was sent back), or (None, False) when its answer was
+    accepted and the job finished. For a tool call that ran, the first item is (what to tell it, the call if it failed)."""
+    import ui_chat
+    h = _h()
+    if back and plain == back[0]:   # the same reply as the one just sent back: the same reason, nothing checked again
+        return (h + "this is exactly the reply that was just sent back, so it was not checked again. It was sent back "
+                f"because: {ui_chat._sentence(back[1])} Change what that reason points to."), True
+    if not plain:
+        return (h + 'your last reply was empty, so nothing ran. Reply with one tool call {"tool":"<name>","args":{...}} or '
+                'with {"answer":"<your reply>"}.'), True
+    kind, value = ui_chat._read_reply(text, finals=("answer", "not_found"), whole=True, passed="passed on")
+    if kind == "problem":
+        return value, True
+    if kind == "answer":
+        what, said, quotes = _check_answer(value)
+        if what == "problem":
+            return said, True
+        if what == "not_found":
+            _finish(job, "done", f'Helper job {job.n} finished without finding it. Task: "{job.task}"\nWhat it says: '
+                                 f"{said}\nWhat it searched (from its own calls): {_searched(job)}")
+        else:
+            shown = "\n".join(f'- {q["path"]}:{int(q["line"])}: "{q["text"].strip()}"' for q in quotes)
+            _finish(job, "done", f'Helper job {job.n} finished. Task: "{job.task}"\nAnswer: {said}\n'
+                                 f"Quotes (checked: each is in that file at that line):\n{shown}")
+        return None, False
+    name, args = str(value.get("tool")), value.get("args")
+    if not isinstance(args, dict):
+        args = {a: v for a, v in value.items() if a not in ("tool", "args")}
+    same = json.dumps([name, args], sort_keys=True, ensure_ascii=False, default=str)
+    big = ui_chat._too_big(name, args, _calls())
+    if name not in HUSAGE:
+        return h + f'there is no tool called "{name}", so nothing ran. The tools are: {", ".join(HUSAGE)}.', True
+    if last_fail and last_fail[0] == same:
+        return (h + f"this call to {name} is exactly the same as the one that just failed, so it was not run again. It "
+                f"failed because: {ui_chat._sentence(last_fail[1])} Change what that reason points to before you send it again."), True
+    if big:
+        return big, True
+    job.used += 1
+    if name in ("propose_edit", "propose_file"):
+        try:
+            e, diff = _proposal(job, name, args)
+        except Refused as ex:
+            return (h + str(ex), (same, str(ex))), True
+        return (_propose(job, e, diff), None), False
+    result, failed = _tool(job, name, args)
+    if failed:
+        said = ui_chat.chat_text(json.dumps(args, ensure_ascii=False, default=str))
+        return ((h + f"your call to {name} with {said} did not work, and nothing was changed. The reason: "
+                 f"{ui_chat._sentence(result)} The correct form is: {name} {HUSAGE[name]}."), (same, result)), True
+    job.calls.append((name, args))
+    return (h + f"the result of your call to {name}:\n{result}", None), False
 
 def _propose(job, e, diff):
     """Hand an edit to the Assistant and wait for its decision, holding no slot. -> what to tell the Helper."""
