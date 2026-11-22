@@ -143,19 +143,36 @@ def slots():
     return max(1, int(settings.get(MODEL).get("parallel") or 1))
 
 
+_SLOT = {"at": 0, "n": 0}
+
+
 def slot_tokens():
-    """How many tokens one call to the Helper can hold: its context shared by its slots, or what its server says, if less."""
+    """How many tokens one call to the Helper can hold: its context shared by its slots, or what its server says, if less.
+    Asked of the server at most every 30 seconds (the idle check asks for every chat)."""
     import settings
     s = settings.get(MODEL)
     n = int(s["context"]) // slots()
+    if time.time() - _SLOT["at"] < 30 and _SLOT["n"]:
+        return min(n, _SLOT["n"])
+    seen = 0
     try:
         import ui_think
         st = ui_think.slots(MODEL, whole_server=True)
         if st.get("up") and st.get("ctx"):
-            n = min(n, int(st["ctx"]))
+            seen = int(st["ctx"])
     except Exception:
         pass
-    return n
+    _SLOT.update(at=time.time(), n=seen or n)
+    return min(n, seen) if seen else n
+
+
+def thinks():
+    """True when the Helper's model thinks before it answers (its Thinking switch, or a model that always reasons)."""
+    import settings
+    import ui_settings
+    s = settings.get(MODEL)
+    c = ui_settings.caps(ui_settings.capname(MODEL, s))
+    return bool((c["thinking"] and s.get("thinking", True)) or c["reasoning_effort"])
 
 
 def tokens(chars):
@@ -169,9 +186,12 @@ def summary_tokens():
 
 def reserve(kind):
     """Tokens kept free in a slot for the reply: what it can need, never more than its max tokens. A memory reply is a
-    whole summary; a progress reply is one entry. Thinking takes more: a reply that runs out stops at its max tokens."""
+    whole summary; a progress reply is one entry. A model that thinks first may use all of Memory max tokens, so then
+    all of it is kept free (otherwise the slot runs out while it thinks, and the reply stops short)."""
     import settings
     cap = int(settings.get(MODEL)["max_tokens"]["memory"])
+    if thinks():
+        return cap
     need = summary_tokens() + 500 if kind == "memory" else tokens(_calls()) + 500
     return min(cap, need)
 
@@ -1025,6 +1045,12 @@ def _progress_one(item):
             _PEND_LOCK.notify_all()
 
 
+def pending(cid, mid):
+    """Progress entries of this message still being written."""
+    with _PEND_LOCK:
+        return int(_PEND.get((cid, mid)) or 0)
+
+
 def progress_done(cid, mid, wait=None):
     """Wait until the progress entries of this one message are written (or given up). wait: most seconds, None: no limit."""
     end = None if wait is None else time.time() + wait
@@ -1112,9 +1138,10 @@ _FOLD_LOCK = threading.Lock()
 def after_answer(m):
     """The Assistant answered m: the Helper writes that message (and any other not yet in the summary) into the chat's
     summary, in the background. Nothing happens when the Helper cannot work: the Assistant's own compression covers it."""
-    if not on():
-        return
     import ui_chat
+    if not on():
+        agent.log(f"chat memory: the Helper is off, so chat {ui_chat.chat_of(m)} is left for later")
+        return
     fold_soon(ui_chat.chat_of(m))
 
 
@@ -1125,12 +1152,14 @@ def fold_soon(cid):
         _FOLDING.add(cid)
 
     def go():
+        import chatmemory
+        chatmemory.running_mark(cid, True)   # the line above the message box says so (the web service reads it)
         try:
-            import chatmemory
             chatmemory.fold_with_helper(cid)
         except Exception as e:
             agent.log(f"chat memory: the Helper could not write chat {cid} into its summary ({type(e).__name__}: {str(e)[:200]})")
         finally:
+            chatmemory.running_mark(cid, False)
             with _FOLD_LOCK:
                 _FOLDING.discard(cid)
     threading.Thread(target=go, daemon=True, name=f"helper-fold-{cid}").start()

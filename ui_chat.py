@@ -957,6 +957,8 @@ def watch():
     import jobs
     import sandbox
     sandbox.clear_pending()
+    import chatmemory
+    chatmemory.RUNNING.unlink(missing_ok=True)   # summaries the Helper was writing before a restart: the idle check starts them again
     jobs.retire()   # hand-off jobs from before that was removed: marked skipped, with the reason
     for m in _all():
         if m["status"] == "working":
@@ -1331,7 +1333,7 @@ function everything(){const first=latest.length?latest[0].id:"~";return older.fi
 async function load(){try{const d=await api("/api/chat?chat="+encodeURIComponent(chatId||"new"));
  latest=d.messages;waiting=!!d.waiting;if(!older.length)more=d.more;show(everything());
  const mm=d.memory;
- $("#cuseB").textContent=mm?(mm.summary?"Summary "+mm.summary.toLocaleString()+" words":"No summary yet")+" · chat memory "+mm.words.toLocaleString()+" of "+mm.limit.toLocaleString()+" words"+(mm.running||mm.requested?" · compressing":""):"";
+ $("#cuseB").textContent=mm?(mm.summary?"Summary "+mm.summary.toLocaleString()+" words":"No summary yet")+" · chat memory "+mm.words.toLocaleString()+" of "+mm.limit.toLocaleString()+" words"+(mm.helper?" · compressing (the Helper)":mm.running||mm.requested?" · compressing":""):"";
  const busy=latest.find(function(m){return m.status==="working"});   // Stop answer: only while a message of this chat is being answered
  $("#cstop").hidden=!busy;$("#cstop").onclick=busy?function(){stopAnswer(busy.id)}:null;
  const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}

@@ -30,7 +30,7 @@ from scrub import chat_text
 # <chat id>.json: {"memory": the six parts, "upto": the newest message no longer sent word for word, "folded": the newest
 # message the summary covers (the Helper folds each answer in; without it, the same as upto), "fold_part": [message id,
 # parts done] while a big message is folded in parts, "progress": {"msg": message id, "entries": [...]}, "helper_small": true
-# while one Helper slot is too small for this chat's summary}
+# once the Ask card said one Helper slot is too small for this chat's summary (whether it fits is worked out each time)}
 DIR = agent.STATE / "chat_memory"
 _LOCK = threading.Lock()   # the Helper's threads and the chat watcher write these files at the same time
 FLAG = agent.STATE / "chat-memory.json"   # {"running": [chat ids being compressed], "requested": true, "failed_at": {chat id: size}}
@@ -72,15 +72,8 @@ def status(chat=""):
     running = _list(st.get("running"))
     return {"summary": words(render(saved(chat).get("memory") or {})) if chat else 0, "words": size(chat),
             "limit": _g("assistant.memory_words"),
-            "running": (chat in running or _folding(chat)) if chat else bool(running), "requested": bool(st.get("requested"))}
-
-
-def _folding(cid):
-    try:
-        import helper
-        return helper.folding(cid)
-    except Exception:
-        return False
+            "running": (chat in running) if chat else bool(running), "requested": bool(st.get("requested")),
+            "helper": helper_running(chat) if chat else False}
 
 
 def clear_failure():
@@ -391,11 +384,45 @@ def run(busy):
 
 
 # ---------- with the Helper ----------
+RUNNING = agent.STATE / "chat-memory-helper.json"   # [chat ids the Helper is writing into a summary now], from the chat service
+_RUN_LOCK = threading.Lock()
+
+
+def running_mark(cid, on):
+    with _RUN_LOCK:
+        try:
+            ids = set(json.loads(RUNNING.read_text()))
+        except (OSError, ValueError, TypeError):
+            ids = set()
+        (ids.add if on else ids.discard)(cid)
+        tmp = RUNNING.with_name(RUNNING.name + ".tmp")
+        tmp.write_text(json.dumps(sorted(ids)))
+        tmp.replace(RUNNING)
+
+
+def helper_running(cid):
+    try:
+        return cid in json.loads(RUNNING.read_text())
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _fit(cid, d=None):
+    """Whether one Helper slot holds this chat's summary now: (fits, tokens in a slot, tokens the summary needs). Worked
+    out from the slot as it is now, every time: a slot that grew takes the chat back at once."""
+    import helper
+    d = saved(cid) if d is None else d
+    slot = helper.slot_tokens()
+    room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
+    summ = max(helper.tokens(len(render(d.get("memory") or {}))), helper.summary_tokens())   # as it may grow while folding
+    return summ + 300 <= room, slot, summ + 300 + slot - room
+
+
 def _helper_chat(cid):
-    """True when the Helper keeps this chat's summary: it can work, and one of its slots holds the summary."""
+    """True when the Helper keeps this chat's summary: it can work, and one of its slots holds the summary now."""
     try:
         import helper
-        return helper.on() and not saved(cid).get("helper_small")
+        return helper.on() and _fit(cid)[0]
     except Exception:
         return False
 
@@ -469,8 +496,10 @@ def fold_with_helper(cid):
     import questions
     import thinklog
     import ui_chat
+    first = True
     while True:
         if not helper.on():
+            agent.log(f"chat memory: the Helper is off, so chat {cid} is left for later")
             return
         d = saved(cid)
         top = folded(cid, d)
@@ -478,23 +507,30 @@ def fold_with_helper(cid):
         if not todo:
             return
         x = todo[0]
+        fits, slot, need = _fit(cid, d)
+        if not fits:   # not even the summary and a few lines of the message fit, as the slot is now
+            agent.log(f"chat memory: one Helper slot ({slot:,} tokens) is too small for the summary of chat {cid}; the Assistant keeps it")
+            if not d.get("helper_small"):   # said once on an Ask card, until it fits again
+                _update(cid, lambda d: d.update(helper_small=True))
+                questions.ask(f"The Helper's context is too small for this chat's summary: one Helper slot holds {slot:,} tokens "
+                              f"and the summary needs about {need:,}. Until that changes, the "
+                              "Assistant keeps the chat memory as before. Raise Context on the Helper's card, or lower its Slots.",
+                              kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"chat": cid})
+            return
+        if d.get("helper_small"):
+            _update(cid, lambda d: d.pop("helper_small", None))
+        waiting = helper.pending(cid, x["id"])
+        wait = ("" if not waiting else f" (waiting for {waiting} progress entr{'ies' if waiting != 1 else 'y'} of "
+                + ("the newest message)" if x is todo[-1] else f"message {x['id']})"))
+        if first or waiting:
+            agent.log(f"chat memory: the Helper is writing {len(todo)} message(s) of chat {cid} into its summary{wait}")
+        first = False
         helper.progress_done(cid, x["id"])   # its own progress entries go into the summary with it
         d = saved(cid)
         mem = d.get("memory") or {}
         slot = helper.slot_tokens()
         room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
         summ = max(helper.tokens(len(render(mem))), helper.summary_tokens())   # the summary as it may grow while folding
-        if summ + 300 > room:   # not even the summary and a few lines of the message fit
-            if not d.get("helper_small"):
-                _update(cid, lambda d: d.update(helper_small=True))
-                questions.ask(f"The Helper's context is too small for this chat's summary: one Helper slot holds {slot:,} tokens "
-                              f"and the summary needs about {summ + 300 + slot - room:,}. Until that changes, the "
-                              "Assistant keeps the chat memory as before. Raise Context on the Helper's card, or lower its Slots.",
-                              kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"chat": cid})
-                agent.log(f"chat memory: one Helper slot ({slot:,} tokens) is too small for the summary of chat {cid}; the Assistant keeps it")
-            return
-        if d.get("helper_small"):
-            _update(cid, lambda d: d.pop("helper_small", None))
         parts = _parts(_for_helper(x, d), max(400, int((room - summ) * 2.2)))
         fp = d.get("fold_part") or []
         start = int(fp[1]) if len(fp) == 2 and fp[0] == x["id"] else 0
@@ -506,8 +542,10 @@ def fold_with_helper(cid):
             while True:
                 try:
                     text = helper.memory_call(helper.MEMORY_SYS, msgs, "memory", fill={"{SUMMARY_WORDS}": _g("assistant.summary_words")})
-                except thinklog.Aborted:
-                    return   # turned off or switched: the Assistant's compression covers it until the Helper is back
+                except thinklog.Aborted:   # turned off or switched: the idle check starts it again when the Helper is back
+                    agent.log(f"chat memory: the Helper was turned off or switched while writing chat {cid}; it starts again "
+                              "when the Helper is back")
+                    return
                 except (helper.Full, helper.Limit) as e:
                     why = (f"the request was {e.args[0]:,} tokens and one Helper slot holds {e.args[1]:,}" if isinstance(e, helper.Full)
                            else f"its reply hit Memory max tokens ({e.args[1]:,}) on the Helper's card")
