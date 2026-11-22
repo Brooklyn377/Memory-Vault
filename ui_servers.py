@@ -106,19 +106,6 @@ function modelsBox(p){
   h("button",{class:"pri",onclick:function(){download(false)}},"Download"),msg);
  d.refresh=refresh;return d}
 function field(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
-// Whether this server's runner runs the same model_runner.py as this agent (runner_update.py keeps it so).
-function runnerLine(u){
- if(!u||!u.state)return "Runner: not checked yet; the agent checks it once a minute.";
- const c=String(u.commit||"").slice(0,7),t=u.at?new Date(u.at*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
- switch(u.state){
-  case "current":return "Runner: up to date (same as this agent, commit "+c+").";
-  case "updating":return "Runner: updating to commit "+c+". It downloads model_runner.py from GitHub and restarts.";
-  case "failed":return "Runner: the update failed at "+t+": "+String(u.error||"").replace(/\.$/,"")+". It keeps running its current version.";
-  case "waiting":return "Runner: an update is waiting (commit "+c+"); the runner cannot be reached now. It updates as soon as it can be reached.";
-  case "old":return "Runner: this runner is too old to update itself. Update it once by hand (README, \"Model runner\"); after that it updates along with the agent.";
-  case "unknown":return "Runner: it differs from this agent's copy, but it cannot be updated from here: this agent's installed version is unknown (no /opt/memory-agent/VERSION).";
- }
- return "Runner: "+u.state}
 function serverForm(p,isNew){
  const name=h("input",{type:"text",maxlength:"60",placeholder:"a name, e.g. Gaming PC"});name.value=p.name||"";
  const url=h("input",{type:"text",placeholder:"http://192.168.1.50:8080"});url.value=p.url||"";
@@ -149,7 +136,6 @@ function serverForm(p,isNew){
   field("Server is outside my network: send my notes to it",ack),
   h("div",{class:"mut",style:"margin-top:10px"},"Model runner (optional): run model_runner.py on that machine, and each model's card sets its model, context, slots and flags (see the README)."),
   field("Runner address",run),field("Runner token",rk),field("Clear the saved token",rc),
-  isNew||!p.runner?null:h("div",{class:"mut"},runnerLine(p.runner_update)),
   field("Models that may work on it at the same time",lim),
   mb,
   test,save,isNew?null:del,msg);

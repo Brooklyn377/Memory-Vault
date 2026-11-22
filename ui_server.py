@@ -383,11 +383,9 @@ let T=null,FS=[],SL=[],HAS_GPU=false;   // SL: the servers on the Servers card
 // After the Servers card changed: every card's Where it runs list, keeping each card's choice.
 window.refreshServers=async function(){try{const d=await api("/api/server/info");SL=d.servers_list;HAS_GPU=d.gpu;
  for(const m of IDS){const e=E[m];if(e&&e.fillWhere){e.fillWhere(e.where.value);e.askNames();e.sync&&e.sync()}}}catch(err){}};
-const lastEl=h("div",{class:"card mut"},"");
 async function post(path,body){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));return{ok:r.ok,detail:j.detail||"",data:j}}
 function num(v){const e=h("input",{type:"number"});e.value=v;return e}
 function fld(l,el){return h("div",{class:"fld"},h("label",{},l),el)}
-function fmt(v){return v.model_file+", context "+Number(v.context).toLocaleString()+", "+v.threads+" threads, "+v.parallel+" slots"}
 function ask3(text){return new Promise(res=>{
  const ov=h("div",{style:"position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px"});
  const done=v=>{ov.remove();res(v)};
@@ -446,8 +444,7 @@ function mk(m,s,models,maxT){
  e.askNames=function(){const p=e.srv();if(!p)return;
   fetch("/api/remote/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id,url:p.url,api:p.api})})
    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j)e.names(j.models)}).catch(function(){})};
- e.rrm=h("div",{class:"mut"});
- e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm,e.rrm);
+ e.rbox=h("div",{},fld("Model on that server",h("span",{},e.rsel,e.rn)),e.rnl,e.rtest,e.rm);
  // Without a runner, an external server needs only Context here (the token checks use it); the model file, threads,
  // slots, flags and the memory estimate are this container's hardware and are hidden. With a runner they all apply there.
  const hw=[fld("Model file",e.file),fld("Threads (1 to "+maxT+")",e.thr),fld("Parallel slots",e.par),...(vrow?[vrow]:[]),e.adv];
@@ -502,7 +499,6 @@ async function stat(){clearTimeout(T);
   if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
    (s.remote&&s.remote.enabled&&!s.runner?" (set on that server)":" (llama.cpp lowered it, most likely to the model's own maximum or to fit memory; see Fit context under Advanced server flags)");
   if(s.runner){   // the model runner on that machine
-   e.rrm.textContent=s.runner.error?"Runner: "+s.runner.error:"Runner: llama-server "+(s.runner.stopped?"stopped":s.runner.health)+" · "+(s.runner.models||[]).length+" model file(s) on that machine";
    if(!s.runner.error&&(!e.rst||JSON.stringify(e.rst.models)!==JSON.stringify(s.runner.models)))e.useRunner(s.runner)}
   if(e.vis){const saved=!!(s.flags&&s.flags.vision);
    e.vis.textContent=s.vision?"Images: the server reports vision, so images and photos work in chat."
@@ -510,8 +506,6 @@ async function stat(){clearTimeout(T);
     :"Images: off."}
   e.cancel.style.display=s.pending?"":"none";
   if((s.health!=="ready"&&s.health!=="down")||s.pending)busy=true}
- const l=d.last;
- lastEl.textContent=!l?"No server change made yet.":l.error?"Last change ("+NM[l.model]+") failed and was rolled back: "+l.error:"Last change, "+NM[l.model]+": "+fmt(l.before)+"  →  "+fmt(l.after);
  if(busy)T=setTimeout(stat,2000)}
 window.applyAll=async()=>{
  const C=window.COLS||{},body={models:{},servers:{}};
@@ -533,8 +527,7 @@ window.applyAll=async()=>{
   e.msg.textContent+=" Reload the page to update the thinking switches for "+(e.rn.value||"this model")+"."}}
  stat()};
 (async()=>{const d=await api("/api/server/info");
- FS=d.flagspec||[];SL=d.servers_list||[];HAS_GPU=!!d.gpu;$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)));(function(){const put=function(){document.querySelector("main").append(lastEl)};   // the last change goes at the very bottom, under Updates, once the page is built
- if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",put);else put()})();stat()})();
+ FS=d.flagspec||[];SL=d.servers_list||[];HAS_GPU=!!d.gpu;$("#sv").replaceChildren(...IDS.map(m=>mk(m,d.servers[m],d.models,d.max_threads)));stat()})();
 })();
 </script>
 """

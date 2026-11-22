@@ -230,12 +230,6 @@ def register(app, authed):
         need(request)
         return {"slots": {m: slots(m) for m in SERVERS}, "totals": thinklog.totals()}
 
-    @router.get("/api/think/mem")
-    def think_mem(request: Request):
-        need(request)
-        import memview
-        return memview.memory()
-
     @router.get("/api/think/rate")
     def think_rate(request: Request, minutes: int = 60):
         need(request)
@@ -264,7 +258,6 @@ THINK_HTML = r"""
 .bb{white-space:pre-wrap;word-break:break-word}
 .bb .r{color:var(--mut);font-style:italic}
 .bot{padding:4px 0}
-.bot.mem{margin:0 12px 16px;padding-top:10px;border-top:1px solid var(--line)}
 #cv{width:100%;height:100px;display:block}
 .mrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin-top:6px}
 .mrow i{width:10px;height:10px;border-radius:5px;display:inline-block}
@@ -287,7 +280,6 @@ THINK_HTML = r"""
     <div class="tot" id="tot"></div>
   </div>
 </div>
-<div class="bot mem"><div id="mem"></div></div>
 <script>
 (function(){
 document.body.classList.add("thinkpage");
@@ -398,43 +390,6 @@ function showTot(t,sl){
   tot.innerHTML="All-time tokens generated <b>"+fmt(sum)+"</b> · "+parts.join(" · ");
 }
 
-const MEMC={qwen:"#4c9aff",gpt:"#f5a623",cur:"#34d399",pa:"#e879f9"},MEMN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
-const gbs=n=>(n/1073741824).toFixed(1);
-function showMem(d){
-  const el=document.getElementById("mem");if(!el||!d||!d.total)return;
-  const T=d.total;
-  let bar='<div style="position:relative;display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line);margin:6px 0">';
-  IDS.forEach(k=>{const m=d.models[k];if(m&&m.rss)bar+='<div style="width:'+(m.rss/T*100)+'%;background:'+MEMC[k]+'"></div>'});
-  bar+='<div style="width:'+(d.other/T*100)+'%;background:#8b93a7"></div>';
-  bar+='</div>';
-  let rows="";
-  IDS.forEach(k=>{const m=d.models[k];if(!m)return;
-    const grow=m.exp>m.rss*1.05?' · expected '+gbs(m.exp)+' GB when fully loaded':'';
-    rows+='<div><span style="color:'+MEMC[k]+'">'+MEMN[k]+'</span> <b>'+gbs(m.rss)+' GB</b> (weights '+gbs(m.file)+' + working '+gbs(m.anon)+')'+grow+'</div>'});
-  if(!rows)rows='<div>No model servers loaded.</div>';
-  const sw=d.swap_total?' · swap '+gbs(d.swap_used)+' / '+gbs(d.swap_total)+' GB'+(d.swap_used>d.swap_total*0.9?' (nearly full)':''):'';
-  el.innerHTML='Container memory <b>'+gbs(T)+' GB</b> · models loaded here '+gbs(d.models_total)+' GB + other '+gbs(d.other)+' GB'+bar+rows+'<div style="margin-top:4px">file cache '+gbs(d.cached)+' GB (model files count here) · free '+gbs(d.free)+' GB'+sw+'</div>'}
-function draw(){
-  const w=cv.clientWidth,h=cv.clientHeight,dpr=window.devicePixelRatio||1;
-  if(!w)return;
-  cv.width=w*dpr;cv.height=h*dpr;
-  const g=cv.getContext("2d");g.scale(dpr,dpr);
-  const cs=getComputedStyle(document.body);
-  const mut=cs.getPropertyValue("--mut").trim()||"#888",ln=cs.getPropertyValue("--line").trim()||"#444";
-  let top=0.1;IDS.forEach(m=>{top=Math.max(top,...rates[m]);});
-  const base=h-16,span=base-18;
-  g.strokeStyle=ln;g.lineWidth=1;g.beginPath();g.moveTo(0,base+.5);g.lineTo(w,base+.5);g.stroke();
-  IDS.forEach(m=>{
-    const v=rates[m];g.strokeStyle=M[m].color;g.lineWidth=2;g.beginPath();
-    v.forEach((y,i)=>{const x=v.length>1?i/(v.length-1)*w:0,yy=base-y/top*span;if(i)g.lineTo(x,yy);else g.moveTo(x,yy);});
-    g.stroke();
-  });
-  g.font="11px sans-serif";g.fillStyle=mut;g.textAlign="left";
-  g.fillText("peak "+top.toFixed(2)+" tok/s",2,11);g.fillText("1 h ago",2,h-3);
-  g.textAlign="right";g.fillText("now",w-2,h-3);
-  let x=w-2;
-  IDS.slice().reverse().forEach(m=>{g.fillStyle=M[m].color;g.fillText(M[m].name,x,11);x-=g.measureText(M[m].name).width+12;});
-}
 
 async function tick(){
   if(ticking)return;
@@ -452,7 +407,6 @@ async function tick(){
       IDS.forEach(m=>{try{show(m,d.slots[m])}catch(e2){}});   // one model's row can never blank the rest
       try{showTot(d.totals,d.slots)}catch(e2){}
     }catch(e){}
-    try{showMem(await j("/api/think/mem"))}catch(e){}
   }finally{ticking=false;}
 }
 async function getRates(){try{rates=await j("/api/think/rate?minutes=60");draw();}catch(e){}}

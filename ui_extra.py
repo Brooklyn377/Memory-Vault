@@ -267,6 +267,8 @@ def register(app, authed):
     ui_todo.register(app, authed)
     import ui_think
     ui_think.register(app, authed)
+    import ui_stats
+    ui_stats.register(app, authed)
     import ui_settings
     ui_settings.register(app, authed)
     import ui_chat

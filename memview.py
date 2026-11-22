@@ -1,4 +1,4 @@
-"""Container memory for the Thinking tab: the total, what each model server loaded here holds (weights vs working memory), the rest, the file cache and swap. Models on another machine are not in it."""
+"""Container memory for the Stats page: the total, what each model server loaded here holds (weights vs working memory), the rest, the file cache and swap. Models on another machine are not in it."""
 import os
 
 import settings

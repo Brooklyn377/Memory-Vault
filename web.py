@@ -214,7 +214,7 @@ __DRAWER__
 </div>
 <section><h2>Pages</h2><div class="links">
 <a href="/queue">Queue</a><a href="/history">History</a><a href="/chat">Chat</a><a href="/map">Map</a><a href="/graph">List</a>
-<a href="/ask">Ask</a><a href="/todo">To-do</a><a href="/think">Thinking</a><a href="/settings">Settings</a>
+<a href="/ask">Ask</a><a href="/todo">To-do</a><a href="/think">Thinking</a><a href="/stats">Stats</a><a href="/settings">Settings</a>
 </div></section>
 </main>
 <script>

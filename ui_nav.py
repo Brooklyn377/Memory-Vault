@@ -67,6 +67,7 @@ textarea{resize:none;overflow-y:auto}
  <a href="/ask">Ask<span id="qn" class="dn" hidden></span></a>
  <a href="/todo">To-do<span id="tn" class="dn" hidden></span></a>
  <a href="/think">Thinking</a>
+ <a href="/stats">Stats</a>
  <a href="/settings">Settings<span id="sn" class="dn" hidden></span></a>
 </div>
 <script>
