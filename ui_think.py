@@ -1,6 +1,7 @@
 """Thinking tab: one live chat of both models' thinking, plus token stats. Registered from ui_extra.register()."""
 import json
 import os
+import threading
 import time
 import urllib.request
 
@@ -20,7 +21,50 @@ def _files():
     return sorted(thinklog.DIR.glob("think-*.jsonl"))
 
 
+_CACHE, _CACHE_LOCK, _KEEP = {}, threading.Lock(), 3   # path -> {"pos": bytes read, "by": {model: records}, "used": time}
+
+
+def _parsed(path):
+    """Each log file is read once and kept sorted by model; a file that grew (today's) is read on from where it stopped.
+    Only the newest few files are kept (the ones every refresh reads), so the page does not read the same files once per
+    model each time; older ones are read when you scroll back to them, without being kept."""
+    with _CACHE_LOCK:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return {}
+        e = _CACHE.get(path)
+        if e is None or size < e["pos"]:   # new, or written again from the start
+            e = _CACHE[path] = {"pos": 0, "by": {}, "used": 0}
+        if size > e["pos"]:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(e["pos"])
+                    data = f.read(size - e["pos"])
+            except OSError:
+                data = b""
+            end = data.rfind(b"\n") + 1   # only whole lines: one still being written is read next time
+            e["pos"] += end
+            grew = set()
+            for line in data[:end].decode("utf-8", "replace").splitlines():
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and isinstance(r.get("t"), int) and r.get("m"):
+                    e["by"].setdefault(r["m"], []).append(r)
+                    grew.add(r["m"])
+            for m in grew:
+                e["by"][m].sort(key=lambda r: r["t"])
+        e["used"] = time.time()
+        for old in sorted(_CACHE, key=lambda p: _CACHE[p]["used"])[:max(0, len(_CACHE) - _KEEP)]:
+            _CACHE.pop(old, None)
+        return e["by"]
+
+
 def _records(path, model):
+    if path in _files()[-_KEEP:]:
+        return _parsed(path).get(model, [])
     out = []
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -228,7 +272,10 @@ def register(app, authed):
     @router.get("/api/think/stats")
     def think_stats(request: Request):
         need(request)
-        return {"slots": {m: slots(m) for m in SERVERS}, "totals": thinklog.totals()}
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(SERVERS)) as pool:   # a server that does not answer never holds up the others
+            got = dict(zip(SERVERS, pool.map(slots, SERVERS)))
+        return {"slots": got, "totals": thinklog.totals()}
 
     @router.get("/api/think/rate")
     def think_rate(request: Request, minutes: int = 60):

@@ -428,14 +428,15 @@ def _limit():
 
 
 def _cache_mib(note=True):
-    """The prompt cache size: the memory limit minus a margin of 10% (at least 512 MiB). Nothing is measured, so
-    llama-server starts once. 0 (cache off) when the limit cannot be read or leaves nothing."""
+    """The prompt cache size: the memory limit minus a margin of 20% (at least 1 GiB), which leaves room for what
+    llama-server itself holds and the file pages it uses. Nothing is measured, so llama-server starts once. 0 (cache off)
+    when the limit cannot be read or leaves nothing."""
     lim = _limit()
     if lim is None:
         if note:
             _note("prompt cache in RAM: off (the memory limit could not be read)")
         return 0
-    mib = max(0, (lim - max(lim // 10, 512 * MIB)) // MIB)
+    mib = max(0, (lim - max(lim // 5, 1024 * MIB)) // MIB)
     if note:
         _note(f"prompt cache in RAM: {mib:,} MiB (memory limit {lim // MIB:,} MiB minus the margin)" if mib else
               "prompt cache in RAM: off (the memory limit leaves nothing after the margin)")
