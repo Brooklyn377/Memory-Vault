@@ -10,17 +10,29 @@ takes. A message of yours, or turning the Assistant off, ends that.
 Every chat is measured and shrunk on its own. Nothing here ever stops a chat; the size only starts the shrinking.
 Nothing is written to the vault: the whole chat is already in raw/conversations.
 
+With the Helper (helper.py) working, the summary is kept current instead: after each of the Assistant's tool calls the
+Helper writes a short progress entry, and after each answer it writes that message into the summary ("folded"). The
+Assistant's view does not change: the newest messages still come word for word, and past the size the oldest stop being
+sent (they are already in the summary) until "Chats kept word for word" are left. A message stops being sent only once
+it is in the summary. When the Helper cannot work, the Assistant compresses as described above.
+
 Before this, each older message had its own short summary, and the oldest of those were moved to raw/chat-summaries.
 A chat that still has such summaries shows them as before until its next compression, which takes them in. Summaries
 already moved to the vault stay there."""
 import json
 import re
+import threading
 
 import agent
 import tuning
 from scrub import chat_text
 
-DIR = agent.STATE / "chat_memory"   # <chat id>.json: {"memory": the six parts, "upto": the id of the newest message it covers}
+# <chat id>.json: {"memory": the six parts, "upto": the newest message no longer sent word for word, "folded": the newest
+# message the summary covers (the Helper folds each answer in; without it, the same as upto), "fold_part": [message id,
+# parts done] while a big message is folded in parts, "progress": {"msg": message id, "entries": [...]}, "helper_small": true
+# while one Helper slot is too small for this chat's summary}
+DIR = agent.STATE / "chat_memory"
+_LOCK = threading.Lock()   # the Helper's threads and the chat watcher write these files at the same time
 FLAG = agent.STATE / "chat-memory.json"   # {"running": [chat ids being compressed], "requested": true, "failed_at": {chat id: size}}
 PARTS = (("goal", "Goal"), ("decisions", "Decided"), ("done", "Done"), ("files", "Files"), ("open", "Still open"), ("facts", "Also"))
 
@@ -60,11 +72,19 @@ def status(chat=""):
     running = _list(st.get("running"))
     return {"summary": words(render(saved(chat).get("memory") or {})) if chat else 0, "words": size(chat),
             "limit": _g("assistant.memory_words"),
-            "running": (chat in running) if chat else bool(running), "requested": bool(st.get("requested"))}
+            "running": (chat in running or _folding(chat)) if chat else bool(running), "requested": bool(st.get("requested"))}
+
+
+def _folding(cid):
+    try:
+        import helper
+        return helper.folding(cid)
+    except Exception:
+        return False
 
 
 def clear_failure():
-    _flag(failed_at={})
+    _flag(failed_at={}, helper_failed={})
 
 
 def words(text):
@@ -77,12 +97,50 @@ def _file(cid):
 
 
 def saved(cid):
-    """{"memory": {...}, "upto": message id} for a chat, or {} if it has no summary yet."""
+    """{"memory": {...}, "upto": message id, ...} for a chat (see DIR), or {} if it has nothing yet."""
     try:
         d = json.loads(_file(cid).read_text())
-        return d if isinstance(d, dict) and isinstance(d.get("memory"), dict) else {}
+        if not isinstance(d, dict):
+            return {}
+        if not isinstance(d.get("memory"), dict):
+            d.pop("memory", None)
+        return d
     except (OSError, ValueError):
         return {}
+
+
+def _update(cid, fn):
+    """Change one chat's file in place: fn(the saved dict) changes it. One writer at a time."""
+    with _LOCK:
+        d = saved(cid)
+        fn(d)
+        DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _file(cid).with_name(_file(cid).name + ".tmp")
+        tmp.write_text(json.dumps(d, indent=1, ensure_ascii=False))
+        tmp.replace(_file(cid))
+
+
+def folded(cid, d=None):
+    """The newest message this chat's summary covers."""
+    d = saved(cid) if d is None else d
+    return max(str(d.get("folded") or ""), str(d.get("upto") or ""))
+
+
+# ---------- recent progress ----------
+def progress_entries(cid, mid):
+    p = saved(cid).get("progress") or {}
+    return list(p.get("entries") or []) if p.get("msg") == mid else []
+
+
+def add_progress(cid, mid, entry):
+    """The Helper's entry for one of the Assistant's calls. The first entry of a new reply replaces the last reply's."""
+    def fn(d):
+        p = d.get("progress") if isinstance(d.get("progress"), dict) else {}
+        if p.get("msg") != mid:
+            p = {"msg": mid, "entries": []}
+        p["entries"] = list(p.get("entries") or []) + [entry]
+        d["progress"] = p
+    _update(cid, fn)
 
 
 def forget(cid):
@@ -184,10 +242,19 @@ def turns(m):
     import ui_chat
     cid = ui_chat.chat_of(m)
     chats = [x for x in live(m["id"]) if ui_chat.chat_of(x) == cid]
-    out, mem = [], saved(cid).get("memory")
-    if mem and render(mem):
-        out += [{"role": "user", "content": "MEMORY OF THIS CHAT SO FAR (the messages it covers are no longer shown; the whole chat "
-                 "is in raw/conversations):\n" + render(mem)}, {"role": "assistant", "content": "Understood."}]
+    d = saved(cid)
+    out, mem = [], d.get("memory")
+    text = render(mem) if mem else ""
+    entries = list((d.get("progress") or {}).get("entries") or [])
+    if entries:   # what the Helper wrote while the Assistant worked on its last reply
+        text += ("\n\n" if text else "") + "Recent progress (your tool calls for your last reply, written as you worked):\n" + \
+            "\n".join(f"- {x}" for x in entries)
+    if text:
+        covers = any(x["id"] <= folded(cid, d) for x in chats if not x.get("summary"))   # the Helper folded shown messages in
+        out += [{"role": "user", "content": ("MEMORY OF THIS CHAT SO FAR (it also covers the newest messages, which follow word "
+                 "for word; the whole chat is in raw/conversations):\n" if covers else "MEMORY OF THIS CHAT SO FAR (the messages it "
+                 "covers are no longer shown; the whole chat is in raw/conversations):\n") + text},
+                {"role": "assistant", "content": "Understood."}]
     sums = [x for x in chats if x.get("summary")]   # from before a chat had one summary: shown until the next compression
     if sums:
         out += [{"role": "user", "content": "SUMMARIES OF YOUR EARLIER CHATS WITH ME, oldest first (the full chats are in raw/conversations):\n"
@@ -254,7 +321,12 @@ def _compress(cid, busy):
     if not old:
         return True
     had = saved(cid)
-    msgs = [{"role": "user", "content": _material(had.get("memory") or {}, old)}]
+    done = folded(cid, had)
+    new = [x for x in old if x["id"] > done]   # the ones the Helper already wrote into the summary need no call
+    if not new:
+        _update(cid, lambda d: d.update(upto=old[-1]["id"]))
+        return True
+    msgs = [{"role": "user", "content": _material(had.get("memory") or {}, new)}]
     while True:   # no limit on the tries: a message of yours, or turning the Assistant off, ends it
         if busy():
             return False
@@ -273,10 +345,7 @@ def _compress(cid, busy):
                  {"role": "user", "content": f"That is not the memory format, so it was not saved. What is wrong: {wrong}. Reply with ONLY "
                                              "the JSON object, with all six keys: goal, decisions, done, files, open, facts."}]
     mem = {k: (chat_text(v) if isinstance(v, str) else [chat_text(x) for x in v]) for k, v in mem.items()}
-    DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _file(cid).with_suffix(".tmp")
-    tmp.write_text(json.dumps({"memory": mem, "upto": old[-1]["id"]}, indent=1, ensure_ascii=False))
-    tmp.replace(_file(cid))
+    _update(cid, lambda d: d.update(memory=mem, upto=old[-1]["id"], folded=max(done, new[-1]["id"])))
     count, limit = words(render(mem)), _g("assistant.summary_words")
     agent.log(f"chat memory: wrote {len(old)} message(s) of chat {cid} into its summary ({count:,} words"
               + (f", over the {limit:,} it was asked to keep to" if count > limit else "") + ")")
@@ -287,6 +356,8 @@ def run(busy):
     """Idle-time work for the chat watcher, right after a reply: compress each chat that passed its size, and carry on one
     that was interrupted. busy() says a chat message is waiting; then this stops and comes back when the chat is idle again."""
     import ui_chat
+    if _with_helper(busy):
+        return
     if not ui_chat.assistant_on():
         return
     st = _flag()
@@ -294,7 +365,7 @@ def run(busy):
     limit = _g("assistant.memory_words")
     todo = []
     for cid in _chat_ids():
-        if not _work(cid):
+        if _helper_chat(cid) or not _work(cid):
             continue
         now = size(cid)
         if cid in running or asked or (now > limit and failed.get(cid) != now):
@@ -312,3 +383,153 @@ def run(busy):
         todo = [c for c in todo if c != cid]
         _flag(running=todo)
         agent.log(f"chat memory: chat {cid} compressed to {size(cid):,} words")
+
+
+# ---------- with the Helper ----------
+def _helper_chat(cid):
+    """True when the Helper keeps this chat's summary: it can work, and one of its slots holds the summary."""
+    try:
+        import helper
+        return helper.on() and not saved(cid).get("helper_small")
+    except Exception:
+        return False
+
+
+def _with_helper(busy):
+    """Idle-time work when the Helper keeps the summaries: fold in any answered message it has not written in yet (after
+    a restart, or Try again), and past the size, stop sending the oldest messages word for word, which needs no call: they
+    are in the summary already. -> True when the Helper covered every chat (the Assistant has nothing to do)."""
+    import helper
+    import ui_chat
+    if not helper.on():
+        return False
+    st = _flag()
+    failed, asked, limit = _dict(st.get("helper_failed")), bool(st.get("requested")), _g("assistant.memory_words")
+    left = False
+    for cid in _chat_ids():
+        if not _helper_chat(cid):
+            left = True   # its summary does not fit a Helper slot: the Assistant keeps it, below
+            continue
+        d = saved(cid)
+        top = folded(cid, d)
+        mine = [x for x in live() if ui_chat.chat_of(x) == cid]
+        if any(x["id"] > top for x in mine) and failed.get(cid) is None and not helper.folding(cid):
+            helper.fold_soon(cid)
+        if asked or size(cid) > limit:
+            old = [x for x in _work(cid) if x["id"] <= top]
+            if old:
+                _update(cid, lambda d, u=old[-1]["id"]: d.update(upto=u))
+                agent.log(f"chat memory: the {len(old)} oldest message(s) of chat {cid} are no longer sent word for word; "
+                          f"the summary covers them (chat memory now {size(cid):,} words)")
+    if asked and not left:
+        _flag(requested=False)
+    return not left
+
+
+def _for_helper(x, d):
+    """One message as the Helper reads it, to write into the summary."""
+    import chatfiles
+    if x.get("summary"):
+        return f"--- {_when(x)} (only a summary of this message was kept)\n{x['summary']}"
+    did = "\n".join(str(w) for w in x.get("work") or []) or "(no tool calls)"
+    p = d.get("progress") or {}
+    notes = "\n".join(p.get("entries") or []) if p.get("msg") == x["id"] else ""
+    return (f"--- {_when(x)}\nPERSON:\n{x['text']}{chatfiles.names(x)}\n\nWHAT THE ASSISTANT DID:\n{did}\n\n"
+            f"PROGRESS ENTRIES:\n{notes or '(none)'}\n\nTHE ASSISTANT'S REPLY:\n{x['reply']}")
+
+
+def _parts(text, size):
+    """text cut at line breaks into pieces of at most size characters (a single longer line is cut where it must be)."""
+    out, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > size:
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(line[:size])
+            line = line[size:]
+        if len(cur) + len(line) > size:
+            out.append(cur)
+            cur = ""
+        cur += line
+    if cur or not out:
+        out.append(cur)
+    return out
+
+
+def fold_with_helper(cid):
+    """Write every answered message of this chat that the summary does not cover yet into it, oldest first, one call per
+    message (or per part of a big one). Run by the Helper after each answer (helper.after_answer)."""
+    import helper
+    import questions
+    import thinklog
+    import ui_chat
+    while True:
+        if not helper.on():
+            return
+        d = saved(cid)
+        top = folded(cid, d)
+        todo = [x for x in live() if ui_chat.chat_of(x) == cid and x["id"] > top]
+        if not todo:
+            return
+        x = todo[0]
+        mem = d.get("memory") or {}
+        slot = helper.slot_tokens()
+        room = slot - helper.reserve("memory") - helper.tokens(len(helper.MEMORY_SYS)) - 300   # for the summary and the message
+        summ = max(helper.tokens(len(render(mem))), helper.summary_tokens())   # the summary as it may grow while folding
+        if summ + 300 > room:   # not even the summary and a few lines of the message fit
+            if not d.get("helper_small"):
+                _update(cid, lambda d: d.update(helper_small=True))
+                questions.ask(f"The Helper's context is too small for this chat's summary: one Helper slot holds {slot:,} tokens "
+                              f"and the summary needs about {summ + 300 + slot - room:,}. Until that changes, the "
+                              "Assistant keeps the chat memory as before. Raise Context on the Helper's card, or lower its Slots.",
+                              kind="serverfail", options=[{"label": "OK", "value": "ok"}], payload={"chat": cid})
+                agent.log(f"chat memory: one Helper slot ({slot:,} tokens) is too small for the summary of chat {cid}; the Assistant keeps it")
+            return
+        if d.get("helper_small"):
+            _update(cid, lambda d: d.pop("helper_small", None))
+        parts = _parts(_for_helper(x, d), max(400, int((room - summ) * 2.2)))
+        fp = d.get("fold_part") or []
+        start = int(fp[1]) if len(fp) == 2 and fp[0] == x["id"] else 0
+        for k in range(start, len(parts)):
+            head = ("NEWEST MESSAGE:" if len(parts) == 1 else
+                    f"NEWEST MESSAGE, part 1 of {len(parts)} (the rest comes in the next calls):" if k == 0 else
+                    f"NEWEST MESSAGE, part {k + 1} of {len(parts)} (the memory already holds parts 1 to {k}):")
+            msgs = [{"role": "user", "content": f"THE MEMORY SO FAR:\n{render(mem) or '(empty)'}\n\n{head}\n{parts[k]}"}]
+            while True:
+                try:
+                    text = helper._call(helper.MEMORY_SYS, msgs, "memory", fill={"{SUMMARY_WORDS}": _g("assistant.summary_words")},
+                                        cancel=lambda: not helper.on())
+                except thinklog.Aborted:
+                    return   # turned off or switched: the Assistant's compression covers it until the Helper is back
+                except (helper.Full, helper.Limit) as e:
+                    why = (f"the request was {e.args[0]:,} tokens and one Helper slot holds {e.args[1]:,}" if isinstance(e, helper.Full)
+                           else f"its reply hit Memory max tokens ({e.args[1]:,}) on the Helper's card")
+                    _helper_fail(cid, x["id"], why)
+                    return
+                except Exception as e:
+                    _helper_fail(cid, x["id"], f"{type(e).__name__}: {str(e)[:300]}")
+                    return
+                new, wrong = check(text)
+                if new is not None:
+                    break
+                agent.log(f"chat memory: sent the Helper's summary of chat {cid} back: {wrong[:160]}")
+                msgs += [{"role": "assistant", "content": text},
+                         {"role": "user", "content": f"That is not the memory format, so it was not saved. What is wrong: {wrong}. Reply with ONLY "
+                                                     "the JSON object, with all six keys: goal, decisions, done, files, open, facts."}]
+            mem = {kk: (chat_text(v) if isinstance(v, str) else [chat_text(y) for y in v]) for kk, v in new.items()}
+            last = k == len(parts) - 1
+            _update(cid, lambda d, mem=mem, k=k, last=last: (d.update(memory=mem), d.update(folded=x["id"]) if last else None,
+                                                            d.pop("fold_part", None) if last else d.update(fold_part=[x["id"], k + 1])))
+        agent.log(f"chat memory: the Helper wrote message {x['id']} of chat {cid} into its summary ({words(render(mem)):,} words"
+                  + (f", in {len(parts)} parts)" if len(parts) > 1 else ")"))
+
+
+def _helper_fail(cid, mid, why):
+    st = _flag()
+    _flag(helper_failed={**_dict(st.get("helper_failed")), cid: mid})
+    import questions
+    questions.ask(f"The Helper could not write a message of a chat into its summary: {why}",
+                  why="Try again runs it at the next idle time. Until then that message is still sent word for word; no chat is stopped.",
+                  kind="memory", options=[{"label": "Try again", "value": "retry"}], payload={"helper": cid, "msg": mid})
+    agent.log(f"chat memory: the Helper could not write message {mid} of chat {cid} into its summary ({why})")

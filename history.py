@@ -11,10 +11,10 @@ import agent
 from bootstrap import slug as _slug
 
 STATE, VAULT = agent.STATE, agent.VAULT
-WHO = ("sweeper", "reviewer", "curator", "assistant", "you", "system")
+WHO = ("sweeper", "reviewer", "curator", "assistant", "helper", "you", "system")
 KINDS = ("vault", "fact", "task", "link", "review", "prune", "file", "ask", "chat", "publish", "setting",
          "import", "problem", "system", "call", "web", "git", "tool", "turn")
-CALL_WHO = {"qwen": "sweeper", "gpt": "reviewer", "cur": "curator", "pa": "assistant"}
+CALL_WHO = {"qwen": "sweeper", "gpt": "reviewer", "cur": "curator", "pa": "assistant", "hp": "helper"}
 ASK_WHO = {"hygiene": "sweeper", "free": "sweeper", "merge": "system", "filecheck": "reviewer",
            "inboxcheck": "system", "curate": "curator", "curatecheck": "curator", "assistant": "assistant", "gitpull": "system", "serverfail": "system", "reviewstuck": "reviewer",
            "job": "assistant"}

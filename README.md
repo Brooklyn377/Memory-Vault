@@ -235,7 +235,7 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   Everything the app sends the Assistant starts with `HANDLER`, so it never mistakes it for you. Reasoning inside
   `<think>` tags is allowed.
 - **It works in small steps:** the text it writes in one tool call (a file's text, the text to replace, a command) can be
-  at most 100 characters (**Chat: characters per tool call** in Settings → Chats → Notes and messages). A bigger call is not run and is sent
+  at most 400 characters (**Chat: characters per tool call** in Settings → Chats → Notes and messages). A bigger call is not run and is sent
   back with its size and what to do instead. A call that just failed, sent again unchanged, is not run again: it gets
   the same reason back.
 - **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
@@ -276,6 +276,16 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   read and write, and a token per model. A model without a token cannot read it. Tokens are stored root-only in
   `/etc/memory-agent/git/` and are never shown again or sent to a model. Nothing is pushed except a change you
   approved on an Ask card, and only to a server marked read and write.
+
+## Optional: the Helper
+A small fifth model that works for the Assistant on a server of its own, for example an old 4 GB card in a separate container with the model runner. It works outside the turns: it never waits for another model and never makes one wait. Choose its external server on its card; a server another model uses is refused.
+
+- Jobs: the Assistant hands it small jobs (find where something is, read a file, write one small change) and carries on with its own work. Up to the Helper server's slots run at once; more wait in line. Each result reaches the Assistant with its next tool result. The Assistant cannot answer you while a job runs or an edit waits for its decision.
+- What it can do: read the vault, state, logs and the Assistant's sandbox. It cannot run commands, use the web or change notes. Every quote in its answers is checked against the file before the Assistant sees it. If it finds nothing, it says so, and the code lists what it searched.
+- Its edits: it proposes changes to sandbox files, which reach the sandbox only when the Assistant approves them. A rejected edit goes back to it with the reason. Pushing to Git still waits for you on an Ask card, as before.
+- No limit on a job: it runs until it answers or its context fills. A job that fails says why, and the Assistant can start it again.
+- Chat memory: after each of the Assistant's tool calls, the Helper writes a short entry on what it did (Recent progress), and after each answer it writes that message into the chat's summary. The Assistant sees both from your next message on. The newest messages still reach it word for word as before. Past "Chat memory size that starts compression", the oldest stop being sent (they are already in the summary) until "Chats kept word for word" are left. A message only stops being sent once it is in the summary.
+- When the Helper is off or its server is down, everything works as it did before: the Assistant is told the Helper is off and compresses chat memory itself.
 
 ## Optional: a GPU in the container
 The local models run on the CPU by default. To run them on a GPU of the Proxmox host instead, the GPU has to be passed into

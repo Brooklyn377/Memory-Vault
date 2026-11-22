@@ -90,7 +90,7 @@ ASSIST_SYS = (
     'file you changed for this request. A file can have only ONE change waiting: propose is refused for it until the '
     'person approves or denies it; check jobs for its status. reset {"path":"<file, or git/<Git server name> for '
     'everything>"} throws your changes away. 5. ANSWER: say what you changed and that it is waiting for the person\'s '
-    'approval. Never say a change is in the repository until jobs shows it approved. DO NOT EXPLAIN ASK CARDS TO THE '
+    'approval. Never say a change is in the repository until jobs shows it approved. {HELPER} DO NOT EXPLAIN ASK CARDS TO THE '
     'USER, this information is for YOU THE ASSISTANT. Answer only from what the notes and tools show. After each '
     'fact, name its file in square brackets, like [vault/entities/foo.md]. If nothing covers it, say so. Be concise '
     'and informational. Never guess, and never say a Git change or update is complete without verifying its status.')
@@ -140,13 +140,17 @@ def stop(mid):
     agent.log(f"chat: you stopped the answer to {m['id']}")
 
 
+_SAVE = __import__("threading").RLock()   # the Helper's job threads save the message too (its job lines)
+
+
 def _save(m):
     if gone(m):   # a message deleted while it was being answered must not come back when the answer finishes
         return
     CHAT.mkdir(parents=True, exist_ok=True)
-    tmp = _path(m["id"]).with_suffix(".tmp")
-    tmp.write_text(json.dumps(m, indent=1, ensure_ascii=False))
-    tmp.replace(_path(m["id"]))
+    with _SAVE:
+        tmp = _path(m["id"]).with_suffix(".tmp")
+        tmp.write_text(json.dumps(m, indent=1, ensure_ascii=False))
+        tmp.replace(_path(m["id"]))
 
 
 def _load(mid):
@@ -384,6 +388,9 @@ def _ask_assistant_once(system, messages, label="chat", m=None, cancel=None):
     s = settings.get("pa")
     body = {"model": s["model_file"] or "assistant", "temperature": s["temperature"], "max_tokens": s["max_tokens"]["chat"],
             "messages": [{"role": "system", "content": system}] + messages}
+    if "{HELPER}" in system:
+        import helper
+        body["fill"] = helper.assist_fill()
     caps = ui_settings.caps(ui_settings.capname("pa", s))   # the model decides which thinking switch applies
     if caps["thinking"]:
         body["chat_template_kwargs"] = {"enable_thinking": bool(s.get("thinking", True))}
@@ -463,17 +470,28 @@ USAGE = {
     "status": '{"repo":"<Git server name>"}',
     "reset": '{"path":"<file, or git/<Git server name> for everything>"}',
     "propose": '{"paths":["<file>"],"why":"<one sentence>"}',
+    **__import__("helper").AUSAGE,
 }
 
 # The arguments that hold text the model writes, per tool: each is held to chat.call_chars characters per call.
 SIZED = {"create": ("text",), "insert": ("text",), "replace_lines": ("text",), "replace": ("old", "new"),
-         "run": ("command",), "write_note": ("text",), "edit_note": ("old", "new")}
+         "run": ("command",), "write_note": ("text",), "edit_note": ("old", "new"),
+         "helper_start": ("task",), "helper_reject": ("why",),   # the Assistant's helper tools
+         "propose_edit": ("old", "new", "why"), "propose_file": ("text", "why")}   # the Helper's own (helper.py)
 
 
 def _size_hint(name, field, lim):
     """What to do instead of a call whose field is over the size limit."""
     if field == "command":
         return "Shorten the command, or write it into a script file with create and insert, then run that file."
+    if field == "task":
+        return "Split the job into smaller jobs, or say it more briefly."
+    if field == "why":
+        return "Say it more briefly."
+    if name == "propose_edit" and field == "old":
+        return "Use a shorter piece of text that appears in the file only once."
+    if name in ("propose_edit", "propose_file"):
+        return "Split the change into smaller edits and send them one at a time with propose_edit."
     if field == "old":
         return ("Use a shorter piece of text that appears in the note only once." if name == "edit_note" else
                 "Use a shorter piece of text that appears in the file only once, or use replace_lines with line numbers.")
@@ -534,10 +552,14 @@ def _outside(gaps, fenced):
             "the JSON. " + " ".join(said) + " Remove that text and send the JSON alone.")
 
 
-def _read_reply(text):
+def _read_reply(text, finals=("answer",), whole=False):
     """A reply is accepted only when, with its <think> blocks taken out, it is nothing but JSON: one answer, or ONE tool call.
     Nothing is ever dropped: anything else goes back to the model with exactly what is wrong.
-    -> (kind, value): ("tool", call), ("answer", text), or ("problem", what to tell the model)."""
+    finals: the keys that make an object a final reply (the Helper also has "not_found"). whole: return the final reply's
+    whole object, which the caller checks itself (the Helper's answer carries its quotes).
+    -> (kind, value): ("tool", call), ("answer", text or object), or ("problem", what to tell the model)."""
+    def final(o):
+        return "tool" in o or any(k in o for k in finals)
     s = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     dec, objs, spans, i = json.JSONDecoder(), [], [], 0
     while True:   # every JSON value that starts at an object or a list, and where each sits
@@ -553,8 +575,8 @@ def _read_reply(text):
         objs.append(obj)
         spans.append((at, end))
         i = end
-    calls = [o for o in objs if isinstance(o, dict) and ("tool" in o or "answer" in o)]
-    calls += [o for o in objs if isinstance(o, list) and o and all(isinstance(x, dict) and ("tool" in x or "answer" in x) for x in o)]
+    calls = [o for o in objs if isinstance(o, dict) and final(o)]
+    calls += [o for o in objs if isinstance(o, list) and o and all(isinstance(x, dict) and final(x) for x in o)]
     if not calls:   # nothing usable: broken JSON, a wrong shape, or plain text
         if re.search(r'"tool"\s*:', s):
             return "problem", _json_problem(s)
@@ -567,7 +589,7 @@ def _read_reply(text):
     flat = []
     for o in objs:   # only JSON is left: every value must be a tool call or an answer
         for x in (o if isinstance(o, list) else [o]):
-            if not isinstance(x, dict) or not ("tool" in x or "answer" in x):
+            if not isinstance(x, dict) or not final(x):
                 pairs = list(x.items()) if isinstance(x, dict) else []
                 return "problem", (_shape_message(pairs) if pairs else
                                    H + f"your reply was not run: it has JSON ({_kind_of(x)}) that is neither a tool call nor an "
@@ -587,6 +609,8 @@ def _read_reply(text):
         return "problem", H + f'your reply had {len(answers)} answers, so none was shown. Send exactly one {{"answer":"<your reply>"}}.'
     if tools:
         return "tool", tools[0]
+    if whole:
+        return "answer", answers[0]
     answer = answers[0].get("answer")
     if not isinstance(answer, str) or not answer.strip():
         return "problem", (H + f'the "answer" in your reply was {_kind_of(answer)}, so nothing was shown. Put your reply as text '
@@ -733,7 +757,9 @@ def assistant_answer(m):
     the vault or a Git server it looks up with its tools. A reply must be nothing but JSON (see _read_reply): anything
     else is sent back with the reason, as often as it takes. Returns (reply, files it opened)."""
     import assistant_tools
+    import helper
     assistant_tools.start_message(m["id"], cancel=lambda: halted(m), show=lambda what: _show_running(m, what))
+    helper.begin(m)   # Helper jobs started in this answer belong to it; handle() ends them
     text = m["text"]
     extra, images = chatfiles.context(m.get("files"), chatfiles.vision()) if m.get("files") else ("", [])
     if extra:
@@ -753,18 +779,24 @@ def assistant_answer(m):
         kind, value = _read_reply(text)
         if kind == "problem":   # never shown as the answer, and nothing in it is run: it goes back with the reason
             agent.log("chat: sent the Assistant's reply back: " + " ".join(value.split())[:160])
-            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": value}]
+            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(value, m)}]
             continue
         if kind == "answer":
-            return cited(value), opened
+            wait = helper.blocking(m["id"])   # a Helper job still running, an edit waiting, or results it has not seen
+            if not wait:
+                return cited(value), opened
+            agent.log("chat: sent the Assistant's answer back: " + " ".join(wait.split())[:160])
+            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": H + wait}]
+            continue
         _check(m)   # deleted or stopped while it was thinking: its tool is not run
         name, args = str(value.get("tool")), value.get("args")
         if not isinstance(args, dict):   # models often put the arguments beside "tool" instead of inside "args"
             args = {a: v for a, v in value.items() if a not in ("tool", "args")}
         same = json.dumps([name, args], sort_keys=True, ensure_ascii=False, default=str)
         big = _too_big(name, args, __import__("tuning").get("chat.call_chars"))
-        if name not in assistant_tools.TOOLS:
-            say = H + f'there is no tool called "{name}", so nothing ran. The tools are: {", ".join(assistant_tools.TOOLS)}.'
+        known = list(assistant_tools.TOOLS) + (list(helper.HELPER_TOOLS) if helper.on() or name in helper.HELPER_TOOLS else [])
+        if name not in known:
+            say = H + f'there is no tool called "{name}", so nothing ran. The tools are: {", ".join(known)}.'
         elif last_fail and last_fail[0] == same:
             say = (H + f"this call to {name} is exactly the same as the one that just failed, so it was not run again. It "
                    f"failed because: {_sentence(last_fail[1])} Change what that reason points to before you send it again.")
@@ -774,19 +806,32 @@ def assistant_answer(m):
             used += 1
             if name in ("open", "view") and args.get("path"):
                 opened.append(str(args["path"]))
-            result, failed = assistant_tools.run_call(name, args)
+            if name in helper.HELPER_TOOLS:
+                result, failed = helper.assistant_call(name, args, m, lambda: halted(m))
+            else:
+                result, failed = assistant_tools.run_call(name, args)
             m["work"].append(_did(name, args, result, failed))
+            helper.note_call(m, len(m["work"]), name, args, result, failed)   # the Helper's progress entry, in the background
             _check(m)   # stopped while a tool ran (a sandbox command, or waiting for your answer on its hosts)
-            if failed:
+            if name in helper.HELPER_TOOLS and not failed:   # its own words: a job started, a result, an edit applied
+                say, last_fail = H + result, None
+            elif failed:
                 said = chat_text(json.dumps(args, ensure_ascii=False, default=str))
                 say = (H + f"your call to {name} with {said} did not work, and nothing was changed. The reason: "
                        f"{_sentence(result)} The correct form is: {name} {USAGE.get(name, '(see the tool list in your instructions)')}.")
                 last_fail = (same, result)
             else:
                 say, last_fail = H + f"the result of your call to {name}:\n{result}", None
-        if not say.startswith(H + "the result"):
+        if not say.startswith(H + "the result") and name not in helper.HELPER_TOOLS:
             agent.log(f"chat: sent the Assistant's {name} call back: " + " ".join(say[len(H):].split())[:160])
-        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": say}]
+        msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(say, m)}]
+
+
+def _with_results(say, m):
+    """A HANDLER message with the Helper's results that came in since the last one, each as its own HANDLER paragraph."""
+    import helper
+    got = helper.collect(m["id"])
+    return say + "".join("\n\n" + H + x for x in got)
 
 
 def earlier_turns(m):
@@ -800,8 +845,12 @@ def handle(m, who="gpt"):
     top, extra = [], []
     if who == "pa":
         import turns
-        with turns.hold("pa"):   # the whole task keeps the Assistant's turn, also while a tool runs between its calls
-            reply, opened = assistant_answer(m)
+        import helper
+        try:
+            with turns.hold("pa"):   # the whole task keeps the Assistant's turn, also while a tool runs between its calls
+                reply, opened = assistant_answer(m)
+        finally:
+            helper.end(m["id"])   # stopped, failed or answered: a Helper job still open is stopped
         extra = list(dict.fromkeys(opened))
         import assistant_tools
         m["web"] = assistant_tools.web_note()
@@ -978,6 +1027,12 @@ def watch():
                 agent.log(f"chat: {m['id']} failed ({why}), try {m['tries']}")
                 time.sleep(60)
         _save(m)
+        if m["status"] == "replied" and m["kind"] == "lookup":
+            try:
+                import helper
+                helper.after_answer(m)
+            except Exception as e:
+                agent.log(f"chat memory: {type(e).__name__}: {str(e)[:120]}")
 
 
 # ---------- web ----------
@@ -1244,7 +1299,8 @@ function bubble(m){
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.status==="working"){
   if(m.approval)out.push(approvalBox(m));
-  else if(m.running)out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));}
+  else if(m.running)out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));
+  (m.helper||[]).forEach(j=>out.push(h("div",{class:"st"},"Helper job "+j.n+": "+({running:"running",waiting:"waiting in line",server:"waiting for its server",edit:"edit "+j.edit+" waiting for the Assistant"}[j.state]||j.state)+" · "+j.task)));}
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
   if(m.web&&m.web.length)box.append(webList(m.web));

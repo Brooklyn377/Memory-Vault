@@ -51,7 +51,7 @@ details.pi .pb button{margin:8px 8px 0 0}
 <div id="pp" class="pp"></div>
 <script>
 (function(){
-const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant"};
+const MN={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant",hp:"Helper"};
 const NODES={},OPEN={},TALL={};   // TALL: the height you dragged each box to, kept until the page is reloaded
 let D=[];
 function when(t){return new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}

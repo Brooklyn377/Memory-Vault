@@ -14,7 +14,10 @@ import settings
 
 STATE = agent.STATE
 UNIT = applier.UNIT
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
+MODELS = tuple(UNIT) + ("hp",)   # the Helper (hp) has no local server: it runs only on an external one
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant", "hp": "Helper"}
+NO_SERVER = ("No server yet. The Helper runs only on an external server: set Where it runs to a server and press "
+             "Apply all.")
 GIB = 1024 ** 3
 
 
@@ -65,6 +68,8 @@ def state(m):
         loaded = applier.health(m) == "ready"
         return {"enabled": en, "state": "loaded" if loaded else "unloaded", "external": True,
                 "detail": f"External server {remote.base(m)}" + ("" if en else ". Turned off: its calls wait until you turn it on.")}
+    if m not in UNIT:   # the Helper without a server
+        return {"enabled": en, "state": "unloaded", "detail": NO_SERVER}
     h = applier.health(m)
     if h == "ready":
         return {"enabled": en, "state": "loaded", "detail": ""}
@@ -108,6 +113,8 @@ def load(m):
         remote.runner(m, "POST", "/start", {})
         agent.log(f"settings: {NICE[m]} (external server) started by you")
         return
+    if m not in UNIT:
+        raise ValueError(NO_SERVER)
     if not settings.get(m)["model_file"]:
         raise ValueError(f"Choose the {NICE[m]}'s model file under Server and press Apply all first.")
     if applier._active(m):
@@ -136,6 +143,8 @@ def unload(m):
                 note = f"Its llama-server could not be stopped there: {e}."
         agent.log(f"settings: {NICE[m]} (external server) stopped by you; its running calls were cut off")
         return note
+    if m not in UNIT:   # the Helper without a server: nothing runs anywhere
+        return ""
     note = ""
     if applier._active(m):
         _flag(m, "killed").write_text("1")   # the caller does not count this as a failure
@@ -152,8 +161,8 @@ def register(app, authed):
     def get(request: Request):
         if not authed(request):
             raise HTTPException(status_code=401, detail="login required")
-        with ThreadPoolExecutor(max_workers=len(UNIT)) as pool:   # each model's server is asked at once
-            return dict(zip(UNIT, pool.map(state, UNIT)))
+        with ThreadPoolExecutor(max_workers=len(MODELS)) as pool:   # each model's server is asked at once
+            return dict(zip(MODELS, pool.map(state, MODELS)))
 
     @router.post("/api/model/power")
     async def post(request: Request):
@@ -161,7 +170,7 @@ def register(app, authed):
             raise HTTPException(status_code=401, detail="login required")
         d = await request.json()
         m, a = d.get("model"), d.get("action")
-        if m not in UNIT or a not in ("load", "unload", "enable", "disable"):
+        if m not in MODELS or a not in ("load", "unload", "enable", "disable"):
             raise HTTPException(status_code=400, detail="unknown model or action")
         try:
             if a == "load":
@@ -201,7 +210,7 @@ details.sec>summary{cursor:pointer;font-weight:600;padding:6px 0}
 <div id="mm"></div>
 <script>
 (function(){
-const M=[["qwen","Sweeper","#4c9aff"],["gpt","Reviewer","#f5a623"],["cur","Curator","#34d399"],["pa","Assistant","#e879f9"]];
+const M=[["qwen","Sweeper","#4c9aff"],["gpt","Reviewer","#f5a623"],["cur","Curator","#34d399"],["pa","Assistant","#e879f9"],["hp","Helper","#22d3ee"]];
 const UI={};
 function find(sel,pre){const cs=document.querySelectorAll(sel);for(let i=0;i<cs.length;i++){const t=cs[i].querySelector("h3");if(t&&t.textContent.indexOf(pre)===0)return cs[i]}return null}
 function parts(card){const out=[];Array.from(card.children).forEach(function(ch,i){

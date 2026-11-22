@@ -32,8 +32,8 @@ def _threads_max():
         return os.cpu_count() or 1
 
 
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
-MODELS = tuple(NICE)
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant", "hp": "Helper"}
+MODELS = tuple(NICE)   # the Helper (hp) runs only on an external server: it has no local server settings
 
 
 def _running_ctx(m):
@@ -174,7 +174,7 @@ def _plan(d):
                 warn.append(f"{NICE[m]}: context {ctx_ext:,} is below {HARD_MIN_CTX:,}; almost no call will fit.")
             direct[m] = {"context": ctx_ext}
             prop[m].update(direct[m])
-        elif f:
+        elif f and m in applier.UNIT:
             vals = {"model_file": str(f.get("file", "")), "context": _num(f, "context", "Context", m),
                     "threads": _num(f, "threads", "Threads", m), "parallel": _num(f, "parallel", "Parallel slots", m),
                     "flags": serverflags.check(f.get("flags") or {}, str(f.get("file", "")), cur.get("flags"), warn),
@@ -206,6 +206,7 @@ def _plan(d):
             prop[m], warn = new[m], warn + [f"{NICE[m]}: {x}" for x in w]
         if m in jobs:
             prop[m].update(jobs[m])
+    _helper_alone(d, s)
     # Two models on one runner share its llama-server: each Apply all would restart it with that card's settings.
     by_runner = {}
     for m in MODELS:
@@ -222,6 +223,32 @@ def _plan(d):
     before = set(tuning.token_warnings())
     warn += [x for x in tuning.token_warnings(s=prop) if x not in before]
     return jobs, warn, direct, ext_jobs
+
+
+def _helper_alone(d, s):
+    """The Helper works outside the turns, so no other model may run on its server: refused with the reason. d is what
+    the page sends (a card it did not send keeps its saved server), s the saved settings."""
+    def where(m):
+        f = (d.get("servers") or {}).get(m) or {}
+        r = f.get("remote") if f.get("remote") is not None else (s[m].get("remote") or {})
+        if not r.get("enabled"):
+            return None
+        r = remote.with_server(r)
+        return str(r.get("server") or "") or remote.norm_url(r.get("url") or "")
+    mine = where("hp")
+    if not mine:
+        return
+    others = [m for m in MODELS if m != "hp" and where(m) == mine]
+    if not others:
+        return
+    name = (remote.get_server(mine) or {}).get("name") or mine
+    was = s["hp"].get("remote") or {}
+    if was.get("enabled") and (str(was.get("server") or "") or remote.norm_url(was.get("url") or "")) == mine:
+        raise ValueError(f"{name} is the Helper's server. The Helper works outside the turns, so no other model can run "
+                         "there. Pick another server, or move the Helper first.")
+    who = " and ".join("the " + NICE[m] for m in others)
+    raise ValueError(f"The Helper cannot use {name}: {who} {'runs' if len(others) == 1 else 'run'} there. The Helper works "
+                     "outside the turns, so it needs a server of its own. Add another server on the Servers card.")
 
 
 def register(app, authed):
@@ -290,7 +317,7 @@ def register(app, authed):
                 if _f and _f.get("remote") is not None:
                     r = _f["remote"]
                     where = "server " + str((remote.get_server(str(r.get("server") or "")) or {}).get("name") or r.get("server")) if r.get("enabled") else \
-                        "this server's " + ("GPU" if _f.get("device") == "gpu" else "CPU")
+                        ("no server (it is off until you choose one)" if _m == "hp" else "this server's " + ("GPU" if _f.get("device") == "gpu" else "CPU"))
                     agent.log(f"settings: Apply all: the {NICE[_m]} runs on {where}")
                     remote.save(_m, _f["remote"])
             before = {m: dict(settings.get(m)) for m in ext_jobs}
@@ -330,7 +357,7 @@ HTML = r"""
 <div id="sv"></div>
 <script>
 (function(){
-const NM={qwen:"Sweeper server (port 8080)",gpt:"Reviewer server (port 8081)",cur:"Curator server (port 8082)",pa:"Assistant server (port 8083)"};
+const NM={qwen:"Sweeper server (port 8080)",gpt:"Reviewer server (port 8081)",cur:"Curator server (port 8082)",pa:"Assistant server (port 8083)",hp:"Helper server (external only)"};
 const IDS=Object.keys(NM);
 const E={};
 let T=null,FS=[],SL=[],HAS_GPU=false;   // SL: the servers on the Servers card
@@ -373,12 +400,12 @@ function mk(m,s,models,maxT){
   else frows.push(row)});
  e.adv=h("details",{},h("summary",{class:"mut"},"Advanced server flags (blank uses the default)"),...frows);
  const rs=s.remote||{};
- // Where it runs: this server's CPU or GPU, or one of the servers on the Servers card.
+ // Where it runs: this server's CPU or GPU, or one of the servers on the Servers card. The Helper runs only on a server.
  e.where=h("select",{});
- e.fillWhere=function(v){e.where.replaceChildren(h("option",{value:"cpu"},"Local model on this server CPU"),
-  ...(HAS_GPU?[h("option",{value:"gpu"},"Local model on this server GPU")]:[]),
+ e.fillWhere=function(v){e.where.replaceChildren(...(m==="hp"?[h("option",{value:""},"Choose a server")]:[h("option",{value:"cpu"},"Local model on this server CPU"),
+  ...(HAS_GPU?[h("option",{value:"gpu"},"Local model on this server GPU")]:[])]),
   ...SL.map(function(p){return h("option",{value:"server:"+p.id},p.name)}));
-  e.where.value=Array.prototype.some.call(e.where.options,function(o){return o.value===v})?v:"cpu"};
+  e.where.value=Array.prototype.some.call(e.where.options,function(o){return o.value===v})?v:(m==="hp"?"":"cpu")};
  e.fillWhere(rs.enabled&&rs.server?"server:"+rs.server:(s.device==="gpu"?"gpu":"cpu"));
  e.ext=function(){return e.where.value.indexOf("server:")===0};
  e.sid=function(){return e.ext()?e.where.value.slice(7):""};
@@ -423,6 +450,7 @@ function mk(m,s,models,maxT){
  function sync(){const r=e.ext(),mg=r&&!!(e.srv()||{}).runner;
   FS.forEach(function(f){if(e.fx[f.key])e.fx[f.key].disabled=mg&&e.rst?(e.rst.flags||[]).indexOf(f.flag)<0:!f.ok});
   e.rbox.style.display=r?"":"none";hw.forEach(function(x){x.style.display=r&&!mg?"none":""});
+  if(m==="hp")e.loc.style.display=r?"":"none";   // no local server for the Helper: nothing to set until a server is chosen
   hw[0].style.display=r?"none":"";   // Model file lists this container's models: only for a local model
   hw[1].style.display=r?"none":"";   // CPU threads: this container's; an external server (often a GPU) picks its own
   e.extnote.style.display=r?"":"none";
@@ -430,7 +458,9 @@ function mk(m,s,models,maxT){
  e.sync=sync;e.where.onchange=function(){e.askNames();sync();dirty=true};e.useRunner(s.runner);e.askNames();sync();e.st=h("div",{class:"mut"});e.msg=h("div",{class:"mut"});
  e.cancel=h("button",{style:"display:none",onclick:async()=>{await post("/api/server/cancel",{model:m});stat()}},"Cancel queued change");
  (window.COLS=window.COLS||{})["s_"+m]=()=>({model:m,file:e.file.value,context:e.ctx.value,threads:e.thr.value,parallel:e.par.value,device:e.where.value==="gpu"?"gpu":"cpu",remote:{enabled:e.ext(),server:e.sid(),model:e.rn.value},flags:(function(){const o={};for(const k in e.fx){const x=e.fx[k];o[k]=x.type==="checkbox"?(x.checked?true:""):x.value}return o})()});
- return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),e.rbox,e.extnote,e.loc,
+ return h("div",{class:"card"},h("h3",{},NM[m]),e.st,fld("Where it runs",e.where),
+  ...(m==="hp"?[h("div",{class:"mut",style:"margin:6px 0"},"The Helper runs only on an external server (Settings → Servers) that no other model uses. It works outside the turns, so it never waits for or blocks another model. Its slots are how many jobs run at once.")]:[]),
+  e.rbox,e.extnote,e.loc,
   h("button",{class:"pri",onclick:()=>window.applyAll()},"Apply all"),e.cancel,e.msg)}
 // The model list changed (a download finished or a file was deleted): refresh every Model file list, keeping choices.
 window.refreshModelFiles=function(models){
@@ -456,6 +486,7 @@ async function stat(){clearTimeout(T);
  for(const m of IDS){const s=Object.assign({},d.servers[m],st[m]),e=E[m];if(!e)continue;
   e.st.textContent="Server: "+(s.health==="down"?"not loaded (loads when it has work)":s.health)+(s.pending?" · change queued, waiting for idle":"");
   if(s.remote&&s.remote.enabled)e.st.textContent="External server "+s.remote.url+": "+s.health;
+  else if(m==="hp")e.st.textContent="No server chosen: the Helper is off until you choose one and press Apply all.";
   // llama.cpp rounds the context up to a multiple of 256, so only a real difference is shown
   if(s.running&&(s.running<s.context||s.running>=s.context+256))e.st.textContent+=" · running with "+s.running.toLocaleString()+" tokens of context, not the "+Number(s.context).toLocaleString()+" you set"+
    (s.remote&&s.remote.enabled&&!s.runner?" (set on that server)":" (llama.cpp lowered it, most likely to the model's own maximum or to fit memory; see Fit context under Advanced server flags)");

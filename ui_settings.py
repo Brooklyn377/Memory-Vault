@@ -245,8 +245,8 @@ input,select{background:var(--bg);color:var(--ink);border:1px solid var(--line);
 </style>
 <div id="sp"></div>
 <script>
-const NAMES={qwen:"Sweeper: sweep and ask",gpt:"Reviewer: review and chat",cur:"Curator: curate",pa:"Assistant: chat and jobs"};
-const LAB={sweep:"Sweep",ask:"Ask",review:"Review",chat:"Chat",curate:"Curate"};
+const NAMES={qwen:"Sweeper: sweep and ask",gpt:"Reviewer: review and chat",cur:"Curator: curate",pa:"Assistant: chat and jobs",hp:"Helper: jobs for the Assistant and chat memory"};
+const LAB={sweep:"Sweep",ask:"Ask",review:"Review",chat:"Chat",curate:"Curate",job:"Job",memory:"Memory"};
 function num(v,step){const e=h("input",{type:"number"});e.value=v;if(step)e.step=step;return e}
 function fld(label,el,off){return h("div",{class:"fld"+(off?" off":"")},h("label",{},label),el)}
 // Warning popup listing settings that may not be safe. With a yes label it asks (true: go ahead); without, it informs.

@@ -45,6 +45,9 @@ REG = [
     ("curator_format", "cur", "Note review: answer format", "Closes every note-review prompt. Keep the JSON format.", None, None),
     ("map_pass", "cur", "Map pass", "Reads the whole vault and proposes links and hub notes.", "mapper", "SYS"),
     ("assistant_chat", "pa", "Chat answer", "Answers your plain chat messages.", "ui_chat", "ASSIST_SYS"),
+    ("helper_job", "hp", "Helper job", "Does one job for the Assistant.", "helper", "JOB_SYS"),
+    ("helper_progress", "hp", "Recent progress", "Writes a short entry for each of the Assistant's tool calls.", "helper", "PROGRESS_SYS"),
+    ("helper_memory", "hp", "Chat memory", "Folds each finished message into the chat's summary.", "helper", "MEMORY_SYS"),
 ]
 BY = {r[0]: r for r in REG}
 _defaults = {}

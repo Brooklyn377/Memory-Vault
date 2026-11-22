@@ -101,11 +101,21 @@ def _with_prompt(label, body):
 
 
 def _fill(body):
-    """Put the current Tuning values into a system prompt's placeholders: {CALL_CHARS} is the Assistant's size limit per call."""
-    msgs = body.get("messages") or []
-    if msgs and msgs[0].get("role") == "system" and "{CALL_CHARS}" in str(msgs[0].get("content")):
-        import tuning
-        msgs[0] = {**msgs[0], "content": msgs[0]["content"].replace("{CALL_CHARS}", str(tuning.get("chat.call_chars")))}
+    """Fill a system prompt's placeholders, after an edited prompt was swapped in (so an edit keeps them too). The caller's own
+    values come in body["fill"] ({"{HELPER}": ..., "{LABEL}": ...}) and are filled first, since they may hold {CALL_CHARS},
+    the size limit per call from Tuning. body["fill"] is never sent to the server."""
+    body = dict(body)
+    extra = body.pop("fill", None) or {}
+    msgs = list(body.get("messages") or [])
+    if msgs and msgs[0].get("role") == "system" and isinstance(msgs[0].get("content"), str):
+        text = msgs[0]["content"]
+        for k, v in extra.items():
+            text = text.replace(k, str(v))
+        if "{CALL_CHARS}" in text:
+            import tuning
+            text = text.replace("{CALL_CHARS}", str(tuning.get("chat.call_chars")))
+        msgs[0] = {**msgs[0], "content": text}
+        body["messages"] = msgs
     return body
 
 
@@ -130,7 +140,8 @@ def _with_sampling(model, label, body):
 # What each kind of call is, in plain words: the Thinking, Queue and History pages show these instead of the short label.
 LABELS = {"sweep": "Reading a chat part", "ask": "Reading a note or file", "review": "Reviewing",
           "chat": "Answering a chat message", "assist": "Looking something up for a chat answer",
-          "curate": "Reviewing a note in depth", "job": "Doing a job for the Assistant", "memory": "Summarizing a chat for memory"}
+          "curate": "Reviewing a note in depth", "job": "Doing a job for the Assistant", "memory": "Summarizing a chat for memory",
+          "progress": "Noting what the Assistant just did"}
 
 
 def describe(label, body):

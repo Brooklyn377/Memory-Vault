@@ -333,9 +333,17 @@ def _copy(src, dst):
         shutil.copy2(src, dst)
 
 
+SYNC = threading.RLock()   # the Assistant and the Helper's jobs read the working copies at the same time: one sync at once
+
+
 def sync(e):
     """Bring the working copy in line with the repository where the Assistant changed nothing. -> the app's copy of the
     repository. A file changed on both sides is left exactly as it is here (never merged)."""
+    with SYNC:
+        return _sync(e)
+
+
+def _sync(e):
     root = gitrepos.copy(e["id"], "pa")
     if root is None:
         raise Refused(f"Could not get a copy of {e['name']}, so nothing was done. The person has an Ask card with the reason; "
@@ -473,7 +481,9 @@ def list_dir(path):
     return f"{_label(e, inner)}/ holds:\n" + ("\n".join(names) or "(nothing)")
 
 
-def grep(path, pattern):
+def grep(path, pattern, mark=True):
+    """mark: the line numbers shown count as seen by the Assistant. The Helper's grep passes False: what it saw is not
+    what the Assistant saw, so the Assistant's line-number tools still ask it to look first."""
     e, inner = _split(path)
     sync(e)
     work = _work(e)
@@ -498,7 +508,7 @@ def grep(path, pattern):
             continue
         for n, line in enumerate(text.splitlines(), 1):
             if rx.search(line):
-                if (e["id"], rel) not in SEEN or SEEN[(e["id"], rel)] != _sha(f):
+                if mark and ((e["id"], rel) not in SEEN or SEEN[(e["id"], rel)] != _sha(f)):
                     _saw(e, rel, f)   # grep shows line numbers too
                 hits.append(f"{rel}:{n}: {line[:300]}" + (f" ...(the line goes on: {len(line)} characters)" if len(line) > 300 else ""))
     if not hits:
@@ -513,11 +523,13 @@ def grep(path, pattern):
                                if len(shown) < len(hits) else "")
 
 
-def view(path, start=None, end=None):
+def view(path, start=None, end=None, mark=True):
+    """mark: as for grep."""
     e, inner, p = _file(path, True, reading=True)
     label = _label(e, inner)
     lines = _text(p, label).splitlines()
-    _saw(e, inner, p)
+    if mark:
+        _saw(e, inner, p)
     start = max(1, _int(start, "start", 1))
     end = min(len(lines), _int(end, "end", len(lines)))
     if lines and start > len(lines):

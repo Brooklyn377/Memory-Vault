@@ -18,9 +18,9 @@ import agent
 import settings
 
 KEYDIR = Path("/etc/memory-agent")
-PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082, "pa": 8083}
+PORT = {"qwen": 8080, "gpt": 8081, "cur": 8082, "pa": 8083, "hp": None}   # the Helper (hp) runs only on an external server
 UNIT = {"qwen": "llama-server", "gpt": "memory-reviewer", "cur": "memory-curator-llm", "pa": "memory-assistant-llm"}
-NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant"}
+NICE = {"qwen": "Sweeper", "gpt": "Reviewer", "cur": "Curator", "pa": "Assistant", "hp": "Helper"}
 NAME = re.compile(r"[\w.:/@\-]{1,200}")
 _cache = {}
 
@@ -432,10 +432,12 @@ def save(model, d):
         thinklog.abort(model)   # a call running on the old server is cut off now; its work is queued again
         (agent.STATE / f"model_off_{model}").unlink(missing_ok=True)   # switching means: use the new server now
     if cfg["enabled"] and not was:
-        subprocess.run(["systemctl", "stop", "--no-block", UNIT[model]], timeout=30)
+        if model in UNIT:
+            subprocess.run(["systemctl", "stop", "--no-block", UNIT[model]], timeout=30)
         agent.log(f"settings: {NICE[model]} now uses the external server {cfg['url']}")
     elif not cfg["enabled"] and was:
-        agent.log(f"settings: {NICE[model]} switched back to its local model; the manager loads it when it has work")
+        agent.log("settings: the Helper has no server now; it is off until you choose one" if model not in UNIT else
+                  f"settings: {NICE[model]} switched back to its local model; the manager loads it when it has work")
 
 
 def public(model):

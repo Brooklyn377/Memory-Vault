@@ -14,6 +14,9 @@ DEFAULTS = {
     # The Assistant: no model chosen until you pick one, so a new install behaves as before.
     "pa": {"model_file": "", "context": 16384, "threads": 10, "parallel": 1,
            "temperature": 0.3, "max_tokens": {"chat": 8000}, "reasoning_effort": "low"},
+    # The Helper: a small model on an external server only, outside the turns. Nothing until you choose its server.
+    "hp": {"model_file": "", "context": 16384, "threads": 4, "parallel": 4,
+           "temperature": 0.2, "max_tokens": {"job": 4000, "memory": 4000}, "reasoning_effort": "low"},
 }
 
 
