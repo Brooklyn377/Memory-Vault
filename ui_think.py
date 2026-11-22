@@ -437,6 +437,27 @@ function showTot(t,sl){
   tot.innerHTML="All-time tokens generated <b>"+fmt(sum)+"</b> · "+parts.join(" · ");
 }
 
+function draw(){
+  const w=cv.clientWidth,h=cv.clientHeight,dpr=window.devicePixelRatio||1;
+  if(!w)return;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext("2d");g.scale(dpr,dpr);
+  const cs=getComputedStyle(document.body);
+  const mut=cs.getPropertyValue("--mut").trim()||"#888",ln=cs.getPropertyValue("--line").trim()||"#444";
+  let top=0.1;IDS.forEach(m=>{top=Math.max(top,...rates[m]);});
+  const base=h-16,span=base-18;
+  g.strokeStyle=ln;g.lineWidth=1;g.beginPath();g.moveTo(0,base+.5);g.lineTo(w,base+.5);g.stroke();
+  IDS.forEach(m=>{
+    const v=rates[m];g.strokeStyle=M[m].color;g.lineWidth=2;g.beginPath();
+    v.forEach((y,i)=>{const x=v.length>1?i/(v.length-1)*w:0,yy=base-y/top*span;if(i)g.lineTo(x,yy);else g.moveTo(x,yy);});
+    g.stroke();
+  });
+  g.font="11px sans-serif";g.fillStyle=mut;g.textAlign="left";
+  g.fillText("peak "+top.toFixed(2)+" tok/s",2,11);g.fillText("1 h ago",2,h-3);
+  g.textAlign="right";g.fillText("now",w-2,h-3);
+  let x=w-2;
+  IDS.slice().reverse().forEach(m=>{g.fillStyle=M[m].color;g.fillText(M[m].name,x,11);x-=g.measureText(M[m].name).width+12;});
+}
 
 async function tick(){
   if(ticking)return;
