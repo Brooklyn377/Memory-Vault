@@ -406,7 +406,7 @@ def _wait_ready(c):
     return False
 
 
-# ---------- the prompt cache in RAM: half the machine's memory limit ----------
+# ---------- the prompt cache in RAM: two thirds of the machine's memory limit ----------
 CG = Path("/sys/fs/cgroup")
 MIB = 1024 * 1024
 
@@ -428,18 +428,18 @@ def _limit():
 
 
 def _cache_mib(note=True):
-    """The prompt cache size: half the memory limit. The cache grows with every long prompt (a call that read files
-    saves all of them) until it reaches this size, so the other half is left for llama-server itself and the file pages
-    it and the runner use; with less room the container locked up once the cache was full. Nothing is measured, so
+    """The prompt cache size: two thirds of the memory limit. The cache grows with every long prompt (a call that read
+    files saves all of them) until it reaches this size, so the last third is left for llama-server itself and the file
+    pages it and the runner use; with only 20% left the container locked up once the cache was full. Nothing is measured, so
     llama-server starts once. 0 (cache off) when the limit cannot be read."""
     lim = _limit()
     if lim is None:
         if note:
             _note("prompt cache in RAM: off (the memory limit could not be read)")
         return 0
-    mib = lim // 2 // MIB
+    mib = lim * 2 // 3 // MIB
     if note:
-        _note(f"prompt cache in RAM: {mib:,} MiB (half the memory limit of {lim // MIB:,} MiB)" if mib else
+        _note(f"prompt cache in RAM: {mib:,} MiB (two thirds of the memory limit of {lim // MIB:,} MiB)" if mib else
               "prompt cache in RAM: off (the memory limit is too small)")
     return int(mib)
 
