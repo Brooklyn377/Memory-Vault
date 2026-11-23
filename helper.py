@@ -410,6 +410,14 @@ def _release(kind):
         LOCK.notify_all()
 
 
+def unfence(text):
+    """The reply with its <think> blocks taken out and, when the whole of it is one Markdown code fence (```json ... ```,
+    which small models like to add around their JSON), the fence taken off. Anything else is left as it is, to be checked."""
+    s = re.sub(r"<think>.*?</think>", "", str(text), flags=re.DOTALL).strip()
+    m = re.fullmatch(r"```[A-Za-z]*[ \t]*\n?(.*?)\s*```", s, flags=re.DOTALL)
+    return m.group(1).strip() if m and "```" not in m.group(1) else s
+
+
 def memory_call(system, msgs, label, fill=None):
     """One chat-memory call (a progress entry or a summary) in a slot of its own. Ends (thinklog.Aborted) when the Helper
     is turned off or its server is switched, also while it waits for a slot."""
@@ -922,7 +930,7 @@ def _work(job):
         if job.cancelled:
             raise Cancel()
         job.replies += 1
-        plain = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        plain = unfence(text)
         say, sent_back = _reply(job, text, plain, back, last_fail)
         if say is None:   # its answer was accepted: the job is done
             return
@@ -949,7 +957,7 @@ def _reply(job, text, plain, back, last_fail):
     if not plain:
         return (h + 'your last reply was empty, so nothing ran. Reply with one tool call {"tool":"<name>","args":{...}} or '
                 'with {"answer":"<your reply>"}.'), True
-    kind, value = ui_chat._read_reply(text, finals=("answer", "not_found"), whole=True, passed="passed on")
+    kind, value = ui_chat._read_reply(plain, finals=("answer", "not_found"), whole=True, passed="passed on")
     if kind == "problem":
         return value, True
     if kind == "answer":
@@ -1147,7 +1155,7 @@ def _progress(item):
 
 def _check_entry(text, lab, lim):
     """-> (the entry, '') or ('', what is wrong with it, for the Helper)."""
-    s = re.sub(r"<think>.*?</think>", "", str(text), flags=re.DOTALL).strip()
+    s = unfence(text)
     try:
         d = json.loads(s)
     except ValueError as e:
