@@ -376,6 +376,11 @@ function line(o,r){
 
 function put(rows,top){
   const atEnd=chat.scrollHeight-chat.scrollTop-chat.clientHeight<40,h0=chat.scrollHeight;
+  // Scrolled up to read: several calls stream at once, so blocks above the one being read grow too. Remember where the
+  // first block in view sits and put it back there afterwards, so the text being read does not move.
+  let anc=null,y0=0;
+  if(!top&&!atEnd){const ct=chat.getBoundingClientRect().top;
+    for(const el of chat.children){const r=el.getBoundingClientRect();if(r.bottom>ct){anc=el;y0=r.top;break;}}}
   const groups=new Map();
   rows.forEach(r=>{if(!groups.has(r.c))groups.set(r.c,[]);groups.get(r.c).push(r);});
   const frag=document.createDocumentFragment();
@@ -395,7 +400,7 @@ function put(rows,top){
     if(fresh)frag.appendChild(o.el);
   });
   if(top){chat.insertBefore(frag,head.nextSibling);chat.scrollTop+=chat.scrollHeight-h0;}
-  else{chat.appendChild(frag);if(atEnd)chat.scrollTop=chat.scrollHeight;
+  else{chat.appendChild(frag);if(atEnd)chat.scrollTop=chat.scrollHeight;else if(anc)chat.scrollTop+=anc.getBoundingClientRect().top-y0;
     rows.forEach(r=>{S[r.m].kind=(r.k==="r"||r.k==="o")?r.k:"";});}
 }
 
