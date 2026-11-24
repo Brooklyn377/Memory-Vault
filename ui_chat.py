@@ -792,6 +792,14 @@ def assistant_answer(m):
             msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(value, m)}]
             continue
         if kind == "answer":
+            need = __import__("tuning").get("chat.min_calls")
+            if used < need:   # it says what it will do instead of doing it: the answer waits until enough calls ran
+                say = (f"your answer was not shown to the person, because you have made {used} tool call{'' if used == 1 else 's'} "
+                       f"in this reply and at least {need} are required before you answer. Do not say what you are about to "
+                       'do: do it. Send one tool call {"tool":"<name>","args":{...}} now.')
+                agent.log("chat: sent the Assistant's answer back: " + say[:160])
+                msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(H + say, m)}]
+                continue
             wait = helper.blocking(m["id"])   # a Helper job still running, an edit waiting, or results it has not seen
             if not wait:
                 return cited(value), opened
