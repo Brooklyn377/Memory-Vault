@@ -106,7 +106,7 @@ first in the list goes first. Priority never takes the turn from a model that is
   group with both if your memory allows it.
 
 ## Stats
-The **Stats** page (in the menu) shows memory per device as bars: this server's memory (each model loaded here, the rest, the file cache, free), and for each machine with a model runner its memory, each graphics card's memory (with the system RAM the card uses, GTT, which grows when the card's own memory is full), and where llama-server put the model: the layers on the GPU and the weights, context and working memory per device and in system RAM. It also shows whether each runner is up to date, and the last server change. It only reads; nothing there changes a setting. It refreshes every 5 seconds while it is open.
+The **Stats** page (in the menu) shows memory per device as bars: this server's memory (each model loaded here, the rest, the file cache, free), and for each machine with a model runner its memory, each graphics card's memory (with the system RAM the card uses, GTT, which grows when the card's own memory is full). It also shows whether each runner is up to date, and the last server change. It only reads; nothing there changes a setting. It refreshes every 5 seconds while it is open.
 
 ## History: what happened behind the scenes
 The **History** tab lists everything the models and you did, newest first, from the agent's logs. Filter by who did it

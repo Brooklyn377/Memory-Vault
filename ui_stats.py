@@ -1,6 +1,5 @@
-"""Stats page: memory per device (this server, each machine with a model runner, each graphics card), where llama-server
-put each model (layers and buffers per device), whether each runner is up to date, and the last server change. Nothing
-here changes anything: it only reads. Registered from ui_extra.register()."""
+"""Stats page: memory per device (this server, each machine with a model runner, each graphics card), whether each
+runner is up to date, and the last server change. Nothing here changes anything: it only reads. Registered from ui_extra.register()."""
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Request
@@ -87,7 +86,6 @@ const C={qwen:"#4c9aff",gpt:"#f5a623",cur:"#34d399",pa:"#e879f9",hp:"#22d3ee"};
 const N={qwen:"Sweeper",gpt:"Reviewer",cur:"Curator",pa:"Assistant",hp:"Helper"};
 const OTHER="#8b93a7",CACHE="#5b6475",USED="#4c9aff",FREE="transparent";
 const gb=b=>(Number(b||0)/1073741824).toFixed(1)+" GB";
-const mib=x=>Math.round(Number(x||0)).toLocaleString()+" MiB";
 function line(t,cls){return h("div",{class:"ln"+(cls?" "+cls:"")},t)}
 // One device: a bar of its parts and a legend under it. parts: [label, bytes, colour, extra text]
 function bar(parts,total){
@@ -126,14 +124,6 @@ function here(d){
   if(m.swap_total)out.push(line("Swap "+gb(m.swap_used)+" of "+gb(m.swap_total)+(m.swap_used>m.swap_total*0.9?" (nearly full)":""),"mut"))}
  if(d.gpus&&d.gpus.length)out.push(...cards(d.gpus));
  return out}
-function split(sp){
- if(!sp)return [line("llama-server has not started since the runner did, so there is no split to show yet.","mut")];
- const out=[];
- if(sp.layers)out.push(h("div",{class:"dev"},"Layers on the GPU: "+sp.layers[0]+" of "+sp.layers[1]));
- const parts=x=>["weights","context","working"].filter(k=>x[k]>0).map(k=>k+" "+mib(x[k])).join(" · ");
- sp.devices.forEach(x=>out.push(line(x.dev+(x.name?" ("+x.name+")":"")+": "+(parts(x)||"nothing"))));
- const r=parts(sp.ram||{});if(r)out.push(line("System RAM: "+r));
- return out}
 function server(p){
  const out=[h("h2",{},p.name+" ",h("span",{class:"url"},"· "+p.url))];
  if(!p.runner){out.push(line("No runner on that machine, so nothing can be read from it.","mut"));return out}
@@ -147,7 +137,7 @@ function server(p){
   const b=bar([["In use",r.used,USED],["File cache",r.cache,CACHE],["Free",r.free,FREE]],r.limit);
   if(s.cache_mib)b[1].append(h("span",{},"· prompt cache limit "+gb(s.cache_mib*1048576)));
   out.push(...b)}
- out.push(...cards(s.gpus),...split(s.split));
+ out.push(...cards(s.gpus));
  return out}
 function last(l){
  const f=v=>v.model_file+", context "+Number(v.context).toLocaleString()+", "+v.threads+" threads, "+v.parallel+" slots";

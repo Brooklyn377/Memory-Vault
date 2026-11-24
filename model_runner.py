@@ -64,8 +64,7 @@ SAME = {"--model": ["-m"], "--ctx-size": ["-c"], "--threads": ["-t"], "--paralle
         "--model-draft": ["-md"], "--draft-max": ["--draft", "--draft-n"], "--draft-min": ["--draft-n-min"]}
 MANAGED = ("--model", "--ctx-size", "--threads", "--parallel")
 
-state = {"proc": None, "lock": threading.Lock(), "help": None, "dl": {}, "stop": set(),
-         "split": None}   # where llama-server put the model at its last start (see split), read once it is ready
+state = {"proc": None, "lock": threading.Lock(), "help": None, "dl": {}, "stop": set()}
 HF = ("huggingface.co", "hf.co")
 REPO = "Brooklyn377/Memory-Vault"   # where /update downloads this file from; "repo" in model_runner.json overrides it
 SELF = Path(__file__).resolve()
@@ -350,7 +349,6 @@ def _stop(c):
 
 
 def _start(c, args):
-    state["split"] = None   # read again from this start's output once it is ready
     k = c.get("container")
     if k:
         cmd = [k["engine"], "run", "--detach", "--name", k["name"]]
@@ -497,59 +495,6 @@ def gpus():
             if len(p) == 3 and p[1].isdigit() and p[2].isdigit():
                 out.append({"name": p[0], "used": int(p[1]) * MIB, "total": int(p[2]) * MIB, "gtt": None})
     return out
-
-
-_BUF = re.compile(r"(\S+)\s+(model|KV|RS|compute|output) buffer size\s*=\s*([\d.]+) MiB")
-_GPU_DEV = re.compile(r"(Vulkan|CUDA|ROCm|HIP|SYCL|Metal|MTL)\d+")
-
-
-def _startup(c):
-    """llama-server's output since its last start (only the start matters: the buffers are printed then)."""
-    k = c.get("container")
-    if k:
-        r = _run([k["engine"], "logs", k["name"]], 60)
-        return (r.stdout or "") + (r.stderr or "")
-    try:
-        with open(LOG, "rb") as f:
-            f.seek(0, 2)
-            f.seek(max(0, f.tell() - 4 * MIB))
-            text = f.read().decode("utf-8", "replace")
-    except OSError:
-        return ""
-    starts = [m.start() for m in re.finditer(r"^=== .*--model", text, flags=re.M)]
-    return text[starts[-1]:] if starts else ""
-
-
-def parse_split(text):
-    """llama-server's startup lines -> {"layers": [on the GPUs, all] or None, "devices": [{"dev", "name", "weights",
-    "context", "working"} in MiB], "ram": {"weights", "context", "working"}}. Buffers of a GPU device count for it; the
-    CPU ones and the *_Host ones are in system RAM."""
-    names = {}
-    for m in re.finditer(r"ggml_vulkan: (\d+) = ([^|]+?)\s*(?:\(|\|)", text):
-        names.setdefault(f"Vulkan{m.group(1)}", m.group(2).strip())
-    for m in re.finditer(r"Device (\d+): ([^,\n]+),", text):
-        names.setdefault(f"CUDA{m.group(1)}", m.group(2).strip())
-    for m in re.finditer(r"using device (\S+) \((.*)\)\s+-", text):
-        names.setdefault(m.group(1), m.group(2).strip())
-    kind = {"model": "weights", "KV": "context", "RS": "context", "compute": "working", "output": "working"}
-    devs, ram = {}, {"weights": 0.0, "context": 0.0, "working": 0.0}
-    for m in _BUF.finditer(text):
-        where, k, mib = m.group(1), kind[m.group(2)], float(m.group(3))
-        if _GPU_DEV.fullmatch(where):
-            d = devs.setdefault(where, {"dev": where, "name": names.get(where, ""), "weights": 0.0, "context": 0.0, "working": 0.0})
-            d[k] += mib
-        else:
-            ram[k] += mib
-    lay = re.findall(r"offloaded (\d+)/(\d+) layers to GPU", text)
-    return {"layers": [int(lay[-1][0]), int(lay[-1][1])] if lay else None,
-            "devices": [devs[k] for k in sorted(devs)], "ram": ram}
-
-
-def split(c):
-    """Where llama-server put the model, read once after each start (when it is ready), or None before that."""
-    if state["split"] is None and running(c) and health(c) == "ready":
-        state["split"] = parse_split(_startup(c))
-    return state["split"]
 
 
 def _launch(c, s, wait=False):
@@ -709,7 +654,7 @@ def status():
     return {"version": version(c), "running": running(c), "health": health(c), "settings": c.get("settings"), "stopped": bool(c.get("stopped")),
             "models": models(c), "flags": flags_supported(c), "llama_port": c["llama_port"],
             "container": (c.get("container") or {}).get("name"), "log": _tail(c, 6), "downloads": downloads(c),
-            "ram": ram(), "gpus": gpus(), "split": split(c), "cache_mib": _cache_mib(note=False) if "--cache-ram" in flags_supported(c) else None}
+            "ram": ram(), "gpus": gpus(), "cache_mib": _cache_mib(note=False) if "--cache-ram" in flags_supported(c) else None}
 
 
 class H(BaseHTTPRequestHandler):
