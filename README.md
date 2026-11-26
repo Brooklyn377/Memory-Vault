@@ -211,11 +211,14 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
 - **Stop answer:** while a message is being answered, **Stop answer** shows at the top right of the message box. It ends the answer, and any
   command that is running; the message is marked Stopped and has **Send again**. What the Assistant had already
   changed in the sandbox or in your notes stays.
-- **The sandbox has no internet unless you allow it:** a command can only reach hosts through the agent's own proxy.
-  The Assistant has to name the hosts a command needs; you are then asked under the message in the chat, with the
-  exact command and the hosts, and **Allow once**, **Always allow these hosts** or **Deny**. It waits for your
-  answer for as long as it takes, and the Assistant answers nothing else meanwhile. A host the command tries
-  without having named it is refused, and the Assistant is told which. An address on your own network is treated
+- **The sandbox has limited internet, only to hosts you allow:** a command can only reach http and https hosts
+  through the agent's own proxy. Hosts the Assistant names for a command are asked under the message in the chat
+  before it starts, with the exact command and the hosts, and **Allow once**, **Always allow these hosts** or
+  **Deny**. A host the command reaches while it runs, without it having been allowed, is asked the same way there
+  and then: that connection waits for your answer, and the chat asks you to stay on the page until the command
+  finishes (some programs, pip among them, give up after about 15 seconds). Allow once lasts the rest of that
+  answer. No question has a time limit, and the Assistant answers nothing else meanwhile. The Assistant is told
+  which hosts were allowed, denied, not answered in time or allowed too late. An address on your own network is treated
   like any other host, and is marked as such when you are asked. The hosts you always allow are listed, and can be
   removed or added, under Settings → Chats → Sandbox internet.
 - **Changing files in a Git repository, under your supervision:** when a change is finished the Assistant proposes

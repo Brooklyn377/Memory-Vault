@@ -87,9 +87,10 @@ ASSIST_SYS = (
     'replace_lines instead of retyping text. 3. TEST: run {"repo":"<Git server name>","command":"<shell '
     'command>","hosts":["<host name>"]} runs a shell command in the top folder of that working copy and returns its '
     'exit code and output. Run the tests after you change code. repo is the Git server name exactly as repos lists '
-    'it. Commands have NO internet, and git does not work there. If a command needs the internet, name every host it '
-    'must reach in hosts; the person is asked in the chat and you wait for their answer. Leave hosts out when the '
-    'command needs no internet. 4. PROPOSE: when the change is finished and tested, propose '
+    'it. Commands have LIMITED internet: http and https only, through a proxy, to the hosts the person allows. git '
+    'does not work there (the working copy has no .git). Put the hosts you know a command needs in hosts, so the '
+    'person is asked before it starts. If it reaches another host while it runs, the person is asked then and the '
+    'command waits. The result says which hosts were allowed, denied or not answered in time. 4. PROPOSE: when the change is finished and tested, propose '
     '{"paths":["<file>"],"why":"<one sentence>"}. This is the ONLY way your work reaches the repository: a change '
     'that is not proposed is not done. Before you answer, check status {"repo":"<Git server name>"} and propose every '
     'file you changed for this request. A file can have only ONE change waiting: propose is refused for it until the '
@@ -1199,7 +1200,9 @@ def register(app, authed):
         data = await request.json()
         import sandbox
         try:
-            sandbox.answer(str(data.get("id", "")), str(data.get("answer", "")))
+            shown = data.get("hosts")
+            sandbox.answer(str(data.get("id", "")), str(data.get("answer", "")),
+                           [str(h) for h in shown] if isinstance(shown, list) else None)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
@@ -1291,11 +1294,11 @@ function clock(since){const s=Math.max(0,Math.floor(Date.now()/1000-since));retu
 setInterval(function(){document.querySelectorAll("[data-since]").forEach(function(e){e.textContent=clock(Number(e.dataset.since))})},1000);
 function approvalBox(m){const a=m.approval;
  return h("div",{class:"msg"},h("div",{class:"bot ask"},
-  h("div",{},"The Assistant wants to run a command that uses the internet."),
+  h("div",{},a.live?"The command running in the sandbox wants to reach a host you have not allowed. It is waiting for your answer.":"The Assistant wants to run a command that uses the internet."),
   h("div",{},"Git server: "+a.server),h("div",{},"Command: "+a.command),
   h("div",{},"Hosts: "+a.hosts.map(function(x){return x.host+(x.where?" ("+x.where+")":"")}).join(", ")),
-  h("div",{class:"mut"},"It can reach only these hosts. It runs in the sandbox and cannot see your vault, your tokens or your network."),
-  h("button",{class:"pri",onclick:()=>approve(m.id,"once")},"Allow once"),h("button",{onclick:()=>approve(m.id,"always")},"Always allow these hosts"),h("button",{onclick:()=>approve(m.id,"deny")},"Deny")))}
+  h("div",{class:"mut"},(a.live?"It can reach only the hosts you allow.":"It can reach only these hosts.")+" It runs in the sandbox and cannot see your vault, your tokens or your network."),
+  h("button",{class:"pri",onclick:()=>approve(m.id,"once",a)},"Allow once"),h("button",{onclick:()=>approve(m.id,"always",a)},"Always allow these hosts"),h("button",{onclick:()=>approve(m.id,"deny",a)},"Deny")))}
 function webList(w){
  const searches=w.filter(function(x){return x.kind==="search"}),pages=w.filter(function(x){return x.kind==="page"});
  const line=h("span",{},"Used the web: "+searches.length+(searches.length===1?" search":" searches")+", "+pages.length+(pages.length===1?" page":" pages")+" ");
@@ -1324,7 +1327,8 @@ function bubble(m){
  if(m.note&&m.status==="working")out.push(h("div",{class:"st"},m.note));
  if(m.status==="working"){
   if(m.approval)out.push(approvalBox(m));
-  else if(m.running)out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));
+  else if(m.running){out.push(h("div",{class:"st"},"Running in the sandbox ("+m.running.server+") for ",h("span",{"data-since":String(m.running.since)},clock(m.running.since)),": "+m.running.command));
+   out.push(h("div",{class:"st"},"Stay on this page until the command finishes: it may ask you here for more hosts, and some programs give up after about 15 seconds without an answer."))}
   (m.helper||[]).forEach(j=>out.push(h("div",{class:"st"},"Helper job "+j.n+": "+({running:"running",waiting:"waiting in line",server:"waiting for its server",edit:"edit "+j.edit+" waiting for the Assistant"}[j.state]||j.state)+" · "+j.task)));}
  if(m.reply){const box=h("div",{class:"msg"},h("div",{class:"bot"},m.reply));
   if(m.sources&&m.sources.length)box.append(notesList(m.sources));
@@ -1359,7 +1363,7 @@ async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
 addEventListener("scroll",function(){if(window.scrollY<80)loadOlder()});
 async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function stopAnswer(id){try{await api("/api/chat/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
-async function approve(id,answer){try{await api("/api/chat/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,answer:answer})});load()}catch(e){$("#ce").textContent=e.message}}
+async function approve(id,answer,a){try{await api("/api/chat/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,answer:answer,hosts:a.hosts.map(function(x){return x.host})})});load()}catch(e){$("#ce").textContent=e.message}}
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}

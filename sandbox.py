@@ -15,8 +15,9 @@ never merged: status says so and propose refuses it, until the Assistant resets 
 
 A command sees the working copy, its virtualenv and /usr (read only), as uid 65534. It does not see the vault, the
 state folder, /etc/memory-agent or the app's code. It has no network: the only way out is the proxy below, which passes
-only hosts you allowed (always, on the Settings page, or for one command, in the chat). An address on your own network
-is treated like any other host. No command is stopped by a timer; Stop answer in the chat stops it."""
+only hosts you allowed (always, on the Settings page, or once, in the chat: once lasts the rest of that answer). Hosts the
+Assistant names are asked before the command starts; a host the command reaches without being named is asked while it
+runs, and that connection waits for your answer. An address on your own network is treated like any other host. No command is stopped by a timer; Stop answer in the chat stops it."""
 import hashlib
 import ipaddress
 import json
@@ -128,50 +129,172 @@ def pending():
     return out
 
 
-def answer(mid, what):
-    """Your answer from the chat page: once, always or deny."""
+def answer(mid, what, shown=None):
+    """Your answer from the chat page: once, always or deny. shown: the hosts the card showed you; the answer covers only
+    those (a host that came in after the page loaded gets a card of its own)."""
     mid = str(mid)
     if what not in ("once", "always", "deny"):
         raise ValueError("the answer is once, always or deny")
     if mid not in pending():
         raise ValueError("nothing is waiting for an answer there")
+    asked = [x["host"] for x in pending()[mid].get("hosts", [])]
+    shown = asked if shown is None else [str(h) for h in shown]
+    if not shown or any(h not in asked for h in shown):
+        raise ValueError("the hosts on the card have changed: reload the page and answer again")
     tmp = PENDING / f"{mid}.tmp"
-    tmp.write_text(what)
+    tmp.write_text(json.dumps({"answer": what, "hosts": shown}))
     os.replace(tmp, PENDING / f"{mid}.answer")
+
+
+_ONCE = {}   # {chat message id: hosts you allowed once}: once lasts the rest of the Assistant's answer to that message
+
+
+def once(mid):
+    """The hosts allowed once for this answer. Only one answer runs commands at a time, so the others are dropped."""
+    if mid not in _ONCE:
+        _ONCE.clear()
+        _ONCE[mid] = set()
+    return _ONCE[mid]
 
 
 def clear_pending():
     """At chat worker start: a question from before the restart has nobody waiting for it (its message is answered again)."""
     shutil.rmtree(PENDING, ignore_errors=True)
+    _ONCE.clear()
+
+
+def _post(mid, e, command, need, live):
+    PENDING.mkdir(parents=True, exist_ok=True)
+    q = PENDING / f"{mid}.json"
+    tmp = PENDING / f"{mid}.qtmp"
+    tmp.write_text(json.dumps({"server": e["name"], "command": command, "live": live,
+                               "hosts": [{"host": h, "where": where(h)} for h in need]}))
+    os.replace(tmp, q)
+
+
+def _got(a):
+    """The answer file -> (once, always or deny, the hosts it covers), or None while there is none."""
+    try:
+        d = json.loads(a.read_text())
+        if d.get("answer") in ("once", "always", "deny") and isinstance(d.get("hosts"), list):
+            return d["answer"], [str(h) for h in d["hosts"]]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
 
 
 def _ask(mid, e, command, need, cancel):
-    """Ask you about these hosts under the chat message, and wait for as long as it takes. -> once, always, deny or stopped."""
-    PENDING.mkdir(parents=True, exist_ok=True)
-    q, a = PENDING / f"{mid}.json", PENDING / f"{mid}.answer"
+    """Ask you about these hosts under the chat message, before the command starts, and wait for as long as it takes.
+    -> once, always, deny or stopped."""
+    a = PENDING / f"{mid}.answer"
     a.unlink(missing_ok=True)
-    q.write_text(json.dumps({"server": e["name"], "command": command, "hosts": [{"host": h, "where": where(h)} for h in need]}))
+    _post(mid, e, command, need, False)
     agent.log(f"sandbox: asked you in the chat whether a command in {e['name']} may reach {', '.join(need)}")
     try:
         while True:
             if cancel and cancel():
                 return "stopped"
-            if a.exists():
-                what = a.read_text().strip()
-                if what in ("once", "always", "deny"):
-                    return what
+            got = _got(a) if a.exists() else None
+            if got:
+                return got[0]
             time.sleep(1)
     finally:
-        q.unlink(missing_ok=True)
+        (PENDING / f"{mid}.json").unlink(missing_ok=True)
         a.unlink(missing_ok=True)
+
+
+class _Live:
+    """Asks you, while a command runs, about the hosts it reaches that were not allowed. Every host waiting at the moment
+    you answer is on one card; one that comes in after you answered gets a new card. No timer: a connection waits until
+    you answer, the command ends or the answer is stopped."""
+
+    def __init__(self, mid, e, command, cancel, allowed):
+        self.mid, self.e, self.command, self.cancel, self.allowed = mid, e, command, cancel, allowed
+        self.cv = threading.Condition()
+        self.waiting, self.result, self.closed, self.thread = [], {}, False, None
+        self.live, self.denied, self.unanswered = [], [], []   # what happened, for the result the Assistant reads
+
+    def ask(self, host):
+        """-> True when you allowed host, False when you denied it or the command ended first."""
+        with self.cv:
+            if host not in self.result and host not in self.waiting:
+                self.waiting.append(host)
+                if not self.thread:
+                    self.thread = threading.Thread(target=self._run, daemon=True)
+                    self.thread.start()
+            while host not in self.result and not self.closed:
+                self.cv.wait(1)
+            return self.result.get(host) in ("once", "always")
+
+    def close(self):
+        with self.cv:
+            self.closed = True
+            self.unanswered += [h for h in self.waiting if h not in self.unanswered]
+            self.cv.notify_all()
+        if self.thread:
+            self.thread.join()
+
+    def _run(self):
+        a = PENDING / f"{self.mid}.answer"
+        a.unlink(missing_ok=True)
+        shown = None
+        try:
+            while True:
+                with self.cv:
+                    if self.closed:
+                        return
+                    if not self.waiting:   # cleaned up here, in the lock: a new card may be posted as soon as it is let go
+                        (PENDING / f"{self.mid}.json").unlink(missing_ok=True)
+                        a.unlink(missing_ok=True)
+                        self.thread = None
+                        return
+                    if self.waiting != shown:
+                        shown = list(self.waiting)
+                        _post(self.mid, self.e, self.command, shown, True)
+                        agent.log(f"sandbox: asked you in the chat, while a command in {self.e['name']} ran, whether it may reach {', '.join(shown)}")
+                if self.cancel and self.cancel():
+                    with self.cv:
+                        self.closed = True
+                        self.cv.notify_all()
+                    return
+                got = _got(a) if a.exists() else None
+                if not got:
+                    time.sleep(1)
+                    continue
+                a.unlink(missing_ok=True)
+                what, hosts_ = got
+                if what == "always":
+                    for h in hosts_:
+                        add_host(h)
+                elif what == "once":
+                    once(self.mid).update(hosts_)
+                agent.log(f"sandbox: you {'denied' if what == 'deny' else 'allowed'} {', '.join(hosts_)}"
+                          f"{'' if what == 'deny' else ' always' if what == 'always' else ' once'} while a command in {self.e['name']} ran")
+                with self.cv:
+                    for h in hosts_:
+                        self.result[h] = what
+                        if what == "deny":
+                            self.denied.append(h)
+                        else:
+                            self.allowed.add(h)
+                            self.live.append(h)
+                    self.waiting = [h for h in self.waiting if h not in self.result]
+                    shown = None
+                    self.cv.notify_all()
+        finally:
+            if self.closed:
+                (PENDING / f"{self.mid}.json").unlink(missing_ok=True)
+                a.unlink(missing_ok=True)
 
 
 # ---------- the proxy: the sandbox's only way out ----------
 class _Proxy(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path, allowed):
-        self.allowed, self.blocked = set(allowed), []
+    def __init__(self, path, allowed, live=None):
+        self.allowed, self.blocked, self.live, self.late, self.seen = set(allowed), [], live, [], False
+        if live:
+            live.allowed = self.allowed
         super().__init__(path, _Handler)
 
 
@@ -208,14 +331,23 @@ class _Handler(socketserver.BaseRequestHandler):
             keep = [x for x in lines[1:] if x.split(":")[0].strip().lower() not in ("connection", "proxy-connection", "proxy-authorization")]
             path = urllib.parse.urlunsplit(("", "", u.path or "/", u.query, ""))
             first = ("\r\n".join([f"{method} {path} {version}"] + keep + ["Connection: close"]) + "\r\n\r\n").encode("latin-1") + after
+        self.server.seen = True
         try:
             host, port = clean_host(host), int(port)
         except ValueError:
             return self._say("400 Bad Request", "sandbox proxy: that is not a host and port")
         if host not in self.server.allowed:
-            if host not in self.server.blocked:
-                self.server.blocked.append(host)
-            return self._say("403 Forbidden", f"sandbox proxy: {host} was not approved for this command, so the connection was refused")
+            live = self.server.live
+            if not live:
+                if host not in self.server.blocked:
+                    self.server.blocked.append(host)
+                return self._say("403 Forbidden", f"sandbox proxy: {host} was not approved for this command, so the connection was refused")
+            if not live.ask(host):
+                return self._say("403 Forbidden", f"sandbox proxy: {host} was not allowed by the person, so the connection was refused")
+            if _gone(c):
+                if host not in self.server.late:
+                    self.server.late.append(host)
+                return
         try:
             up = socket.create_connection((host, port), timeout=30)
         except OSError as e:
@@ -231,6 +363,16 @@ class _Handler(socketserver.BaseRequestHandler):
             pass
         finally:
             up.close()
+
+
+def _gone(c):
+    """True when the command already closed this connection (it gave up while it waited for your answer)."""
+    try:
+        if not select.select([c], [], [], 0)[0]:
+            return False
+        return c.recv(1, socket.MSG_PEEK) == b""
+    except OSError:
+        return True
 
 
 def _relay(a, b):
@@ -852,9 +994,11 @@ def _bwrap(e, sock):
     return a + ["--", "/usr/bin/python3", "-I", "/run/sandbox/fwd.py", "/run/sandbox/proxy.sock", str(PORT)]
 
 
-def _exec(e, command, allowed, cancel=None):
-    """Run one shell command in the sandbox. -> (exit code, seconds, hosts it tried that were not allowed, whether it was
-    stopped). Its output, stdout and stderr together, is in <box>/out.txt. No timer stops it."""
+def _exec(e, command, allowed, cancel=None, live=None):
+    """Run one shell command in the sandbox. -> (exit code, seconds, the proxy, whether it was stopped). The proxy says
+    which hosts were refused (blocked, without live), allowed too late (late) and whether anything used it (seen). live:
+    a _Live that asks you about other hosts while it runs. Its output, stdout and stderr together, is in <box>/out.txt.
+    No timer stops it."""
     if not shutil.which("bwrap"):
         raise Refused("bubblewrap (bwrap) is not installed on this server, so nothing can run in the sandbox. Tell the person: "
                       "updating the memory agent installs it.")
@@ -862,7 +1006,7 @@ def _exec(e, command, allowed, cancel=None):
     shutil.rmtree(box / "tmp", ignore_errors=True)
     tmp = tempfile.mkdtemp(prefix="sbx")   # a short path: a unix socket's is limited to about 100 characters
     sock = os.path.join(tmp, "p.sock")
-    proxy = _Proxy(sock, allowed)
+    proxy = _Proxy(sock, allowed, live)
     threading.Thread(target=proxy.serve_forever, daemon=True).start()
     began, stopped = time.time(), False
     try:
@@ -879,8 +1023,10 @@ def _exec(e, command, allowed, cancel=None):
                     p.wait()
                     break
                 time.sleep(0.2)
-        return p.returncode, time.time() - began, list(proxy.blocked), stopped
+        return p.returncode, time.time() - began, proxy, stopped
     finally:
+        if live:
+            live.close()
         proxy.shutdown()
         proxy.server_close()
         shutil.rmtree(tmp, ignore_errors=True)
@@ -929,10 +1075,11 @@ def run(repo, command, want=None, chat=None):
         want = list(dict.fromkeys(clean_host(h) for h in want))
     except ValueError as ex:
         raise Refused(f"The command did not run: in hosts, {ex}.") from None
-    always = hosts()
-    need = [h for h in want if h not in always]
+    mid = str(chat.get("id") or "none")
+    always, ok = hosts(), once(mid)
+    need = [h for h in want if h not in always and h not in ok]
     if need:
-        what = _ask(chat.get("id") or "none", e, command, need, cancel)
+        what = _ask(mid, e, command, need, cancel)
         if what == "stopped":
             return "STOPPED by the person while it waited for their answer. The command did not run."
         if what == "deny":
@@ -942,20 +1089,35 @@ def run(repo, command, want=None, chat=None):
         if what == "always":
             for h in need:
                 add_host(h)
+        else:
+            ok.update(need)
         agent.log(f"sandbox: you allowed {', '.join(need)} {'always' if what == 'always' else 'once'} for a command in {e['name']}")
-    allowed = sorted(set(always) | set(want))
+    allowed = sorted(set(always) | set(want) | ok)
     note = _venv(e, cancel)
+    live = _Live(mid, e, command, cancel, set(allowed))
     show({"server": e["name"], "command": command, "since": time.time()})
     try:
-        code, secs, blocked, stopped = _exec(e, command, allowed, cancel)
+        code, secs, proxy, stopped = _exec(e, command, allowed, cancel, live)
     finally:
         show(None)
-    net = "internet: " + ", ".join(allowed) if allowed else "no internet"
+    before = [h for h in allowed if h not in live.live]
+    if before or live.live:
+        net = "Internet allowed: " + ", ".join(before + live.live) + (
+            f" ({', '.join(live.live)} allowed by the person while it ran)" if live.live and before else
+            " (allowed by the person while it ran)" if live.live else "") + "."
+    else:
+        net = "It reached no hosts."
     head = (f"STOPPED by the person after {secs:.1f} seconds. It did not finish. Output so far:" if stopped
-            else f"EXIT CODE {code} after {secs:.1f} seconds, {net}.")
-    extra = [f"BLOCKED: the command tried to reach {h}, which was not in hosts, so that connection was refused. Run it again with "
-             f"{h} in hosts if it is needed." for h in blocked]
-    if code and not stopped and not allowed and not blocked:
-        extra.append("This ran with no internet. If it needs it, run it again with the hosts it needs in hosts.")
+            else f"EXIT CODE {code} after {secs:.1f} seconds. {net}")
+    extra = [f"DENIED: the command tried to reach {h} and the person refused it. Do not ask for {h} again: go on without it, "
+             f"or tell the person what you could not do." for h in live.denied]
+    if not stopped:
+        extra += [f"NOT ANSWERED IN TIME: the command tried to reach {h}, and the person had not answered when the command ended. "
+                  f"Run the command again if it needs {h}." for h in live.unanswered]
+    extra += [f"ALLOWED TOO LATE: the person allowed {h} after the command had already given up on it. Run the command again: "
+              f"{h} is allowed now." for h in proxy.late]
+    if code and not stopped and not proxy.seen:
+        extra.append("No connection went through the sandbox's proxy. Only http:// and https:// through HTTPS_PROXY can get out: "
+                     "ping, ssh, git://, and name lookups made directly by a program do not work.")
     agent.log(f"sandbox: ran in {e['name']}: {' '.join(command.split())[:120]} -> {'stopped' if stopped else 'exit ' + str(code)}")
     return note + "\n".join([head] + extra + (["OUTPUT:"] if not stopped else [])) + "\n" + _output(e)
