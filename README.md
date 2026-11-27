@@ -208,6 +208,10 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   copy, that copy's own virtualenv and the system's programs (read only), and nothing else, not your vault, tokens
   or the agent's code. Git commands do not work there (the copy has no `.git`). Nothing stops a command by a timer;
   while one runs, the chat shows the command and for how long.
+- **It asks before it removes its work:** `delete`, and `reset` when it would throw changes away, show a card under
+  the message in the chat with the files and the Assistant's reason, and **Allow** or **Deny**. It waits for your
+  answer, and nothing is removed unless you allow it. A deny tells it to fix the lines that are wrong instead. Shell
+  commands run with `run` are not checked.
 - **Stop answer:** while a message is being answered, **Stop answer** shows at the top right of the message box. It ends the answer, and any
   command that is running; the message is marked Stopped and has **Send again**. What the Assistant had already
   changed in the sandbox or in your notes stays.

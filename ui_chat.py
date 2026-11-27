@@ -85,7 +85,11 @@ ASSIST_SYS = (
     'only); replace {"path":"<file>","old":"<exact text that is in the file once>","new":"<replacement>"} changes '
     'exact text that is in the file once; insert {"path":"<file>","line":<line number, 0 for the '
     'top>,"text":"<text>"} adds text after a line; create {"path":"<file>","text":"<the start of the file, at most {CALL_CHARS} '
-    'characters>"} makes a new file; delete {"path":"<file>"} removes a file; rename {"from":"<file>","to":"<file>"} moves one. Use copy and '
+    'characters>"} makes a new file; delete {"path":"<file>","why":"<one sentence>"} removes a file and rename '
+    '{"from":"<file>","to":"<file>"} moves one; the person is asked in the chat first whenever a file would be removed '
+    'or replaced. NEVER delete, reset or recreate a file to start it over. A file that looks broken or corrupted was '
+    'broken by your own edits: view it again, find the lines that are wrong, and fix only those with replace or '
+    'replace_lines. View a file again before each change to it. Use copy and '
     'replace_lines instead of retyping text. 3. TEST: run {"repo":"<Git server name>","command":"<shell '
     'command>","hosts":["<host name>"]} runs a shell command in the top folder of that working copy and returns its '
     'exit code and output. Run the tests after you change code. repo is the Git server name exactly as repos lists '
@@ -97,7 +101,7 @@ ASSIST_SYS = (
     'that is not proposed is not done. Before you answer, check status {"repo":"<Git server name>"} and propose every '
     'file you changed for this request. A file can have only ONE change waiting: propose is refused for it until the '
     'person approves or denies it; check jobs for its status. reset {"path":"<file, or git/<Git server name> for '
-    'everything>"} throws your changes away. 5. ANSWER: say what you changed and that it is waiting for the person\'s '
+    'everything>","why":"<one sentence>"} throws your changes away; the person is asked in the chat first. 5. ANSWER: say what you changed and that it is waiting for the person\'s '
     'approval. Never say a change is in the repository until jobs shows it approved. {HELPER} DO NOT EXPLAIN ASK CARDS TO THE '
     'USER, this information is for YOU THE ASSISTANT. Answer only from what the notes and tools show. After each '
     'fact, name its file in square brackets, like [vault/entities/foo.md]. If nothing covers it, say so. Be concise '
@@ -474,11 +478,11 @@ USAGE = {
     "replace": '{"path":"<file>","old":"<exact text that is in the file once>","new":"<replacement>"}',
     "insert": '{"path":"<file>","line":<line number, 0 for the top>,"text":"<text>"}',
     "create": '{"path":"<file>","text":"<the start of the file>"}',
-    "delete": '{"path":"<file>"}',
+    "delete": '{"path":"<file>","why":"<one sentence>"}',
     "rename": '{"from":"<file>","to":"<file>"}',
     "run": '{"repo":"<Git server name>","command":"<shell command>","hosts":["<host name>"]}',
     "status": '{"repo":"<Git server name>"}',
-    "reset": '{"path":"<file, or git/<Git server name> for everything>"}',
+    "reset": '{"path":"<file, or git/<Git server name> for everything>","why":"<one sentence>"}',
     "propose": '{"paths":["<file>"],"why":"<one sentence>"}',
     **__import__("helper").AUSAGE,
 }
@@ -1344,6 +1348,11 @@ let waiting=false;   // a sandbox command, in any chat, is waiting for your answ
 function clock(since){const s=Math.max(0,Math.floor(Date.now()/1000-since));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
 setInterval(function(){document.querySelectorAll("[data-since]").forEach(function(e){e.textContent=clock(Number(e.dataset.since))})},1000);
 function approvalBox(m){const a=m.approval;
+ if(a.kind==="remove")return h("div",{class:"msg"},h("div",{class:"bot ask"},   // delete or reset: asked before the Assistant's work is removed
+  h("div",{},a.action==="reset"?"The Assistant wants to reset its sandbox, putting files back to the repository's version and throwing its changes away.":"The Assistant wants to delete a file in its sandbox."),
+  h("div",{},"Git server: "+a.server),h("div",{},"Files: "+a.files.join(", ")),h("div",{},"Why: "+a.why),
+  h("div",{class:"mut"},"Nothing is removed unless you allow it."),
+  h("button",{class:"pri",onclick:()=>approve(m.id,"allow",a)},"Allow"),h("button",{onclick:()=>approve(m.id,"deny",a)},"Deny")));
  return h("div",{class:"msg"},h("div",{class:"bot ask"},
   h("div",{},a.live?"The command running in the sandbox wants to reach a host you have not allowed. It is waiting for your answer.":"The Assistant wants to run a command that uses the internet."),
   h("div",{},"Git server: "+a.server),h("div",{},"Command: "+a.command),
@@ -1415,7 +1424,7 @@ async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
 addEventListener("scroll",function(){if(window.scrollY<80)loadOlder()});
 async function again(id){try{await api("/api/chat/retry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
 async function stopAnswer(id){try{await api("/api/chat/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});load()}catch(e){$("#ce").textContent=e.message}}
-async function approve(id,answer,a){try{await api("/api/chat/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,answer:answer,hosts:a.hosts.map(function(x){return x.host})})});load()}catch(e){$("#ce").textContent=e.message}}
+async function approve(id,answer,a){try{await api("/api/chat/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,answer:answer,hosts:a.hosts?a.hosts.map(function(x){return x.host}):undefined})});load()}catch(e){$("#ce").textContent=e.message}}
 async function removeOne(id){if(!confirm("Remove this message and its reply from the chat? The Assistant will no longer see it."))return;
  try{await api("/api/chat/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})});older=older.filter(m=>m.id!==id);load()}catch(e){$("#ce").textContent=e.message}}
 async function decide(id,ok){try{await api("/api/chat/confirm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,ok:ok})});load()}catch(e){$("#ce").textContent=e.message}}

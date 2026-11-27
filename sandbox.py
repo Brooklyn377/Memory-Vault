@@ -130,9 +130,16 @@ def pending():
 
 
 def answer(mid, what, shown=None):
-    """Your answer from the chat page: once, always or deny. shown: the hosts the card showed you; the answer covers only
-    those (a host that came in after the page loaded gets a card of its own)."""
+    """Your answer from the chat page: once, always or deny for hosts (shown: the hosts the card showed you; the answer
+    covers only those, a host that came in after the page loaded gets a card of its own), allow or deny for a removal."""
     mid = str(mid)
+    if pending().get(mid, {}).get("kind") == "remove":
+        if what not in ("allow", "deny"):
+            raise ValueError("the answer is allow or deny")
+        tmp = PENDING / f"{mid}.tmp"
+        tmp.write_text(json.dumps({"answer": what}))
+        os.replace(tmp, PENDING / f"{mid}.answer")
+        return
     if what not in ("once", "always", "deny"):
         raise ValueError("the answer is once, always or deny")
     if mid not in pending():
@@ -201,6 +208,47 @@ def _ask(mid, e, command, need, cancel):
     finally:
         (PENDING / f"{mid}.json").unlink(missing_ok=True)
         a.unlink(missing_ok=True)
+
+
+def _confirm(chat, e, action, files, why):
+    """Ask you under the chat message before files with the Assistant's work in them are removed (delete, reset), and wait
+    for as long as it takes. -> allow, deny or stopped."""
+    chat = chat or {}
+    mid, cancel = str(chat.get("id") or "none"), chat.get("cancel")
+    PENDING.mkdir(parents=True, exist_ok=True)
+    q, a = PENDING / f"{mid}.json", PENDING / f"{mid}.answer"
+    a.unlink(missing_ok=True)
+    tmp = PENDING / f"{mid}.qtmp"
+    tmp.write_text(json.dumps({"kind": "remove", "action": action, "server": e["name"], "files": files, "why": why}))
+    os.replace(tmp, q)
+    agent.log(f"sandbox: asked you in the chat whether the Assistant may {action} {', '.join(files)[:200]}: {why}")
+    try:
+        while True:
+            if cancel and cancel():
+                return "stopped"
+            try:
+                what = json.loads(a.read_text()).get("answer") if a.exists() else None
+            except (OSError, ValueError, AttributeError):
+                what = None
+            if what in ("allow", "deny"):
+                agent.log(f"sandbox: you {'let' if what == 'allow' else 'did not let'} the Assistant {action} {', '.join(files)[:200]}")
+                return what
+            time.sleep(1)
+    finally:
+        q.unlink(missing_ok=True)
+        a.unlink(missing_ok=True)
+
+
+DENIED = ("The person DENIED this, so nothing was removed. Do not delete, reset or recreate the file: view it again and fix "
+          "the lines that are wrong with replace or replace_lines.")
+STOPPED = "STOPPED by the person while it waited for their answer. Nothing was removed."
+
+
+def _why(why):
+    why = " ".join(str(why or "").split())[:300]
+    if not why:
+        raise Refused("Nothing was removed: say why in one sentence, in why. The person reads it on the card.")
+    return why
 
 
 class _Live:
@@ -563,7 +611,7 @@ def _file(path, exists=None, reading=False):
         raise Refused(f"Nothing was changed: {_label(e, inner)} is {'a folder' if p.is_dir() else 'not in the working copy'}. "
                       "Use list to see what is there.")
     if exists is False and (p.exists() or p.is_symlink()):
-        raise Refused(f"Nothing was changed: {_label(e, inner)} already exists. Use replace or insert to change it, or delete it first.")
+        raise Refused(f"Nothing was changed: {_label(e, inner)} already exists. View it and change it with replace, replace_lines or insert.")
     return e, inner, p
 
 
@@ -841,8 +889,13 @@ def copy(src, start, end, dest, line, move=False):
             f"{first + n - 1} there." + (f" They were removed from {slabel}." if move else "") + " The change is in the working copy only.")
 
 
-def delete(path):
+def delete(path, why=None, chat=None):
+    """Asks you first, always: a file in the working copy holds the Assistant's work, or the repository's."""
     e, inner, p = _file(path, True)
+    why = _why(why)
+    what = _confirm(chat, e, "delete", [_label(e, inner)], why)
+    if what != "allow":
+        return STOPPED if what == "stopped" else DENIED
     p.unlink()
     return (f"Deleted {_label(e, inner)} from the working copy. It is still in the repository until you propose the delete and "
             "the person approves.")
@@ -879,10 +932,22 @@ def status(repo):
     return f"{e['name']}: {len(ch)} file{'s' if len(ch) != 1 else ''} differ from the repository ({e['branch']}).\n" + "\n".join(lines)
 
 
-def reset(path):
+def _losing(e, root, inner=""):
+    """The files whose changes a reset throws away (new or changed ones; putting back a file it deleted loses nothing)."""
+    return [_label(e, rel) for rel, kind, _ in _changes(e, root)
+            if kind != "deleted" and (not inner or rel == inner or rel.startswith(inner + "/"))]
+
+
+def reset(path, why=None, chat=None):
+    """Asks you first when it would throw changes away."""
     e, inner = _split(path)
     root, work = sync(e), _work(e)
     if not inner:
+        lose = _losing(e, root)
+        if lose:
+            what = _confirm(chat, e, "reset", lose, _why(why))
+            if what != "allow":
+                return STOPPED if what == "stopped" else DENIED
         shutil.rmtree(work, ignore_errors=True)
         (_box(e) / "base.json").unlink(missing_ok=True)
         sync(e)
@@ -894,6 +959,11 @@ def reset(path):
     ch = [(rel, kind) for rel, kind, _ in _changes(e, root) if rel == inner or rel.startswith(inner + "/")]
     if not ch:
         return f"{_label(e, inner)} is the same as the repository: nothing to reset."
+    lose = _losing(e, root, inner)
+    if lose:
+        what = _confirm(chat, e, "reset", lose, _why(why))
+        if what != "allow":
+            return STOPPED if what == "stopped" else DENIED
     m, repo = _manifest(e), _repo(root)
     base = dict(m.get("files") or {})
     for rel, kind in ch:

@@ -303,11 +303,11 @@ TOOLS = {"search": do_search,
          "replace_lines": lambda a: sandbox.replace_lines(a.get("path"), a.get("start"), a.get("end"), a.get("text")),
          "copy": lambda a: sandbox.copy(a.get("from"), a.get("start"), a.get("end"), a.get("to"), a.get("line"), a.get("move")),
          "insert": lambda a: sandbox.insert(a.get("path"), a.get("line"), a.get("text")),
-         "delete": lambda a: sandbox.delete(a.get("path")),
+         "delete": lambda a: sandbox.delete(a.get("path"), a.get("why"), CHAT),
          "rename": lambda a: sandbox.rename(a.get("from"), a.get("to")),
          "run": lambda a: sandbox.run(a.get("repo"), a.get("command"), a.get("hosts"), CHAT),
          "status": lambda a: sandbox.status(a.get("repo")),
-         "reset": lambda a: sandbox.reset(a.get("path")),
+         "reset": lambda a: sandbox.reset(a.get("path"), a.get("why"), CHAT),
          "propose": lambda a: sandbox.propose(a.get("paths") or a.get("path"), a.get("why"), CHAT["id"])}
 
 
