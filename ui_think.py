@@ -328,9 +328,9 @@ THINK_HTML = r"""
 .tot{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--mut)}
 .tot b{color:inherit;font-variant-numeric:tabular-nums}
 /* Which models' calls show in the stream: tap a name. Kept in this browser. */
-.pick{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px}
-.pick button{display:flex;align-items:center;gap:6px;width:auto;margin:0;padding:4px 0;background:none;border:0;color:var(--mut);cursor:pointer;-webkit-tap-highlight-color:transparent}
-.pick button i{width:10px;height:10px;border-radius:50%;border:2px solid var(--c);box-sizing:border-box;display:inline-block}
+.pick{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px}
+.pick button{display:flex;align-items:center;gap:4px;width:auto;margin:0;padding:2px 0;font-size:11px;background:none;border:0;color:var(--mut);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pick button i{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--c);box-sizing:border-box;display:inline-block}
 .pick button.on{color:var(--ink)}.pick button.on i{background:var(--c)}
 </style>
 <div class="tk">
