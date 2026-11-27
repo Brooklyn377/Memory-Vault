@@ -166,7 +166,7 @@ def links(path):
                        "within 2 links": list(hood["within_hops"])[:50]}, indent=1)
 
 
-def tasks():
+def your_tasks():
     import todo
     return "\n".join(f"- {t['title']} (from {t['source']})" for t in todo.list_tasks("open")) or "No open tasks."
 
@@ -187,13 +187,13 @@ def repos():
     return "\n".join(out) or "No Git servers the Assistant has a token for."
 
 
-CHAT = {"id": "", "web": [], "web_calls": 0, "cancel": None, "show": None}   # the chat message being answered: its id (so
-# a proposed change records where it came from), the web looked at so far, and for a sandbox command: cancel() says the
+CHAT = {"id": "", "chat": "", "web": [], "web_calls": 0, "cancel": None, "show": None}   # the chat message being answered:
+# its id (so a proposed change records where it came from), the chat it is in (its to-do list), the web looked at so far, and for a sandbox command: cancel() says the
 # answer was stopped or deleted, show() tells the chat page what is running
 
 
-def start_message(mid, cancel=None, show=None):
-    CHAT.update(id=mid, web=[], web_calls=0, cancel=cancel, show=show)
+def start_message(mid, cancel=None, show=None, chat=""):
+    CHAT.update(id=mid, chat=chat, web=[], web_calls=0, cancel=cancel, show=show)
 
 
 def _web_ready():
@@ -282,11 +282,15 @@ def job_list():
 TOOLS = {"search": do_search,
          "open": lambda a: open_file(a.get("path", ""), a.get("start", 1)),
          "links": lambda a: links(a.get("path", "")),
-         "tasks": lambda a: tasks(), "questions": lambda a: questions(), "queue": lambda a: queue(),
+         "your_tasks": lambda a: your_tasks(), "questions": lambda a: questions(), "queue": lambda a: queue(),
          "repos": lambda a: repos(), "jobs": lambda a: job_list(),
          "web_search": lambda a: web_search(a.get("query") or a.get("text")),
          "web_open": lambda a: web_open(a.get("url"), a.get("start", 0)),
          "chats": chats_tool,
+         # this chat's to-do list (chattodo.py), shared with the person
+         "todo_add": lambda a: __import__("chattodo").tool_add(CHAT["chat"], a.get("text")),
+         "todo_done": lambda a: __import__("chattodo").tool_done(CHAT["chat"], a.get("n")),
+         "todo_list": lambda a: __import__("chattodo").tool_list(CHAT["chat"]),
          "write_note": lambda a: note_tools()["write_note"](a),
          "edit_note": lambda a: note_tools()["edit_note"](a),
          "move_note": lambda a: note_tools()["move_note"](a),

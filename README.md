@@ -244,6 +244,11 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   at most 400 characters (**Chat: characters per tool call** in Settings → Chats → Notes and messages). A bigger call is not run and is sent
   back with its size and what to do instead. A call that just failed, sent again unchanged, is not run again: it gets
   the same reason back.
+- **Each chat has a to-do list:** the Assistant adds the steps of a longer task and ticks each off when it is done; the
+  steps not done yet are shown to it after every message it is sent, also in later messages of that chat. **To-do** in
+  the top bar of the Chat page opens the list from the right: you can add steps, tick them off, delete them, and mark
+  a step **Required**. While a required step is not done, the Assistant's answer is sent back to it. It can still tick a
+  step off itself, so this is a reminder, not a lock. The list is deleted with the chat.
 - **It keeps trying:** if its server drops the connection, cannot be reached or answers with a server error, the Assistant
   tries the same step again (after 5 seconds, then 10, 20, 40, and every minute) for as long as its switch is on, and
   the chat shows what is happening under your message. What it had found so far is kept. A request the server refuses

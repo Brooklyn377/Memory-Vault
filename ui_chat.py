@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 import agent
 import chatfiles
+import chattodo
 import settings
 import ui_extra
 from graph import Vault, as_list
@@ -50,8 +51,8 @@ ASSIST_SYS = (
     'When you are ready, reply with only {"answer":"<your reply>"}, never in the same reply as a tool call. Tools: search '
     '{"text":"<words>","where":"all|notes|raw|inbox|vault|state|logs"} finds files in the vault and state; open '
     '{"path":"<path>","start":<line>} reads one of those files or lists a folder; links {"path":"<note path>"} lists '
-    'linked notes; chats {"id":"<chat id, optional>"} lists your chats, or reads one; tasks {} lists open to-do '
-    'tasks; questions {} lists open Ask cards; queue {} shows what the Sweeper, Reviewer and Curator are doing; repos '
+    'linked notes; chats {"id":"<chat id, optional>"} lists your chats, or reads one; your_tasks {} lists the '
+    'person\'s own open to-do tasks, found in their documents (not your to-do list); questions {} lists open Ask cards; queue {} shows what the Sweeper, Reviewer and Curator are doing; repos '
     '{} lists the Git servers you can read and what each is for; jobs {} lists the changes you proposed and their '
     'status. The web is the last resort, and works only if the person has turned it on: after search found nothing in '
     'the vault and Git servers, web_search {"query":"<words>"} searches the web and web_open '
@@ -63,12 +64,13 @@ ASSIST_SYS = (
     'edit_note {"path":"<note path>","old":"<exact text from the '
     'note>","new":"<replacement>","why":"<one sentence>"} changes one piece; move_note {"from":"<note '
     'path>","to":"<new path>","why":"<one sentence>"} files a note elsewhere. Open a note and copy old exactly before '
-    'edit_note. Use these whenever the person wants a note, a local note, or a change to one: do it yourself. PLANS: '
-    'for any task that takes more than a few steps, keep a plan in your own notes, one note per piece of work, at '
-    'plans/<short name>.md. Before your first step, look for its plan with open plans/; if there is none, create it '
-    'with write_note: the goal, the steps, and what is done. After each step, update it with edit_note: mark what is '
-    'done, what you found, and what comes next. When you come back to the work, in this chat or a later one, open its '
-    'plan first and continue from it. When the work is finished, mark the plan done instead of deleting it. CODE '
+    'edit_note. Use these whenever the person wants a note, a local note, or a change to one: do it yourself. TO-DO LIST: '
+    'this chat has a to-do list that you and the person share. For any task that takes more than a few steps, add '
+    'each step with todo_add {"text":"<one step>"} before you start, and tick it off with todo_done {"n":<number>} as '
+    'soon as it is done. todo_list {} shows the whole list, done steps too. The steps not done yet are shown after '
+    'every HANDLER message under TODO. The list stays with this chat, also in later messages: when the person says to '
+    'carry on, start from it. Steps marked (required) were set by the person: your answer is refused until they are '
+    'done. CODE '
     'SANDBOX: every Git server you can read has a private working copy that only you change. Your changes stay in '
     'that working copy: they are NOT in the repository and nobody else sees them until you propose them and the '
     'person approves. You cannot commit or push, and you never ask the person to; propose does it. Paths look like '
@@ -236,6 +238,7 @@ def delete_chat(cid):
         remove(m["id"])
     import chatmemory
     chatmemory.forget(cid)
+    chattodo.forget(cid)
     _set_meta(cid, title="", archived=False)
     return len(mine)
 
@@ -455,7 +458,8 @@ USAGE = {
     "open": '{"path":"<path>","start":<line>}',
     "links": '{"path":"<note path>"}',
     "chats": '{"id":"<chat id, optional>"}',
-    "tasks": "{}", "questions": "{}", "queue": "{}", "repos": "{}", "jobs": "{}",
+    "your_tasks": "{}", "questions": "{}",
+    "todo_add": '{"text":"<one step>"}', "todo_done": '{"n":<number>}', "todo_list": "{}", "queue": "{}", "repos": "{}", "jobs": "{}",
     "web_search": '{"query":"<words>"}',
     "web_open": '{"url":"<address>","start":<character>}',
     "write_note": '{"path":"<vault path ending .md>","text":"<the start of the note>","why":"<one sentence>"}',
@@ -481,7 +485,7 @@ USAGE = {
 
 # The arguments that hold text the model writes, per tool: each is held to chat.call_chars characters per call.
 SIZED = {"create": ("text",), "insert": ("text",), "replace_lines": ("text",), "replace": ("old", "new"),
-         "run": ("command",), "write_note": ("text",), "edit_note": ("old", "new"),
+         "run": ("command",), "todo_add": ("text",), "write_note": ("text",), "edit_note": ("old", "new"),
          "helper_start": ("task",), "helper_reject": ("why",),   # the Assistant's helper tools
          "propose_edit": ("old", "new", "why"), "propose_file": ("text", "why")}   # the Helper's own (helper.py)
 
@@ -774,13 +778,16 @@ def assistant_answer(m):
     else is sent back with the reason, as often as it takes. Returns (reply, files it opened)."""
     import assistant_tools
     import helper
-    assistant_tools.start_message(m["id"], cancel=lambda: halted(m), show=lambda what: _show_running(m, what))
+    assistant_tools.start_message(m["id"], cancel=lambda: halted(m), show=lambda what: _show_running(m, what), chat=chat_of(m))
     helper.begin(m)   # Helper jobs started in this answer belong to it; handle() ends them
     text = m["text"]
     extra, images = chatfiles.context(m.get("files"), chatfiles.vision()) if m.get("files") else ("", [])
     if extra:
         text += "\n\n" + extra
     content = [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": u}} for u in images] if images else text
+    todo = chattodo.block(chat_of(m))   # the chat's open steps follow your message too
+    if todo:
+        content = [{"type": "text", "text": text + todo}] + content[1:] if isinstance(content, list) else content + todo
     msgs = earlier_turns(m) + [{"role": "user", "content": content}]
     opened, used, m["work"] = [], 0, []   # work: what it does for this reply, kept with the message for the chat's summary
     last_fail = None   # (the call, why it failed) while the newest call that ran has failed: the same call again is not run
@@ -790,7 +797,7 @@ def assistant_answer(m):
         if not re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip():   # blank, and no limit was hit: send it back
             msgs += [{"role": "assistant", "content": "(empty reply)"},
                      {"role": "user", "content": H + 'your last reply was empty, so nothing ran. Reply with one tool call '
-                      '{"tool":"<name>","args":{...}} or with {"answer":"<your reply>"}.'}]
+                      '{"tool":"<name>","args":{...}} or with {"answer":"<your reply>"}.' + chattodo.block(chat_of(m))}]
             continue
         kind, value = _read_reply(text)
         if kind == "problem":   # never shown as the answer, and nothing in it is run: it goes back with the reason
@@ -806,11 +813,20 @@ def assistant_answer(m):
                 agent.log("chat: sent the Assistant's answer back: " + say[:160])
                 msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(H + say, m)}]
                 continue
+            left = chattodo.required_open(chat_of(m))
+            if left:   # steps the person marked required: a reminder, the Assistant can still tick them off itself
+                say = ("your answer was not shown to the person, because the person marked these steps as required before "
+                       "you answer, and they are not done: " + "; ".join(f"{s['n']}. {s['text']}" for s in left) + ". Do them "
+                       "and tick each off with todo_done, then answer. If one cannot be done, tick it off and tell the person "
+                       "why in your answer.")
+                agent.log("chat: sent the Assistant's answer back: " + say[:160])
+                msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": _with_results(H + say, m)}]
+                continue
             wait = helper.blocking(m["id"])   # a Helper job still running, an edit waiting, or results it has not seen
             if not wait:
                 return cited(value), opened
             agent.log("chat: sent the Assistant's answer back: " + " ".join(wait.split())[:160])
-            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": H + wait}]
+            msgs += [{"role": "assistant", "content": text}, {"role": "user", "content": H + wait + chattodo.block(chat_of(m))}]
             continue
         _check(m)   # deleted or stopped while it was thinking: its tool is not run
         name, args = str(value.get("tool")), value.get("args")
@@ -855,7 +871,7 @@ def _with_results(say, m):
     """A HANDLER message with the Helper's results that came in since the last one, each as its own HANDLER paragraph."""
     import helper
     got = helper.collect(m["id"])
-    return say + "".join("\n\n" + H + x for x in got)
+    return say + "".join("\n\n" + H + x for x in got) + chattodo.block(chat_of(m))
 
 
 def earlier_turns(m):
@@ -1207,6 +1223,29 @@ def register(app, authed):
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
 
+    @router.get("/api/chat/todo")
+    def chat_todo(request: Request, chat: str = ""):
+        """The to-do list of one chat, done steps too."""
+        need(request)
+        try:
+            return {"steps": chattodo.load(chat)["steps"]}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post("/api/chat/todo")
+    async def chat_todo_change(request: Request):
+        """Your change to a chat's to-do list: add, done, undone, required, optional, delete or clear."""
+        need(request)
+        d = await request.json()
+        cid = str(d.get("chat", ""))
+        if not any(c["id"] == cid for c in chats(True)):
+            raise HTTPException(status_code=400, detail="there is no such chat")
+        try:
+            chattodo.person(cid, str(d.get("do", "")), d.get("n"), d.get("text"), bool(d.get("required")))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "steps": chattodo.load(cid)["steps"]}
+
     @router.post("/api/chat/remove")
     async def chat_remove(request: Request):
         need(request)
@@ -1272,6 +1311,18 @@ body.chatpage .bot:not(.ask){width:auto;max-width:none;background:none;border:0;
 .fl img{max-width:160px;max-height:160px;border-radius:10px;display:block}.fl a{font-size:13px;padding:4px 10px;border:1px solid var(--line);border-radius:14px;color:inherit;text-decoration:none}
 .cwrap{position:relative}.cwrap textarea{display:block;padding-right:100px;box-sizing:border-box;width:100%;min-height:56px;max-height:calc(8 * 1.4em + 26px);line-height:1.4;resize:none;overflow-y:auto}
 #cs{position:absolute;right:10px;bottom:10px;width:36px;height:36px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center}
+/* The chat's to-do list: a button in the top bar, left of the theme menu, and a panel that slides in from the right */
+#tbtn{margin:0 0 0 auto;padding:4px 10px;font-size:13px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;width:auto;flex:none;white-space:nowrap}
+body.chatpage #dtheme{margin-left:6px}
+#tscrim{position:fixed;top:52px;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);z-index:38;display:none}#tscrim.open{display:block}
+#tpanel{position:fixed;top:52px;bottom:0;right:0;width:min(88vw,360px);background:var(--card);color:var(--ink);border-left:1px solid var(--line);z-index:39;transform:translateX(102%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;padding:10px 12px;overflow-y:auto;box-sizing:border-box}
+#tpanel.open{transform:none;visibility:visible;transition:transform .2s ease,visibility 0s}
+#tpanel .th{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}#tpanel .th b{font-size:17px}
+#tpanel .th button{width:auto;margin:0;padding:4px 10px;background:none;border:0;color:inherit;font-size:22px;line-height:1}
+.trow{padding:8px 0;border-top:1px solid var(--line)}.trow.done{opacity:.5}.trow .tt{overflow-wrap:anywhere}
+.trow .ta{display:flex;gap:6px;margin-top:6px}.trow .ta button{width:auto;margin:0;padding:4px 10px;font-size:13px}
+#tadd{display:block;width:100%;box-sizing:border-box;margin:10px 0 6px}#treq{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 8px}
+#treq input{width:auto;margin:0}#tpanel .tb{display:flex;gap:6px;flex-wrap:wrap}#tpanel .tb button{width:auto;margin:0}
 </style>
 <div id="thread"></div>
 <div id="vpedge" style="position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden"></div>
@@ -1353,7 +1404,8 @@ async function load(){try{const d=await api("/api/chat?chat="+encodeURIComponent
  $("#cuseB").textContent=mm?(mm.summary?"Summary "+mm.summary.toLocaleString()+" words":"No summary yet")+" · chat memory "+mm.words.toLocaleString()+" of "+mm.limit.toLocaleString()+" words"+(mm.helper?" · compressing (the Helper)":mm.running||mm.requested?" · compressing":""):"";
  const busy=latest.find(function(m){return m.status==="working"});   // Stop answer: only while a message of this chat is being answered
  $("#cstop").hidden=!busy;$("#cstop").onclick=busy?function(){stopAnswer(busy.id)}:null;
- const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}}
+ const tail=latest.length?latest[latest.length-1].id:"";if(tail!==lastSeen){lastSeen=tail;window.scrollTo(0,document.body.scrollHeight)}}catch(e){}
+ loadTodo()}
 async function loadOlder(){if(loadingOlder||!more)return;loadingOlder=true;
  try{const first=(older.length?older[0]:latest[0]);if(!first)return;
   const d=await api("/api/chat?before="+encodeURIComponent(first.id)+"&chat="+encodeURIComponent(chatId));
@@ -1434,6 +1486,33 @@ grip.addEventListener("pointermove",function(e){if(!grip.classList.contains("on"
  document.body.style.setProperty("--cw",Math.round(Math.min(Math.max(e.clientX,200),window.innerWidth/2))+"px");lift()});
 function drop(e){grip.classList.remove("on");try{grip.releasePointerCapture(e.pointerId)}catch(x){}}
 grip.addEventListener("pointerup",drop);grip.addEventListener("pointercancel",drop);
+// The chat's to-do list (chattodo.py): the button shows how many steps are open; the panel lists them all
+let todo=[];
+const tbtn=h("button",{id:"tbtn",onclick:()=>openTodo(true)},"To-do");
+document.getElementById("dbar").insertBefore(tbtn,document.getElementById("dtheme"));
+const tscrim=h("div",{id:"tscrim",onclick:()=>openTodo(false)}),tlist=h("div",{}),terr=h("div",{class:"mut"});
+const tin=h("input",{id:"tadd",type:"text",placeholder:"Add a step for the Assistant"}),treq=h("input",{type:"checkbox"});
+const tpanel=h("div",{id:"tpanel","aria-label":"To-do"},
+ h("div",{class:"th"},h("b",{},"To-do"),h("button",{"aria-label":"Close",onclick:()=>openTodo(false)},"×")),
+ tlist,tin,h("label",{id:"treq"},treq,"Required before it answers"),
+ h("div",{class:"tb"},h("button",{class:"pri",onclick:()=>todoDo("add")},"Add"),h("button",{onclick:()=>todoDo("clear")},"Clear done steps")),terr);
+document.body.append(tscrim,tpanel);
+tin.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();todoDo("add")}});
+function openTodo(o){tpanel.classList.toggle("open",o);tscrim.classList.toggle("open",o);if(o)loadTodo()}
+function drawTodo(){const left=todo.filter(s=>!s.done).length;tbtn.textContent=left?"To-do · "+left+" open":"To-do";
+ tlist.replaceChildren(...todo.map(function(s){
+  const tags=(s.required?" · required":"")+(s.by==="person"?" · added by you":"");
+  const acts=s.done?[h("button",{onclick:()=>todoDo("delete",s.n)},"Delete")]:
+   [h("button",{onclick:()=>todoDo("done",s.n)},"Done"),h("button",{onclick:()=>todoDo(s.required?"optional":"required",s.n)},s.required?"Not required":"Required"),
+    h("button",{onclick:()=>todoDo("delete",s.n)},"Delete")];
+  return h("div",{class:"trow"+(s.done?" done":"")},h("div",{class:"tt"},(s.done?"✓ ":"")+s.n+". "+s.text+tags),h("div",{class:"ta"},...acts))}))}
+async function loadTodo(){if(!chatId||chatId==="new"){todo=[];drawTodo();return}
+ try{const d=await api("/api/chat/todo?chat="+encodeURIComponent(chatId));todo=d.steps;drawTodo()}catch(e){}}
+async function todoDo(what,n){terr.textContent="";
+ if(!chatId||chatId==="new"){terr.textContent="Send a message first: the to-do list belongs to a chat.";return}
+ const body={chat:chatId,do:what,n:n};if(what==="add"){body.text=tin.value;body.required=treq.checked}
+ try{const d=await api("/api/chat/todo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  todo=d.steps;drawTodo();if(what==="add"){tin.value="";treq.checked=false}}catch(e){terr.textContent=e.message}}
 pick().then(load).then(sideChats);
 </script>
 """
