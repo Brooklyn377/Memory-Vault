@@ -1488,7 +1488,7 @@ function drop(e){grip.classList.remove("on");try{grip.releasePointerCapture(e.po
 grip.addEventListener("pointerup",drop);grip.addEventListener("pointercancel",drop);
 // The chat's to-do list (chattodo.py): the button shows how many steps are open; the panel lists them all
 let todo=[];
-const tbtn=h("button",{id:"tbtn",onclick:()=>openTodo(true)},"To-do");
+const tbtn=h("button",{id:"tbtn",onclick:()=>openTodo(!tpanel.classList.contains("open"))},"To-do");   // tapped again, it closes
 document.getElementById("dbar").insertBefore(tbtn,document.getElementById("dtheme"));
 const tscrim=h("div",{id:"tscrim",onclick:()=>openTodo(false)}),tlist=h("div",{}),terr=h("div",{class:"mut"});
 const tin=h("input",{id:"tadd",type:"text",placeholder:"Add a step for the Assistant"}),treq=h("input",{type:"checkbox"});
