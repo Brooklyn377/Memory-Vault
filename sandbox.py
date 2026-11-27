@@ -646,14 +646,31 @@ def _limit():
 SEEN = {}
 
 
-def _saw(e, inner, p):
-    SEEN[(e["id"], inner)] = _sha(p)
+def _saw(e, inner, p, a, b):
+    """The Assistant viewed lines a to b of this file as it is now. Only view counts: grep shows lines out of context,
+    and its own changes never count as having read the file."""
+    key, sha = (e["id"], inner), _sha(p)
+    have = SEEN.get(key)
+    lines = have[1] if have and have[0] == sha else set()
+    lines.update(range(a, b + 1))
+    SEEN[key] = (sha, lines)
 
 
-def _fresh(e, inner, p):
-    if SEEN.get((e["id"], inner)) != _sha(p):
-        raise Refused(f"Nothing was changed: {_label(e, inner)} changed since you last viewed it, or you have not viewed it yet, so "
-                      "its line numbers may be out of date. View it again and use the new line numbers.")
+def _fresh(e, inner, p, a, b):
+    """Refused unless lines a to b (none when a > b: an empty file) were viewed after the file last changed."""
+    have = SEEN.get((e["id"], inner))
+    if have and have[0] == _sha(p) and all(n in have[1] for n in range(a, b + 1)):
+        return
+    label = _label(e, inner)
+    if a > b:
+        raise Refused(f"Nothing was changed: you have not viewed {label} since it last changed. View it, then make the change.")
+    what = f"line {a}" if a == b else f"lines {a} to {b}"
+    raise Refused(f"Nothing was changed: you have not viewed {what} of {label} since it last changed. View them, then make the change.")
+
+
+def _around(n, at):
+    """The lines next to an insert after line `at` in a file of n lines: they show where the new text lands."""
+    return (max(1, at), min(n, at + 1)) if n else (1, 0)
 
 
 def _numbered(lines, first):
@@ -672,8 +689,7 @@ def list_dir(path):
 
 
 def grep(path, pattern, mark=True):
-    """mark: the line numbers shown count as seen by the Assistant. The Helper's grep passes False: what it saw is not
-    what the Assistant saw, so the Assistant's line-number tools still ask it to look first."""
+    """mark is not used: a grep never counts as having viewed the lines it shows (only view does)."""
     e, inner = _split(path)
     sync(e)
     work = _work(e)
@@ -698,8 +714,6 @@ def grep(path, pattern, mark=True):
             continue
         for n, line in enumerate(text.splitlines(), 1):
             if rx.search(line):
-                if mark and ((e["id"], rel) not in SEEN or SEEN[(e["id"], rel)] != _sha(f)):
-                    _saw(e, rel, f)   # grep shows line numbers too
                 hits.append(f"{rel}:{n}: {line[:300]}" + (f" ...(the line goes on: {len(line)} characters)" if len(line) > 300 else ""))
     if not hits:
         return "Nothing matched."
@@ -714,16 +728,17 @@ def grep(path, pattern, mark=True):
 
 
 def view(path, start=None, end=None, mark=True):
-    """mark: as for grep."""
+    """mark: the lines shown count as viewed by the Assistant. The Helper's view passes False: what it saw is not what the
+    Assistant saw."""
     e, inner, p = _file(path, True, reading=True)
     label = _label(e, inner)
     lines = _text(p, label).splitlines()
-    if mark:
-        _saw(e, inner, p)
     start = max(1, _int(start, "start", 1))
     end = min(len(lines), _int(end, "end", len(lines)))
     if lines and start > len(lines):
         raise Refused(f"{label} has {len(lines)} lines, so there is no line {start}.")
+    if mark:
+        _saw(e, inner, p, start, end)
     body = "\n".join(f"{n}: {l}" for n, l in enumerate(lines[start - 1:end], start))
     return f"{label}, lines {start} to {max(end, start - 1)} of {len(lines)}:\n{body}"
 
@@ -734,7 +749,6 @@ def create(path, text):
         raise Refused("Nothing was changed: give the start of the file as text, in text.")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(text.encode("utf-8"))
-    _saw(e, inner, p)   # it wrote the whole file, so it knows the numbers
     return (f"Created {_label(e, inner)} ({len(text.splitlines())} lines) in the working copy. It is not in the repository "
             "until you propose it and the person approves.")
 
@@ -751,11 +765,9 @@ def replace(path, old, new):
                       "View the file and copy the exact text (a longer piece, if it repeats).")
     if old == new:
         raise Refused("Nothing was changed: new is the same as old.")
-    was = SEEN.get((e["id"], inner)) == _sha(p)
-    p.write_bytes(current.replace(old, new, 1).encode("utf-8"))
-    if was:   # its numbers were current: they still are, as far as it knows (the result says where)
-        _saw(e, inner, p)
     at = current[:current.index(old)].count("\n") + 1
+    _fresh(e, inner, p, at, at + (old[:-1] if old.endswith("\n") else old).count("\n"))   # the lines the text is on
+    p.write_bytes(current.replace(old, new, 1).encode("utf-8"))
     return f"Replaced it in {label}, starting at line {at}. The change is in the working copy only."
 
 
@@ -763,17 +775,16 @@ def insert(path, line, text):
     e, inner, p = _file(path, True)
     label = _label(e, inner)
     lines, text = _text(p, label).splitlines(keepends=True), str(text if text is not None else "")
-    _fresh(e, inner, p)
     at = _int(line, "line", None)
     if at is None or not 0 <= at <= len(lines):
         raise Refused(f"Nothing was changed: {label} has {len(lines)} lines, so line must be a number from 0 (the top) to {len(lines)}.")
+    _fresh(e, inner, p, *_around(len(lines), at))
     if not text:
         raise Refused("Nothing was changed: give the text to add.")
     if at and not lines[at - 1].endswith("\n"):
         lines[at - 1] += "\n"
     lines.insert(at, text if text.endswith("\n") else text + "\n")
     p.write_bytes("".join(lines).encode("utf-8"))
-    _saw(e, inner, p)
     return f"Added {len(text.splitlines())} line(s) to {label} after line {at}. The change is in the working copy only."
 
 
@@ -782,20 +793,19 @@ def replace_lines(path, start, end, text):
     e, inner, p = _file(path, True)
     label = _label(e, inner)
     lines = _text(p, label).splitlines(keepends=True)
-    _fresh(e, inner, p)
     a, b = _int(start, "start", None), _int(end, "end", None)
     if a is None or b is None:
         raise Refused("Nothing was changed: give start and end, the first and last line to replace.")
     if not 1 <= a <= b <= len(lines):
         raise Refused(f"Nothing was changed: {label} has {len(lines)} lines, so start and end must be from 1 to {len(lines)}, "
                       "with start not after end.")
+    _fresh(e, inner, p, a, b)
     text = str(text if text is not None else "")
     new = text.splitlines(keepends=True)
     if new and not new[-1].endswith("\n") and (b < len(lines) or lines[-1].endswith("\n")):
         new[-1] += "\n"
     lines[a - 1:b] = new
     p.write_bytes("".join(lines).encode("utf-8"))
-    _saw(e, inner, p)
     done = f"Replaced lines {a} to {b} of {label} with {len(new)} line{'s' if len(new) != 1 else ''}. The change is in the working copy only."
     if not new:
         return done + " Those lines are gone; the lines after them moved up."
@@ -831,14 +841,14 @@ def copy(src, start, end, dest, line, move=False):
     if whole:
         a, b = 1, len(slines)
     else:
-        if se is not None:
-            _fresh(se, sinner, sp)
         a, b = _int(start, "start", None), _int(end, "end", None)
         if a is None or b is None:
             raise Refused("Nothing was changed: give both start and end, or leave both out to copy the whole file.")
         if not 1 <= a <= b <= len(slines):
             raise Refused(f"Nothing was changed: {slabel} has {len(slines)} lines, so start and end must be from 1 to {len(slines)}, "
                           "with start not after end.")
+    if se is not None and (move or not whole):   # lines picked by number, or taken out: it must have viewed them
+        _fresh(se, sinner, sp, a, b)
     if not slines:
         raise Refused(f"Nothing was changed: {slabel} is empty.")
     block = slines[a - 1:b]
@@ -867,10 +877,10 @@ def copy(src, start, end, dest, line, move=False):
         if line is None or line == "":
             raise Refused(f"Nothing was changed: {dlabel} already exists, so give line (0 for the top) to say where the lines go.")
         dlines = _text(dp, dlabel).splitlines(keepends=True)
-        _fresh(de, dinner, dp)
         at = _int(line, "line", None)
         if not 0 <= at <= len(dlines):
             raise Refused(f"Nothing was changed: {dlabel} has {len(dlines)} lines, so line must be a number from 0 (the top) to {len(dlines)}.")
+        _fresh(de, dinner, dp, *_around(len(dlines), at))
         if at and not dlines[at - 1].endswith("\n"):
             dlines[at - 1] += "\n"
         if move and same:   # one file: take the lines out, then put them in at the place counted before taking them out
@@ -882,8 +892,6 @@ def copy(src, start, end, dest, line, move=False):
     if move and not same:
         rest = slines[:a - 1] + slines[b:]
         sp.write_bytes("".join(rest).encode("utf-8"))
-        _saw(se, sinner, sp)
-    _saw(de, dinner, dp)
     verb = "Moved" if move else "Copied"
     return (f"{verb} lines {a} to {b} of {slabel} ({n} line{'s' if n != 1 else ''}) {where}; they are now lines {first} to "
             f"{first + n - 1} there." + (f" They were removed from {slabel}." if move else "") + " The change is in the working copy only.")

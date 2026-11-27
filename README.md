@@ -212,6 +212,9 @@ in the same format as an imported chat, so the Sweeper reads it and the notes ca
   the message in the chat with the files and the Assistant's reason, and **Allow** or **Deny**. It waits for your
   answer, and nothing is removed unless you allow it. A deny tells it to fix the lines that are wrong instead. Shell
   commands run with `run` are not checked.
+- **It must look before each change:** a change to a file is refused unless the Assistant viewed the lines it changes
+  after the file last changed. `grep` does not count, and its own changes do not count as viewing, so it views the
+  file again between changes.
 - **Stop answer:** while a message is being answered, **Stop answer** shows at the top right of the message box. It ends the answer, and any
   command that is running; the message is marked Stopped and has **Send again**. What the Assistant had already
   changed in the sandbox or in your notes stays.
