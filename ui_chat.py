@@ -1322,7 +1322,7 @@ body.chatpage #dtheme{margin-left:6px}
 .trow{padding:8px 0;border-top:1px solid var(--line)}.trow.done{opacity:.5}.trow .tt{overflow-wrap:anywhere}
 .trow .ta{display:flex;gap:6px;margin-top:6px}.trow .ta button{width:auto;margin:0;padding:4px 10px;font-size:13px}
 #tadd{display:block;width:100%;box-sizing:border-box;margin:10px 0 6px}#treq{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 8px}
-#treq input{width:auto;margin:0}#tpanel .tb{display:flex;gap:6px;flex-wrap:wrap}#tpanel .tb button{width:auto;margin:0}
+#treq input,.treq2 input{width:auto;margin:0}.treq2{display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0 0}#tpanel .tb{display:flex;gap:6px;flex-wrap:wrap}#tpanel .tb button{width:auto;margin:0}
 </style>
 <div id="thread"></div>
 <div id="vpedge" style="position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden"></div>
@@ -1498,14 +1498,18 @@ const tpanel=h("div",{id:"tpanel","aria-label":"To-do"},
  h("div",{class:"tb"},h("button",{class:"pri",onclick:()=>todoDo("add")},"Add"),h("button",{onclick:()=>todoDo("clear")},"Clear done steps")),terr);
 document.body.append(tscrim,tpanel);
 tin.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();todoDo("add")}});
-function openTodo(o){tpanel.classList.toggle("open",o);tscrim.classList.toggle("open",o);if(o)loadTodo()}
+function openTodo(o){if(o&&document.getElementById("dwr").classList.contains("open"))document.getElementById("dscrim").click();   // the menu closes first
+ tpanel.classList.toggle("open",o);tscrim.classList.toggle("open",o);if(o)loadTodo()}
+document.getElementById("dbtn").addEventListener("click",function(){openTodo(false)});   // the menu button closes the to-do panel, then opens the menu
 function drawTodo(){const left=todo.filter(s=>!s.done).length;tbtn.textContent=left?"To-do · "+left+" open":"To-do";
  tlist.replaceChildren(...todo.map(function(s){
   const tags=(s.required?" · required":"")+(s.by==="person"?" · added by you":"");
-  const acts=s.done?[h("button",{onclick:()=>todoDo("delete",s.n)},"Delete")]:
-   [h("button",{onclick:()=>todoDo("done",s.n)},"Done"),h("button",{onclick:()=>todoDo(s.required?"optional":"required",s.n)},s.required?"Not required":"Required"),
-    h("button",{onclick:()=>todoDo("delete",s.n)},"Delete")];
-  return h("div",{class:"trow"+(s.done?" done":"")},h("div",{class:"tt"},(s.done?"✓ ":"")+s.n+". "+s.text+tags),h("div",{class:"ta"},...acts))}))}
+  const del=h("button",{onclick:()=>todoDo("delete",s.n)},"Delete");
+  if(s.done)return h("div",{class:"trow done"},h("div",{class:"tt"},"✓ "+s.n+". "+s.text+tags),h("div",{class:"ta"},del));
+  const box=h("input",{type:"checkbox"});box.checked=!!s.required;
+  box.addEventListener("change",()=>todoDo(box.checked?"required":"optional",s.n));
+  return h("div",{class:"trow"},h("div",{class:"tt"},s.n+". "+s.text+tags),h("label",{class:"treq2"},box,"Required"),
+   h("div",{class:"ta"},h("button",{onclick:()=>todoDo("done",s.n)},"Done"),del))}))}
 async function loadTodo(){if(!chatId||chatId==="new"){todo=[];drawTodo();return}
  try{const d=await api("/api/chat/todo?chat="+encodeURIComponent(chatId));todo=d.steps;drawTodo()}catch(e){}}
 async function todoDo(what,n){terr.textContent="";
