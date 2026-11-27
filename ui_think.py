@@ -327,9 +327,15 @@ THINK_HTML = r"""
 .st.on{background:var(--acc);color:#fff}
 .tot{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--mut)}
 .tot b{color:inherit;font-variant-numeric:tabular-nums}
+/* Which models' calls show in the stream: tap a name. Kept in this browser. */
+.pick{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px}
+.pick button{display:flex;align-items:center;gap:6px;width:auto;margin:0;padding:4px 0;background:none;border:0;color:var(--mut);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pick button i{width:10px;height:10px;border-radius:50%;border:2px solid var(--c);box-sizing:border-box;display:inline-block}
+.pick button.on{color:var(--ink)}.pick button.on i{background:var(--c)}
 </style>
 <div class="tk">
   <div class="chat" id="chat"><div class="more" id="head"></div></div>
+  <div class="pick" id="pick"></div>
   <div class="bot">
     <canvas id="cv"></canvas>
     <div class="mrow" id="row-qwen"><i style="background:#4c9aff"></i><b>Sweeper</b><span class="st">…</span><span class="nm"></span></div>
@@ -353,13 +359,32 @@ IDS.forEach(m=>{E[m]={st:document.querySelector("#row-"+m+" .st"),nm:document.qu
 const j=async u=>{const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(r.status);return r.json();};
 const fmt=n=>Number(n||0).toLocaleString();
 
+// Which models' calls show in the stream (all of them until you change it; kept in this browser). The others are still
+// loaded, only hidden, so showing a model again brings its earlier calls back in their place.
+const vis={};IDS.forEach(m=>{vis[m]=true;});
+try{const v=JSON.parse(localStorage.getItem("thinkShow")||"{}");IDS.forEach(m=>{if(typeof v[m]==="boolean")vis[m]=v[m];});}catch(e){}
+const pick=document.getElementById("pick");
+IDS.forEach(m=>{
+  const b=document.createElement("button");b.style.setProperty("--c",M[m].color);
+  const d=document.createElement("i");b.append(d,M[m].name);
+  const paint=()=>{b.classList.toggle("on",vis[m]);b.setAttribute("aria-pressed",String(vis[m]));};
+  b.onclick=function(){
+    const atEnd=chat.scrollHeight-chat.scrollTop-chat.clientHeight<40;
+    vis[m]=!vis[m];paint();
+    try{localStorage.setItem("thinkShow",JSON.stringify(vis));}catch(e){}
+    chat.querySelectorAll('.blk[data-m="'+m+'"]').forEach(el=>{el.hidden=!vis[m];});
+    if(atEnd)chat.scrollTop=chat.scrollHeight;
+  };
+  paint();pick.append(b);
+});
+
 function headText(){head.textContent=more?"↑ scroll up for older":(oldest==="0"?"waiting for the first model call…":"— start of log —");}
 
 function hdr(o){
   o.h.textContent=(o.a.hidden?"▸ ":"▾ ")+M[o.m].name+(o.lab?" · "+(LABELS[o.lab]||o.lab):"")+" · "+new Date(o.t).toLocaleTimeString()+(o.tok!=null?" · "+fmt(o.tok)+" tokens":"")+(o.why?" · "+o.why:"");
 }
 function mk(r){
-  const el=document.createElement("div");el.className="blk";el.style.setProperty("--c",M[r.m].color);
+  const el=document.createElement("div");el.className="blk";el.style.setProperty("--c",M[r.m].color);el.dataset.m=r.m;el.hidden=!vis[r.m];
   const h=document.createElement("div");h.className="bh";
   const a=document.createElement("div");a.className="ba";a.hidden=true;a.textContent="Nothing was recorded about what this call was for.";
   const b=document.createElement("div");b.className="bb";
